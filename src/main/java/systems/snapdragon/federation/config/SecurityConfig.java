@@ -21,13 +21,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Casdoor-aware OAuth2 resource-server security for snapdragon-federation
+ * Casdoor-aware OAuth2 resource-server security for snapdragon-federation-api
  * (reactive WebFlux). {@code @EnableReactiveMethodSecurity} activates the
  * {@code @PreAuthorize("hasRole('ADMIN')")} gates on the registry / override /
  * moderation controllers.
  *
  * <p>The JWT->authority mapping ({@link #casdoorAuthoritiesConverter}) is COPIED
- * VERBATIM from snapdragon-admin-bff / snapdragon-actions / snapdragon-gateway:
+ * VERBATIM from snapdragon-admin-bff-api / snapdragon-actions / snapdragon-gateway:
  * the Casdoor {@code roles} claim (string or {@code {name}} objects),
  * {@code permissions}, and {@code isAdmin} become authorities, plus a
  * {@code ROLE_USER} floor.

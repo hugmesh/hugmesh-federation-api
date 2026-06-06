@@ -25,7 +25,7 @@ spring:
 app:
   bundles:
     storage: filesystem
-    dir: "${java.io.tmpdir}/snapdragon-federation-test-bundles"
+    dir: "${java.io.tmpdir}/snapdragon-federation-api-test-bundles"
   manifest-cache:
     cassandra:
       enabled: false

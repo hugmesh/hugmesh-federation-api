@@ -1,6 +1,6 @@
 spring:
   application:
-    name: snapdragon-federation
+    name: snapdragon-federation-api
 
   # The spring-boot-starter-data-cassandra-reactive starter is on the classpath
   # ONLY for the best-effort manifest write-through cache (CassandraManifestCache),
