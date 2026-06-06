@@ -6,7 +6,7 @@
             http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
 
     <!--
-      snapdragon-federation schema. Liquibase runs over a JDBC datasource
+      snapdragon-federation-api schema. Liquibase runs over a JDBC datasource
       (Liquibase has no R2DBC runner); ALL runtime access goes through R2DBC.
 
       JSON columns use the `${json.type}` property so the SAME changelog applies

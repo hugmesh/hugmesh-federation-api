@@ -1,4 +1,4 @@
-# snapdragon-federation
+# snapdragon-federation-api
 
 The platform **dynamic-federation registry / DB / manifest API** — the Phase-4
 keystone. A reactive Spring Boot (WebFlux + R2DBC) service that hosts the
@@ -9,7 +9,7 @@ stores per-user content-hash-versioned module bundles for the
 platform-wide moderation + kill-switch surface.
 
 Built by reusing two proven references — the snapdragon.games DB-backed
-federation engine and the productionised snapdragon-admin-bff conventions — not
+federation engine and the productionised snapdragon-admin-bff-api conventions — not
 by inventing new patterns.
 
 ## Stack
@@ -170,7 +170,7 @@ These are intentionally NOT implemented in the scaffold and are documented here:
   `FederationController` (reactive `findAllByEnabledTrue → DTO`), `UploadStorage`
   (pluggable filesystem|S3, opaque locator) + `AssetController` reactive serving +
   content-hash versioning + `game_access` scope (`all|role|user`).
-- **Conventions** = `snapdragon-admin-bff`: reactive WebFlux security
+- **Conventions** = `snapdragon-admin-bff-api`: reactive WebFlux security
   (`@EnableWebFluxSecurity` + profile-split filter chains), R2DBC +
   JDBC-only-for-Liquibase, Casdoor authority converter, `CassandraRouteMirror`
   best-effort mirror, springdoc, native hints, Dockerfile, `.gitlab-ci.yml`,

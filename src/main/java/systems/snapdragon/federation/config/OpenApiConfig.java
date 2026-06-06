@@ -18,7 +18,7 @@ public class OpenApiConfig {
     OpenAPI federationOpenApi() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("snapdragon-federation")
+                        .title("snapdragon-federation-api")
                         .version("0.1.0")
                         .description("Dynamic federation registry + manifest API. Serves the runtime "
                                 + "module-federation manifest (visibility + kill-switch filtered), owns "

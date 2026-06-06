@@ -6,7 +6,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <!-- 3.5.5 matches snapdragon-admin-bff (proven WebFlux + Casdoor reactive
+    <!-- 3.5.5 matches snapdragon-admin-bff-api (proven WebFlux + Casdoor reactive
          JWT resource server + GraalVM native on Java 21). The dynamic
          federation registry shares that BFF's reactive baseline. -->
     <version>3.5.5</version>
@@ -15,7 +15,7 @@
   <groupId>systems.snapdragon</groupId>
   <artifactId>federation</artifactId>
   <version>0.1.0</version>
-  <name>snapdragon-federation</name>
+  <name>snapdragon-federation-api</name>
   <description>Snapdragon dynamic federation registry + manifest API (DB-hosted federated modules)</description>
 
   <properties>
