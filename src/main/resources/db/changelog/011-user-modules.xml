@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        user_modules — per-user federated module bundle uploads.
+
+        Mirror of snapdragon.games db/changelog/021-game-uploads: the upload
+        bookkeeping for a user-published federated module. The BFF / owner client
+        PUTs a bundle, the BundleStorage strategy installs it under
+        <slug>/<content-hash>/ and returns an opaque locator stored here; the
+        snapdragon-remote-fragment pods FETCH by content-hash to sync-and-serve.
+
+          • locator       — opaque BundleStorage locator (file:/... or s3://...).
+          • content_hash  — SHA-256 of the bundle tree; the version + the key the
+                            remote-fragment pods sync by.
+          • visibility    — 'public' | 'internal'.
+          • superseded_at — flips when a newer upload for the same slug wins
+                            (keeps history queryable for rollback).
+    -->
+
+    <changeSet id="011-1-user-modules-table" author="federation">
+        <createTable tableName="user_modules">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="owner_user_id" type="${str.type}">
+                <!-- Casdoor subject of the publishing user. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="slug" type="${str.type}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version_dir" type="${str.type}">
+                <!-- Opaque BundleStorage locator (file:/abs/path or s3://bucket/key). -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="content_hash" type="varchar(64)">
+                <!-- SHA-256 hex of the bundle tree; the sync key + version. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="manifest_json" type="${json.type}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="visibility" type="${str.type}" defaultValue="internal">
+                <!-- 'public' | 'internal' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="superseded_at" type="timestamp"/>
+        </createTable>
+
+        <createIndex tableName="user_modules" indexName="idx_user_modules_slug_active">
+            <column name="slug"/>
+            <column name="created_at" descending="true"/>
+        </createIndex>
+        <createIndex tableName="user_modules" indexName="idx_user_modules_owner">
+            <column name="owner_user_id"/>
+        </createIndex>
+        <createIndex tableName="user_modules" indexName="idx_user_modules_content_hash">
+            <column name="content_hash"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        federation_modules — the platform dynamic-federation registry.
+
+        Lifted from snapdragon.games db/changelog/018-federation-modules: one row
+        per federated remote module the Angular host loads at runtime. This
+        platform-level table extends the games-engine shape with the fields the
+        Phase-4 keystone needs:
+
+          • owner_user_id  — NULL for platform/first-party modules; the Casdoor
+            subject for user-published modules (mirrors game_uploads.owner).
+          • content_hash   — content-addressed version (mirrors game_uploads).
+          • visibility     — 'public' | 'internal' (visibility-filtered in the
+            manifest read path against the caller's JWT).
+          • circuit_state  — 'closed' | 'open' | 'half'; a federation_override of
+            action='circuit-break' flips this to 'open' so the manifest read path
+            drops the remote without a redeploy (kill-switch).
+
+        The runtime manifest read path (GET /api/federation/manifest) selects
+        enabled + visibility-permitted + circuit-closed rows, exactly like the
+        games FederationController.findAllByEnabledTrueOrderByKindAscSlugAsc().
+    -->
+
+    <changeSet id="010-1-federation-modules-table" author="federation">
+        <createTable tableName="federation_modules">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="slug" type="${str.type}">
+                <!-- e.g. 'host', 'admin', 'login', 'games-dodecahedron' -->
+                <constraints unique="true" nullable="false"/>
+            </column>
+            <column name="display_name" type="${str.type}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="kind" type="${str.type}">
+                <!-- 'host' | 'remote-shell' | 'remote-game' | 'fragment' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="remote_entry_url" type="${str.type}">
+                <!-- Where native-federation fetches the remote's remoteEntry.json.
+                     For 'fragment' rows: the parametrised remote-fragment URL the
+                     parent module calls into. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="exposed_module" type="${str.type}">
+                <!-- Exposed module name (e.g. './Component'). NULL for fragments. -->
+            </column>
+            <column name="owner_user_id" type="${str.type}">
+                <!-- NULL = platform/first-party. Casdoor subject for user modules. -->
+            </column>
+            <column name="version" type="${str.type}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="content_hash" type="varchar(64)">
+                <!-- SHA-256 hex of the bundle tree; content-addressed version. -->
+            </column>
+            <column name="visibility" type="${str.type}" defaultValue="public">
+                <!-- 'public' | 'internal' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="enabled" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="circuit_state" type="${str.type}" defaultValue="closed">
+                <!-- 'closed' | 'open' | 'half' — kill-switch state. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="metadata" type="${json.type}">
+                <!-- Free-form: integrity hashes, scope, dependencies, etc. -->
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="federation_modules" indexName="idx_fed_modules_kind_enabled">
+            <column name="kind"/>
+            <column name="enabled"/>
+        </createIndex>
+        <createIndex tableName="federation_modules" indexName="idx_fed_modules_owner">
+            <column name="owner_user_id"/>
+        </createIndex>
+        <createIndex tableName="federation_modules" indexName="idx_fed_modules_content_hash">
+            <column name="content_hash"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="010-2-seed-initial-modules" author="federation">
+        <!-- Seed the baseline topology so a fresh DB serves a non-empty manifest.
+             URLs are placeholders wired by the deployment's per-remote services.
+             ON CONFLICT-style idempotence is provided by the preCondition guard. -->
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">SELECT COUNT(*) FROM federation_modules</sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="host"/>
+            <column name="display_name" value="Snapdragon — Federation Host"/>
+            <column name="kind" value="host"/>
+            <column name="remote_entry_url" value="/"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;role&quot;:&quot;shell&quot;}"/>
+        </insert>
+        <insert tableName="federation_modules">
+            <column name="slug" value="login"/>
+            <column name="display_name" value="Login UI"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://login:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./LoginComponent"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;public&quot;:true}"/>
+        </insert>
+        <insert tableName="federation_modules">
+            <column name="slug" value="admin"/>
+            <column name="display_name" value="Admin Console"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://admin:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./AdminShell"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;admin&quot;}"/>
+        </insert>
+        <insert tableName="federation_modules">
+            <column name="slug" value="remote-fragment"/>
+            <column name="display_name" value="Shared Remote Fragment (sync-and-serve)"/>
+            <column name="kind" value="fragment"/>
+            <column name="remote_entry_url" value="http://remote-fragment:8080/fragment"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;accepts&quot;:[&quot;slug&quot;,&quot;hash&quot;]}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

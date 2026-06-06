@@ -1,0 +1,93 @@
+spring:
+  application:
+    name: snapdragon-federation
+
+  # The spring-boot-starter-data-cassandra-reactive starter is on the classpath
+  # ONLY for the best-effort manifest write-through cache (CassandraManifestCache),
+  # which builds its own CqlSession lazily + gated. We do NOT want Spring Boot to
+  # auto-manage a CqlSession (it would eagerly dial Cassandra at startup and the
+  # actuator Cassandra health contributor would fail a no-Cassandra boot). Exclude
+  # the auto-config so startup never depends on a reachable Cassandra — matching
+  # admin-bff's "driver only, no spring-data autoconfig" design.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.cassandra.CassandraAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.cassandra.CassandraReactiveDataAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.cassandra.CassandraReactiveRepositoriesAutoConfiguration
+      - org.springframework.boot.actuate.autoconfigure.cassandra.CassandraHealthContributorAutoConfiguration
+      - org.springframework.boot.actuate.autoconfigure.cassandra.CassandraReactiveHealthContributorAutoConfiguration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Casdoor issuer. The JWK set is discovered from the issuer's
+          # well-known config; override the issuer per environment.
+          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}"
+
+  # Runtime data access is REACTIVE (R2DBC). Owns federation_modules,
+  # user_modules, moderation_requests, federation_override.
+  r2dbc:
+    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://snapdragon-pg.snapdragon-backend.svc.cluster.local:5432/federation}"
+    username: "${SPRING_R2DBC_USERNAME:snapdragon}"
+    password: "${SPRING_R2DBC_PASSWORD:}"
+
+  # Liquibase owns schema migrations. It has NO R2DBC runner, so it uses a plain
+  # JDBC datasource — the ONLY JDBC use in the app; all runtime access is R2DBC.
+  liquibase:
+    enabled: true
+    change-log: "classpath:db/changelog/db.changelog-master.xml"
+    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://snapdragon-pg.snapdragon-backend.svc.cluster.local:5432/federation}"
+    user: "${SPRING_LIQUIBASE_USER:snapdragon}"
+    password: "${SPRING_LIQUIBASE_PASSWORD:}"
+
+app:
+  # Bundle storage for user_modules. 'filesystem' (default) keeps a vanilla
+  # `docker compose up -d` working with no object store; 's3' swaps in the
+  # S3/MinIO strategy (currently a documented stub — see README Deferred).
+  bundles:
+    storage: "${APP_BUNDLES_STORAGE:filesystem}"
+    dir: "${APP_BUNDLES_DIR:/var/snapdragon/federation/bundles}"
+    s3:
+      endpoint: "${APP_BUNDLES_S3_ENDPOINT:}"
+      region: "${APP_BUNDLES_S3_REGION:us-east-1}"
+      access-key: "${APP_BUNDLES_S3_ACCESS_KEY:}"
+      secret-key: "${APP_BUNDLES_S3_SECRET_KEY:}"
+      bucket: "${APP_BUNDLES_S3_BUCKET:snapdragon-federation}"
+
+  # Best-effort write-through cache of the rendered manifest into a Cassandra
+  # table the remote-fragment pods / edge can poll. Disabled-friendly: any
+  # failure (unconfigured / unreachable) logs + no-ops; the authoritative read
+  # always falls back to Postgres. Mirrors admin-bff's CassandraRouteMirror.
+  manifest-cache:
+    cassandra:
+      enabled: "${MANIFEST_CACHE_ENABLED:false}"
+      contact-point: "${MANIFEST_CACHE_CASSANDRA:cassandra.snapdragon-pki.svc.cluster.local:9042}"
+      keyspace: "${MANIFEST_CACHE_KEYSPACE:snapdragon_federation}"
+      local-dc: "${MANIFEST_CACHE_LOCAL_DC:dc1}"
+
+# SpringDoc OpenAPI. Spec at /v3/api-docs is the source the platform
+# ng-openapi-gen typed clients + docs pipeline consume. Spec + UI are gated by
+# SecurityConfig: permitAll under dev/test (so gen:fetch can curl the spec
+# without a token) and ROLE_ADMIN otherwise (prod). Mirrors admin-bff.
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+  packages-to-scan: systems.snapdragon.federation
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+server:
+  port: 8080

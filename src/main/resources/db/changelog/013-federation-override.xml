@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        federation_override — the kill-switch / scoped-action table.
+
+        An admin (or an approved moderation_request) writes a row here to apply a
+        platform action against a target module/instance/user. The scope triple
+        mirrors the games game_access pattern EXACTLY:
+
+          scope='all'   scope_value=NULL          → applies to everything
+          scope='role'  scope_value=<role name>   → matched vs the JWT roles claim
+          scope='user'  scope_value=<casdoor sub> → matched vs the JWT subject
+
+        action is the override verb applied to the federation_modules read path:
+
+          'circuit-break' → flips circuit_state='open' (manifest drops the remote)
+          'unpublish'     → flips enabled=false
+          'remove'        → hard-removes the module + its bundles
+
+        Persisting the override (rather than only mutating federation_modules)
+        keeps an audit trail of who-killed-what-when and lets a future scoped /
+        per-role-BFF read path layer additional filtering on top.
+    -->
+
+    <changeSet id="013-1-federation-override-table" author="federation">
+        <createTable tableName="federation_override">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="scope" type="${str.type}">
+                <!-- 'all' | 'role' | 'user' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="target" type="${str.type}">
+                <!-- scope_value: NULL for 'all'; role name for 'role'; casdoor
+                     subject for 'user'. Also names the module slug the action
+                     applies to (an override row addresses both who + what). -->
+            </column>
+            <column name="action" type="${str.type}">
+                <!-- 'circuit-break' | 'unpublish' | 'remove' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="set_by" type="${str.type}">
+                <!-- Casdoor subject of the admin who applied the override. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="ts" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="federation_override" indexName="idx_fed_override_scope">
+            <column name="scope"/>
+        </createIndex>
+        <createIndex tableName="federation_override" indexName="idx_fed_override_target">
+            <column name="target"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

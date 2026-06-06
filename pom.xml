@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <!-- 3.5.5 matches snapdragon-admin-bff (proven WebFlux + Casdoor reactive
+         JWT resource server + GraalVM native on Java 21). The dynamic
+         federation registry shares that BFF's reactive baseline. -->
+    <version>3.5.5</version>
+    <relativePath/>
+  </parent>
+  <groupId>systems.snapdragon</groupId>
+  <artifactId>federation</artifactId>
+  <version>0.1.0</version>
+  <name>snapdragon-federation</name>
+  <description>Snapdragon dynamic federation registry + manifest API (DB-hosted federated modules)</description>
+
+  <properties>
+    <java.version>21</java.version>
+  </properties>
+
+  <dependencies>
+    <!-- Reactive web (WebFlux) — the whole service is non-blocking. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webflux</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-oauth2-resource-server</artifactId></dependency>
+
+    <!-- SpringDoc — OpenAPI 3 spec at /v3/api-docs + Swagger UI. WEBFLUX
+         variant to match the reactive stack (the servlet starter would drag in
+         spring-webmvc and break the WebFlux app). 2.7.0 = the same pin
+         admin-bff + the games BFF use against the Spring Boot 3.5.x baseline. -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+      <version>2.7.0</version>
+    </dependency>
+
+    <!-- Reactive data access: R2DBC for ALL runtime reads/writes (federation
+         modules, user modules, moderation, overrides). -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-r2dbc</artifactId></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>r2dbc-postgresql</artifactId><scope>runtime</scope></dependency>
+
+    <!-- Liquibase owns schema migrations. Liquibase has no R2DBC runner, so a
+         plain JDBC datasource (org.postgresql) is kept ONLY for Liquibase;
+         every runtime data access goes through R2DBC. -->
+    <dependency><groupId>org.liquibase</groupId><artifactId>liquibase-core</artifactId></dependency>
+    <dependency><groupId>org.springframework</groupId><artifactId>spring-jdbc</artifactId></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+
+    <!-- Cassandra-reactive = best-effort write-through cache for the manifest
+         read path (mirrors admin-bff's CassandraRouteMirror gateway-mirror
+         pattern). The data-cassandra-reactive starter is on the classpath, but
+         its auto-config is EXCLUDED in application.yml so a missing / unreachable
+         Cassandra never blocks startup — the cache builds its own CqlSession
+         lazily + gated and degrades to Postgres on any failure. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-cassandra-reactive</artifactId></dependency>
+
+    <!-- test -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>io.projectreactor</groupId><artifactId>reactor-test</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
+    <!-- R2DBC H2 (runtime data access in @DataR2dbcTest) + JDBC H2 (Liquibase
+         applies the real changelog over the same in-mem DB for the slice
+         tests). PostgreSQL-compat mode is set on the URL. -->
+    <dependency><groupId>io.r2dbc</groupId><artifactId>r2dbc-h2</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
+  </dependencies>
+
+  <build><plugins>
+    <plugin>
+      <groupId>org.graalvm.buildtools</groupId>
+      <artifactId>native-maven-plugin</artifactId>
+    </plugin>
+    <plugin>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-maven-plugin</artifactId>
+    </plugin>
+    <!-- Byte Buddy (via Mockito) only officially supports up to JDK 23; this
+         flag lets it run on newer JDKs (the build host runs Temurin 25). A
+         no-op on JDK <=23, so it is safe for the Java 21 target too. Copied
+         verbatim from admin-bff. -->
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <configuration>
+        <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+      </configuration>
+    </plugin>
+  </plugins></build>
+
+  <profiles>
+    <!-- Native build: `./mvnw -Pnative native:compile` produces a GraalVM
+         binary. The parent's `native` profile (process-aot + reachability
+         metadata) does the heavy lifting; this thin local profile mirrors
+         admin-bff/gateway so the same `-Pnative` invocation works. -->
+    <profile>
+      <id>native</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

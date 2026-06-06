@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      snapdragon-federation schema. Liquibase runs over a JDBC datasource
+      (Liquibase has no R2DBC runner); ALL runtime access goes through R2DBC.
+
+      JSON columns use the `${json.type}` property so the SAME changelog applies
+      on real Postgres (jsonb) and on the H2 PostgreSQL-compat slice-test DB
+      (clob). r2dbc-h2 returns a `jsonb` column as a byte[] (not String), which
+      breaks the String-typed `metadata` / `manifest_json` entity fields; clob
+      reads back as String on both H2 and Postgres. Production can
+      `ALTER TABLE ... ALTER COLUMN ... TYPE jsonb USING ...::jsonb` later if a
+      JSONB codec is wired (see README — Deferred). The games BFF stores the
+      same blobs as a String field for the identical "no R2DBC JSONB codec"
+      reason.
+
+      Tables (ordering):
+        010 — federation_modules   (the registry; engine = games db/changelog/018)
+        011 — user_modules         (per-user bundles; mirror of games game_uploads)
+        012 — moderation_requests  (recommend/refer/decide workflow)
+        013 — federation_override  (kill-switch: circuit-break / unpublish / remove)
+    -->
+
+    <property name="json.type" value="jsonb" dbms="postgresql"/>
+    <property name="json.type" value="clob"  dbms="h2"/>
+
+    <!-- String columns: `text` on Postgres (indexable, unbounded). H2 maps
+         Liquibase `text` to CLOB, which it refuses to index / UNIQUE-constrain
+         (`Feature not supported: Index on column ... CHARACTER LARGE OBJECT`).
+         Use a bounded varchar on H2 so the slice tests apply the SAME indexed
+         DDL the production Postgres schema gets. -->
+    <property name="str.type" value="text"           dbms="postgresql"/>
+    <property name="str.type" value="varchar(1024)"  dbms="h2"/>
+
+    <property name="now" value="NOW()"           dbms="postgresql"/>
+    <property name="now" value="CURRENT_TIMESTAMP" dbms="h2"/>
+
+    <include file="db/changelog/010-federation-modules.xml"/>
+    <include file="db/changelog/011-user-modules.xml"/>
+    <include file="db/changelog/012-moderation-requests.xml"/>
+    <include file="db/changelog/013-federation-override.xml"/>
+</databaseChangeLog>

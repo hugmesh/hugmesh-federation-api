@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        moderation_requests — the recommend / refer / decide workflow.
+
+        A mod RECOMMENDS or REFERS an action (instance-block, user-removal); an
+        admin DECIDES (approved/denied). Mirrors the games ModerationController's
+        ROLE_MOD-recommends / ROLE_ADMIN-decides split, lifted to the federation
+        platform surface. An approved request is what authorizes a
+        federation_override (013) to be written.
+
+          • kind          — 'instance-block' | 'user-removal'
+          • status        — 'recommended' | 'referred' | 'approved' | 'denied'
+          • mod_referrer  — Casdoor subject of the mod who referred it up
+          • admin_decider — Casdoor subject of the admin who decided
+    -->
+
+    <changeSet id="012-1-moderation-requests-table" author="federation">
+        <createTable tableName="moderation_requests">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="requester" type="${str.type}">
+                <!-- Casdoor subject who opened the request. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="kind" type="${str.type}">
+                <!-- 'instance-block' | 'user-removal' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="target" type="${str.type}">
+                <!-- The instance host or user id the action is aimed at. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="${str.type}"/>
+            <column name="status" type="${str.type}" defaultValue="recommended">
+                <!-- 'recommended' | 'referred' | 'approved' | 'denied' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="mod_referrer" type="${str.type}"/>
+            <column name="admin_decider" type="${str.type}"/>
+            <column name="ts" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="moderation_requests" indexName="idx_mod_requests_status">
+            <column name="status"/>
+        </createIndex>
+        <createIndex tableName="moderation_requests" indexName="idx_mod_requests_target">
+            <column name="target"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
