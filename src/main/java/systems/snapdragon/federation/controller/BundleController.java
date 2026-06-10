@@ -92,6 +92,51 @@ public class BundleController {
     }
 
     @Operation(
+        summary = "READ my card's current body by slug (owner = JWT subject).",
+        description = """
+            Returns the entry-file bytes of the CALLER'S OWN active (non-superseded)
+            bundle for the slug — the read-my-card-body the user-bff proxies so the
+            WYSIWYG editor can pre-fill for Edit. Owner-scoped: a normal user only
+            ever reads their own card (a non-owner gets 404, never another user's
+            bytes); ADMIN may read the slug's active row regardless of owner. 404 if
+            the caller has no active bundle for the slug.
+            """)
+    @GetMapping("/slug/{slug}/body")
+    public Mono<ResponseEntity<Resource>> readBody(@AuthenticationPrincipal Jwt jwt,
+                                                   @PathVariable String slug) {
+        return adminMono()
+                .flatMap(admin -> bundles.readOwnBody(jwt.getSubject(), slug, admin))
+                .map(res -> ResponseEntity.ok().contentType(mediaTypeFor(slug)).body(res));
+    }
+
+    @Operation(
+        summary = "DELETE my current bundle for a slug (owner = JWT subject).",
+        description = """
+            Deletes the CALLER'S OWN active (non-superseded) bundle for the slug:
+            removes the content-addressed version from storage and marks the
+            user_modules row superseded (mirrors PUT supersession), so the slug has
+            no active version afterwards and history stays queryable. Owner-scoped: a
+            normal user deletes ONLY their own card (a non-owner gets 404, never a
+            cross-tenant delete); ADMIN may delete the slug's active row regardless
+            of owner. 404 if the caller has no active bundle for the slug.
+            """)
+    @DeleteMapping("/{slug}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public Mono<Void> delete(@AuthenticationPrincipal Jwt jwt,
+                             @PathVariable String slug) {
+        return adminMono()
+                .flatMap(admin -> bundles.deleteForOwner(jwt.getSubject(), slug, admin));
+    }
+
+    /** True when the current caller holds {@code ROLE_ADMIN} (Casdoor admin override). */
+    private static Mono<Boolean> adminMono() {
+        return org.springframework.security.core.context.ReactiveSecurityContextHolder.getContext()
+                .map(ctx -> ctx.getAuthentication().getAuthorities().stream()
+                        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority())))
+                .defaultIfEmpty(false);
+    }
+
+    @Operation(
         summary = "FETCH a bundle file by content-hash (remote-fragment SYNC read).",
         description = """
             Streams a single file from a content-addressed bundle. The

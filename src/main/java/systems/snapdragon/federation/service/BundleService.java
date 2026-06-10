@@ -95,6 +95,7 @@ public class BundleService {
                                 m.setOwnerUserId(ownerUserId);
                                 m.setSlug(slug);
                                 m.setVersionDir(locator);
+                                m.setEntryFile(safeEntry);
                                 m.setContentHash(hash);
                                 m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
                                 m.setVisibility(visibility == null ? "internal" : visibility);
@@ -113,6 +114,68 @@ public class BundleService {
                 .flatMap(res -> res == null
                         ? Mono.error(new ResponseStatusException(NOT_FOUND, "no file: " + relativePath))
                         : Mono.just(res));
+    }
+
+    /**
+     * Read the CALLER'S OWN current card body by slug — the entry-file bytes of the
+     * caller's active (non-superseded) bundle for that slug. This is the
+     * read-my-card-body the user-bff proxies so the WYSIWYG editor can pre-fill for
+     * Edit. Owner-scoped: only the row owned by {@code ownerUserId} is read (an
+     * {@code admin} caller reads the slug's active row regardless of owner).
+     *
+     * <p>404 if the caller has no active bundle for the slug, or its entry file is
+     * gone from storage.
+     */
+    public Mono<Resource> readOwnBody(String ownerUserId, String slug, boolean admin) {
+        return activeRowForCaller(ownerUserId, slug, admin)
+                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug)))
+                .flatMap(m -> {
+                    String entry = (m.getEntryFile() == null || m.getEntryFile().isBlank())
+                            ? "remoteEntry.json" : m.getEntryFile();
+                    // storage.read returns null when the entry file is gone; wrap in
+                    // Optional so Reactor doesn't silently drop the null into onComplete.
+                    return Mono.fromCallable(() -> java.util.Optional.ofNullable(storage.read(m.getVersionDir(), entry)))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(opt -> opt
+                                    .<Mono<Resource>>map(Mono::just)
+                                    .orElseGet(() -> Mono.error(
+                                            new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug))));
+                });
+    }
+
+    /**
+     * DELETE the CALLER'S OWN current bundle for a slug. Finds the caller's active
+     * (non-superseded) {@code user_modules} row, removes its content-addressed
+     * version from {@link BundleStorage}, and marks the row superseded (mirroring
+     * {@link #supersedePrior}) so history stays queryable — the slug simply has no
+     * active version afterwards. Owner-scoped: only the caller's own row is touched
+     * (an {@code admin} caller may delete the slug's active row regardless of owner).
+     *
+     * <p>404 if the caller has no active bundle for the slug (so a delete of
+     * someone-else's card surfaces as not-found to a non-admin, never as a
+     * cross-tenant delete).
+     */
+    public Mono<Void> deleteForOwner(String ownerUserId, String slug, boolean admin) {
+        return activeRowForCaller(ownerUserId, slug, admin)
+                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no bundle for slug: " + slug)))
+                .flatMap(m -> Mono.fromRunnable(() -> storage.deleteVersion(m.getVersionDir()))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .then(Mono.defer(() -> {
+                            m.setSupersededAt(Instant.now());
+                            return repo.save(m);
+                        })))
+                .then();
+    }
+
+    /**
+     * The active row the caller may read/delete: an admin gets the slug's active
+     * row regardless of owner; a normal user gets ONLY their own active row (so a
+     * non-owner sees an empty Mono -> 404, never another user's bundle).
+     */
+    private Mono<UserModule> activeRowForCaller(String ownerUserId, String slug, boolean admin) {
+        return admin
+                ? repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug)
+                : repo.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(slug, ownerUserId);
     }
 
     private Mono<Void> supersedePrior(String slug) {

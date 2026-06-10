@@ -57,4 +57,46 @@ class UserModuleRepositoryTest {
         assertThat(active).isNotNull();
         assertThat(active.getContentHash()).isEqualTo("hash-v2");
     }
+
+    @Test
+    void ownerScopedActiveFinder_returnsCallersOwnRowOnly() {
+        // alice + bob both publish a slug; the owner-scoped finder (the read/delete
+        // anchor) returns ONLY the caller's own active row, never the other user's.
+        UserModule alice = um("shared-slug", "hash-alice");
+        alice.setOwnerUserId("alice");
+        repo.save(alice).block();
+        UserModule bob = um("shared-slug", "hash-bob");
+        bob.setOwnerUserId("bob");
+        repo.save(bob).block();
+
+        UserModule aliceActive = repo
+                .findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc("shared-slug", "alice")
+                .block();
+        assertThat(aliceActive).isNotNull();
+        assertThat(aliceActive.getContentHash()).isEqualTo("hash-alice");
+
+        // A non-owner of any row for the slug gets nothing (-> 404 in the service).
+        UserModule strangerActive = repo
+                .findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc("shared-slug", "carol")
+                .block();
+        assertThat(strangerActive).isNull();
+    }
+
+    @Test
+    void entryFile_roundTrips_andDefaultsForLegacyRow() {
+        // A writer that sets entry_file round-trips it ...
+        UserModule withEntry = um("with-entry", "hash-entry");
+        withEntry.setEntryFile("card.html");
+        repo.save(withEntry).block();
+        UserModule got = repo.findByContentHash("hash-entry").block();
+        assertThat(got).isNotNull();
+        assertThat(got.getEntryFile()).isEqualTo("card.html");
+
+        // ... and a legacy writer that omits it inserts the column default.
+        UserModule legacy = um("legacy", "hash-legacy");
+        repo.save(legacy).block();
+        UserModule legacyGot = repo.findByContentHash("hash-legacy").block();
+        assertThat(legacyGot).isNotNull();
+        assertThat(legacyGot.getEntryFile()).isEqualTo("remoteEntry.json");
+    }
 }

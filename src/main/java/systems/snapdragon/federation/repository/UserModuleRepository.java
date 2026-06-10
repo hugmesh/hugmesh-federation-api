@@ -19,5 +19,13 @@ public interface UserModuleRepository extends ReactiveCrudRepository<UserModule,
 
     Mono<UserModule> findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(String slug);
 
+    /**
+     * The CALLER'S OWN current (non-superseded) bundle for a slug — the owner-scoped
+     * read/delete anchor. Owner = JWT subject; an admin override is handled in the
+     * service by falling back to the slug-only active finder above.
+     */
+    Mono<UserModule> findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(
+            String slug, String ownerUserId);
+
     Mono<UserModule> findByContentHash(String contentHash);
 }
