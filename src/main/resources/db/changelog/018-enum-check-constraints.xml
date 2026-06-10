@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        ENUM / DOMAIN CHECK constraints — DB-level parity for the values the API
+        already restricts in code (the security-hardening API<->DB parity audit).
+
+        Until now several columns carried a small fixed VOCABULARY enforced ONLY in
+        the service layer (e.g. ModerationService.isKind, OverrideService.isAction /
+        isScope, the visibility/circuit_state defaults). A direct DB write (a future
+        writer, a migration, a manual fix) could insert an out-of-vocabulary value
+        that the read paths never expect. These CHECK constraints make the DB reject
+        the same values the API rejects, so the constraint holds regardless of which
+        path writes the row. Bean Validation (@Pattern) was added on the matching
+        request DTOs so the user still gets a clean 400 BEFORE the DB call — the DB
+        CHECK is the backstop, not the first line.
+
+        Portability: plain ANSI `col IN (...)` (NULL-tolerant where the column is
+        nullable) — runs identically on production Postgres AND the H2
+        PostgreSQL-compat slice DB (TestDatabaseConfig). Mirrors the style of the
+        017 reserved-profile-slug CHECK. Each constraint has an explicit rollback.
+
+        Columns constrained (col — vocabulary — API source of truth):
+          federation_modules.kind          host|remote-shell|remote-game|fragment
+          federation_modules.visibility    public|internal
+          federation_modules.circuit_state closed|open|half
+          user_modules.visibility          public|internal
+          moderation_requests.kind         instance-block|user-removal   (ModerationService.isKind)
+          moderation_requests.status        recommended|referred|approved|denied
+          federation_override.scope         all|role|user                (OverrideService.isScope)
+          federation_override.action        circuit-break|unpublish|remove (OverrideService.isAction)
+    -->
+
+    <changeSet id="018-1-federation-modules-enum-checks" author="federation">
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_kind
+                CHECK (kind IN ('host', 'remote-shell', 'remote-game', 'fragment'))
+        </sql>
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_visibility
+                CHECK (visibility IN ('public', 'internal'))
+        </sql>
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_circuit_state
+                CHECK (circuit_state IN ('closed', 'open', 'half'))
+        </sql>
+        <rollback>
+            ALTER TABLE federation_modules DROP CONSTRAINT ck_fed_modules_kind;
+            ALTER TABLE federation_modules DROP CONSTRAINT ck_fed_modules_visibility;
+            ALTER TABLE federation_modules DROP CONSTRAINT ck_fed_modules_circuit_state;
+        </rollback>
+    </changeSet>
+
+    <changeSet id="018-2-user-modules-visibility-check" author="federation">
+        <sql>
+            ALTER TABLE user_modules
+                ADD CONSTRAINT ck_user_modules_visibility
+                CHECK (visibility IN ('public', 'internal'))
+        </sql>
+        <rollback>
+            ALTER TABLE user_modules DROP CONSTRAINT ck_user_modules_visibility
+        </rollback>
+    </changeSet>
+
+    <changeSet id="018-3-moderation-requests-enum-checks" author="federation">
+        <sql>
+            ALTER TABLE moderation_requests
+                ADD CONSTRAINT ck_mod_requests_kind
+                CHECK (kind IN ('instance-block', 'user-removal'))
+        </sql>
+        <sql>
+            ALTER TABLE moderation_requests
+                ADD CONSTRAINT ck_mod_requests_status
+                CHECK (status IN ('recommended', 'referred', 'approved', 'denied'))
+        </sql>
+        <rollback>
+            ALTER TABLE moderation_requests DROP CONSTRAINT ck_mod_requests_kind;
+            ALTER TABLE moderation_requests DROP CONSTRAINT ck_mod_requests_status;
+        </rollback>
+    </changeSet>
+
+    <changeSet id="018-4-federation-override-enum-checks" author="federation">
+        <sql>
+            ALTER TABLE federation_override
+                ADD CONSTRAINT ck_fed_override_scope
+                CHECK (scope IN ('all', 'role', 'user'))
+        </sql>
+        <sql>
+            ALTER TABLE federation_override
+                ADD CONSTRAINT ck_fed_override_action
+                CHECK (action IN ('circuit-break', 'unpublish', 'remove'))
+        </sql>
+        <rollback>
+            ALTER TABLE federation_override DROP CONSTRAINT ck_fed_override_scope;
+            ALTER TABLE federation_override DROP CONSTRAINT ck_fed_override_action;
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

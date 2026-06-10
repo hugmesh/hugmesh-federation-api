@@ -1,7 +1,11 @@
 package systems.snapdragon.federation.model;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Table;
+import systems.snapdragon.federation.web.ValidationPatterns;
 
 import java.time.Instant;
 
@@ -21,23 +25,53 @@ import java.time.Instant;
 @Table("federation_modules")
 public class FederationModule {
 
+    /**
+     * Validation group for the CREATE path ({@code POST /modules}) — the
+     * NOT-NULL/required DB columns (slug, display_name, kind, remote_entry_url,
+     * version) must be present. It EXTENDS {@link jakarta.validation.groups.Default}
+     * so {@code @Validated(OnCreate.class)} also runs the format/enum
+     * ({@code @Pattern}/{@code @Size}) constraints (which live in the Default group)
+     * — required-ness AND format are both checked on create. The UPDATE path
+     * ({@code PUT /modules/{slug}}) is a partial patch (null fields ignored by the
+     * service), so it validates only the Default group: format/enum on whatever IS
+     * supplied, never required-ness.
+     */
+    public interface OnCreate extends jakarta.validation.groups.Default {}
+
     @Id
     private Long id;
+    @NotBlank(groups = OnCreate.class, message = "slug is required")
+    @Pattern(regexp = ValidationPatterns.SLUG,
+            message = "slug must be a DNS-label-style token (lower-alnum + hyphens, 1-128 chars)")
     private String slug;
+    @NotBlank(groups = OnCreate.class, message = "displayName is required")
+    @Size(max = 1024, message = "displayName must be at most 1024 chars")
     private String displayName;
     /** {@code 'host' | 'remote-shell' | 'remote-game' | 'fragment'} */
+    @NotBlank(groups = OnCreate.class, message = "kind is required")
+    @Pattern(regexp = ValidationPatterns.MODULE_KIND,
+            message = "kind must be host|remote-shell|remote-game|fragment")
     private String kind;
+    @NotBlank(groups = OnCreate.class, message = "remoteEntryUrl is required")
+    @Size(max = 1024, message = "remoteEntryUrl must be at most 1024 chars")
     private String remoteEntryUrl;
+    @Size(max = 1024, message = "exposedModule must be at most 1024 chars")
     private String exposedModule;
     /** NULL = platform/first-party; Casdoor subject for a user-published module. */
+    @Size(max = 1024, message = "ownerUserId must be at most 1024 chars")
     private String ownerUserId;
+    @NotBlank(groups = OnCreate.class, message = "version is required")
+    @Size(max = 1024, message = "version must be at most 1024 chars")
     private String version;
     /** SHA-256 hex of the bundle tree; content-addressed version. */
+    @Pattern(regexp = ValidationPatterns.CONTENT_HASH, message = "contentHash must be 64 lower-hex chars")
     private String contentHash;
     /** {@code 'public' | 'internal'} — visibility-filtered in the manifest read path. */
+    @Pattern(regexp = ValidationPatterns.VISIBILITY, message = "visibility must be public|internal")
     private String visibility;
     private boolean enabled;
     /** {@code 'closed' | 'open' | 'half'} — kill-switch circuit state. */
+    @Pattern(regexp = ValidationPatterns.CIRCUIT_STATE, message = "circuitState must be closed|open|half")
     private String circuitState;
     /** Free-form JSON metadata (integrity hashes, scope flags, dependencies). */
     private String metadata;

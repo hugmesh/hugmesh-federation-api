@@ -2,7 +2,9 @@ package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -12,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.VanityProfileDto;
 import systems.snapdragon.federation.service.VanityService;
+import systems.snapdragon.federation.web.ValidationPatterns;
 
 import static systems.snapdragon.federation.controller.ReservedNames.RESERVED_LABELS;
 
@@ -46,6 +49,7 @@ import static systems.snapdragon.federation.controller.ReservedNames.RESERVED_LA
 @Tag(name = "Vanity", description = "Resolve <username>.<domain> to the user's PUBLIC profile fragment. Public read.")
 @RestController
 @RequestMapping("/api/federation/vanity")
+@Validated
 public class VanityController {
 
     /**
@@ -73,7 +77,9 @@ public class VanityController {
             otherwise 404. Public read — no JWT. Never returns internal fragments.
             """)
     @GetMapping("/{username}")
-    public Mono<VanityProfileDto> resolve(@PathVariable String username) {
+    public Mono<VanityProfileDto> resolve(
+            @PathVariable @Pattern(regexp = ValidationPatterns.USERNAME,
+                    message = "username must be a DNS-label token") String username) {
         return resolveLabel(username);
     }
 

@@ -2,17 +2,21 @@ package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.service.BundleService;
+import systems.snapdragon.federation.web.ValidationPatterns;
 
 import java.util.Map;
 
@@ -35,6 +39,7 @@ import java.util.Map;
 @Tag(name = "Bundles", description = "Per-user federated-module bundle storage + content-hash sync.")
 @RestController
 @RequestMapping("/api/federation/bundles")
+@Validated
 public class BundleController {
 
     private final BundleService bundles;
@@ -63,13 +68,16 @@ public class BundleController {
 
     @Operation(summary = "List bundle versions for a slug.")
     @GetMapping("/slug/{slug}")
-    public Flux<UserModule> bySlug(@PathVariable String slug) {
+    public Flux<UserModule> bySlug(
+            @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
         return bundles.listForSlug(slug);
     }
 
     @Operation(summary = "Bundle metadata by content-hash.")
     @GetMapping("/{contentHash}")
-    public Mono<UserModule> byHash(@PathVariable String contentHash) {
+    public Mono<UserModule> byHash(
+            @PathVariable @Pattern(regexp = ValidationPatterns.CONTENT_HASH,
+                    message = "contentHash must be 64 lower-hex chars") String contentHash) {
         return bundles.byContentHash(contentHash);
     }
 
@@ -83,9 +91,13 @@ public class BundleController {
             """)
     @PutMapping(value = "/{slug}", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
     public Mono<UserModule> put(@AuthenticationPrincipal Jwt jwt,
-                                @PathVariable String slug,
-                                @RequestParam(value = "entryFile", required = false) String entryFile,
-                                @RequestParam(value = "visibility", required = false) String visibility,
+                                @PathVariable @Pattern(regexp = ValidationPatterns.SLUG,
+                                        message = "invalid slug") String slug,
+                                @RequestParam(value = "entryFile", required = false)
+                                @Size(max = 512, message = "entryFile must be at most 512 chars") String entryFile,
+                                @RequestParam(value = "visibility", required = false)
+                                @Pattern(regexp = ValidationPatterns.VISIBILITY,
+                                        message = "visibility must be public|internal") String visibility,
                                 @RequestParam(value = "manifest", required = false) String manifestJson,
                                 @RequestBody Flux<DataBuffer> body) {
         return bundles.put(jwt.getSubject(), slug, entryFile, visibility, manifestJson, body);
@@ -103,7 +115,8 @@ public class BundleController {
             """)
     @GetMapping("/slug/{slug}/body")
     public Mono<ResponseEntity<Resource>> readBody(@AuthenticationPrincipal Jwt jwt,
-                                                   @PathVariable String slug) {
+                                                   @PathVariable @Pattern(regexp = ValidationPatterns.SLUG,
+                                                           message = "invalid slug") String slug) {
         return adminMono()
                 .flatMap(admin -> bundles.readOwnBody(jwt.getSubject(), slug, admin))
                 .map(res -> ResponseEntity.ok().contentType(mediaTypeFor(slug)).body(res));
@@ -123,7 +136,8 @@ public class BundleController {
     @DeleteMapping("/{slug}")
     @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
     public Mono<Void> delete(@AuthenticationPrincipal Jwt jwt,
-                             @PathVariable String slug) {
+                             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG,
+                                     message = "invalid slug") String slug) {
         return adminMono()
                 .flatMap(admin -> bundles.deleteForOwner(jwt.getSubject(), slug, admin));
     }
@@ -145,7 +159,8 @@ public class BundleController {
             relative path inside the bundle.
             """)
     @GetMapping("/{contentHash}/files/{*path}")
-    public Mono<ResponseEntity<Resource>> fetch(@PathVariable String contentHash,
+    public Mono<ResponseEntity<Resource>> fetch(@PathVariable @Pattern(regexp = ValidationPatterns.CONTENT_HASH,
+                                                        message = "contentHash must be 64 lower-hex chars") String contentHash,
                                                 @PathVariable String path) {
         String rel = path.startsWith("/") ? path.substring(1) : path;
         return bundles.fetch(contentHash, rel)

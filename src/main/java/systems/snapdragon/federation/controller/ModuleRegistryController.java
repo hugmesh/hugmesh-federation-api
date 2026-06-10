@@ -2,13 +2,17 @@ package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.service.ModuleRegistryService;
+import systems.snapdragon.federation.web.ValidationPatterns;
 
 /**
  * Module registry CRUD — the admin-bff / owner-client write surface for
@@ -20,6 +24,7 @@ import systems.snapdragon.federation.service.ModuleRegistryService;
 @RestController
 @RequestMapping("/api/federation/modules")
 @PreAuthorize("hasRole('ADMIN')")
+@Validated
 public class ModuleRegistryController {
 
     private final ModuleRegistryService registry;
@@ -36,27 +41,32 @@ public class ModuleRegistryController {
 
     @Operation(summary = "Get one module by slug.")
     @GetMapping("/{slug}")
-    public Mono<FederationModule> get(@PathVariable String slug) {
+    public Mono<FederationModule> get(
+            @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
         return registry.get(slug);
     }
 
     @Operation(summary = "Register a new module.")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Mono<FederationModule> create(@RequestBody FederationModule module) {
+    public Mono<FederationModule> create(
+            @Validated(FederationModule.OnCreate.class) @RequestBody FederationModule module) {
         return registry.create(module);
     }
 
     @Operation(summary = "Update a module by slug (partial — non-null fields win).")
     @PutMapping("/{slug}")
-    public Mono<FederationModule> update(@PathVariable String slug, @RequestBody FederationModule patch) {
+    public Mono<FederationModule> update(
+            @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug,
+            @Valid @RequestBody FederationModule patch) {
         return registry.update(slug, patch);
     }
 
     @Operation(summary = "Delete a module by slug.")
     @DeleteMapping("/{slug}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> delete(@PathVariable String slug) {
+    public Mono<Void> delete(
+            @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
         return registry.delete(slug);
     }
 }
