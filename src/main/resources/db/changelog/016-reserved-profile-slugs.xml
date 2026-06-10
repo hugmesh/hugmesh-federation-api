@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        RESERVED-USERNAME guard at the DB layer.
+
+        A user's PUBLIC profile is a federation_modules row with
+        slug = 'profile-<username>' and kind = 'fragment' (the VanityService
+        convention; see 015). A vanity username therefore MUST NOT equal any
+        dedicated app path-prefix route or reserved service subdomain — otherwise
+        <username>.snapdragon.systems / .games would collide with a platform route.
+
+        The serving layer already hard-404s a reserved first-label
+        (VanityController + ReservedNames.RESERVED_LABELS). This changeset is the
+        DB-LEVEL backstop: a CHECK constraint on federation_modules forbidding a
+        'fragment' row whose slug is 'profile-<reserved>'. The forbidden slug list
+        below is GENERATED from the canonical ReservedNames.RESERVED_LABELS set —
+        the SAME list the serving layer + the user-bff repo use (canonical source:
+        the fe-/be-gateway routes + reserved subdomains + the snapdragon.games
+        route prefixes). Keep this list in sync with ReservedNames if that set
+        changes.
+
+        Portability: plain ANSI `kind <> 'fragment' OR slug NOT IN (...)` CHECK —
+        runs identically on production Postgres AND the H2 PostgreSQL-compat slice
+        DB (TestDatabaseConfig). Non-fragment rows (host/remote-shell/remote-game)
+        are unaffected; only the profile-fragment naming space is constrained.
+    -->
+
+    <changeSet id="016-1-reserved-profile-slugs-check" author="federation">
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_reserved_profile_slug
+                CHECK (
+                    kind &lt;&gt; 'fragment'
+                    OR slug NOT IN (
+                        'profile-_fragments', 'profile-_matrix', 'profile-_remotes',
+                        'profile-actuator', 'profile-admin', 'profile-api', 'profile-api-docs',
+                        'profile-apidocs', 'profile-argocd', 'profile-assets', 'profile-auth',
+                        'profile-banned', 'profile-be', 'profile-bff', 'profile-docs',
+                        'profile-favicon', 'profile-fragments', 'profile-games',
+                        'profile-games-dodecahedron', 'profile-games-rpg-maker',
+                        'profile-games-three-wizards', 'profile-games-vn-maker', 'profile-gitlab',
+                        'profile-gm', 'profile-headscale', 'profile-health', 'profile-healthz',
+                        'profile-help', 'profile-id', 'profile-login', 'profile-logout',
+                        'profile-mastodon', 'profile-matrix', 'profile-metrics', 'profile-mod',
+                        'profile-oauth', 'profile-oauth2', 'profile-pki', 'profile-play',
+                        'profile-producer', 'profile-producer-registration', 'profile-public',
+                        'profile-publisher', 'profile-registration', 'profile-registry',
+                        'profile-robots', 'profile-root', 'profile-scale', 'profile-sitemap',
+                        'profile-social', 'profile-static', 'profile-status', 'profile-support',
+                        'profile-user', 'profile-users', 'profile-vault', 'profile-wasm',
+                        'profile-wasm-fragment', 'profile-well-known', 'profile-www'
+                    )
+                )
+        </sql>
+        <rollback>
+            ALTER TABLE federation_modules
+                DROP CONSTRAINT ck_fed_modules_reserved_profile_slug
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

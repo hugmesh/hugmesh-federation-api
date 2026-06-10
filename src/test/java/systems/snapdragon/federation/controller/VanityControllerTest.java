@@ -1,12 +1,16 @@
 package systems.snapdragon.federation.controller;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.VanityProfileDto;
 import systems.snapdragon.federation.service.VanityService;
+
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -64,6 +68,36 @@ class VanityControllerTest {
                 .verify();
 
         // A reserved label never reaches the service.
+        verify(svc, never()).resolve(any());
+    }
+
+    static Set<String> reservedLabels() {
+        return ReservedNames.RESERVED_LABELS;
+    }
+
+    /**
+     * EVERY label in the canonical reserved set must hard-404 (prefix-collision:
+     * a username that exactly equals a reserved app route / subdomain) and must
+     * NEVER reach the resolve service. This is the serving-layer half of the
+     * reserved-username guard (the DB CHECK in 016 is the other half).
+     */
+    @ParameterizedTest
+    @MethodSource("reservedLabels")
+    void everyReservedLabel_is404_andNeverHitsService(String label) {
+        VanityService svc = mock(VanityService.class);
+        VanityController c = new VanityController(svc);
+
+        StepVerifier.create(c.resolve(label))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(ResponseStatusException.class);
+                    assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+                })
+                .verify();
+        // case-insensitive: the upper-cased label is reserved too.
+        StepVerifier.create(c.resolve(label.toUpperCase()))
+                .expectError(ResponseStatusException.class)
+                .verify();
+
         verify(svc, never()).resolve(any());
     }
 
