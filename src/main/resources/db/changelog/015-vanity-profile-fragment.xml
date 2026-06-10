@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Vanity profile fragments — seed rows demonstrating the username<->fragment
+        convention behind <username>.<domain> (see VanityService):
+
+          slug          = 'profile-<username>'   (deterministic; the UNIQUE slug
+                          column is the resolve key — no extra mapping table).
+          kind          = 'fragment'             (served by the remote-fragment
+                          sync-and-serve-static fleet, like every fragment bundle).
+          owner_user_id = '<username>'           (Casdoor subject — the scope=user
+                          kill-switch already covers a user's vanity profile).
+          visibility    = 'public' | 'internal'  (the GATE — only 'public'
+                          fragments resolve at a vanity host).
+
+        These seeds let the H2 PostgreSQL-compat slice test resolve a PUBLIC
+        profile fragment AND confirm an INTERNAL one is NOT resolvable, against the
+        REAL applied changelog. They reuse NO new columns — every field already
+        exists in 010-federation-modules.
+
+        Idempotent: the preCondition only seeds when the public profile fragment is
+        absent, so re-running the changelog over an existing DB is a no-op (matches
+        the 010-2 seed-guard style). NULL content_hash here means "module
+        registered, bundle not yet synced" — the resolve still returns the
+        descriptor (with a null fragmentPath) so the host can distinguish that case.
+    -->
+
+    <changeSet id="015-1-seed-vanity-profile-fragments" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'profile-alice'
+            </sqlCheck>
+        </preConditions>
+
+        <!-- A PUBLIC profile fragment: resolvable at alice.<domain>. -->
+        <insert tableName="federation_modules">
+            <column name="slug" value="profile-alice"/>
+            <column name="display_name" value="Alice — Public Profile"/>
+            <column name="kind" value="fragment"/>
+            <column name="remote_entry_url" value="/_fragments/profile-alice/remoteEntry.json"/>
+            <column name="owner_user_id" value="alice"/>
+            <column name="version" value="0.1.0"/>
+            <column name="content_hash" value="a11ce0000000000000000000000000000000000000000000000000000000beef"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;profile&quot;:true,&quot;vanity&quot;:true}"/>
+        </insert>
+
+        <!-- An INTERNAL profile fragment: NOT resolvable at bob.<domain> (404). -->
+        <insert tableName="federation_modules">
+            <column name="slug" value="profile-bob"/>
+            <column name="display_name" value="Bob — Internal Profile"/>
+            <column name="kind" value="fragment"/>
+            <column name="remote_entry_url" value="/_fragments/profile-bob/remoteEntry.json"/>
+            <column name="owner_user_id" value="bob"/>
+            <column name="version" value="0.1.0"/>
+            <column name="content_hash" value="b0b0000000000000000000000000000000000000000000000000000000000000"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;profile&quot;:true,&quot;vanity&quot;:false}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

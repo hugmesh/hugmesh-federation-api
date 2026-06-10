@@ -34,6 +34,9 @@ import java.util.Map;
  *
  * <p>Gating:
  * <ul>
+ *   <li>vanity resolve ({@code GET /api/federation/vanity/**}) = permitAll
+ *       (PUBLIC — the public profile served at {@code <username>.<domain>};
+ *       VanityService only ever returns public/enabled/circuit-closed fragments);</li>
  *   <li>manifest read ({@code GET /api/federation/manifest}) = authenticated
  *       (visibility/role-filtered in code by ManifestService);</li>
  *   <li>module-write ({@code /api/federation/modules/**}), overrides
@@ -62,6 +65,13 @@ public class SecurityConfig {
     private static void commonRoutes(ServerHttpSecurity.AuthorizeExchangeSpec ex) {
         // Probes public so k8s/Docker healthchecks need no token.
         ex.pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll();
+        // Vanity resolve is a PUBLIC read (the public profile served at
+        // <username>.<domain>) — anonymous browsers hit it, so NO JWT is required.
+        // Safe because VanityService ONLY ever returns a visibility='public',
+        // enabled, circuit-closed profile fragment (filtered in the query + in
+        // code); an internal / disabled / missing one is 404. GET-only so it can
+        // never mutate. Declared BEFORE the authenticated catch-alls.
+        ex.pathMatchers(HttpMethod.GET, "/api/federation/vanity", "/api/federation/vanity/**").permitAll();
         // Registry write + kill-switch = admin only (defence-in-depth on top of
         // the @PreAuthorize method gates).
         ex.pathMatchers("/api/federation/modules/**").hasRole("ADMIN");

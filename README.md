@@ -31,6 +31,8 @@ by inventing new patterns.
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
 | `/api/federation/manifest` | GET | authenticated | The runtime manifest: enabled + circuit-closed + visibility-permitted remotes, `{generatedAt, remotes[]}`. Visibility/role filtered **in code** per caller; Cassandra write-through cached. |
+| `/api/federation/vanity/{username}` | GET | **public (no JWT)** | **Vanity-subdomain resolve.** Returns the user's PUBLIC profile-fragment descriptor (`remoteEntryUrl`, `contentHash`, `/_fragments/<slug>/<hash>/` path) iff a `slug=profile-<username>`, `kind=fragment`, `visibility=public`, enabled, circuit-closed module exists; else **404**. Never returns internal fragments. |
+| `/api/federation/vanity` (+ `Host:` header) | GET | **public (no JWT)** | Same resolve, but the username is the **first DNS label** of the `Host` header (`alice.<domain>` → `alice`) — lets the gateway forward the vanity host verbatim. |
 | `/api/federation/modules` | GET/POST | ROLE_ADMIN | Registry CRUD (list / create). |
 | `/api/federation/modules/{slug}` | GET/PUT/DELETE | ROLE_ADMIN | Registry CRUD (get / update / delete). |
 | `/api/federation/bundles/{slug}` | PUT | authenticated (owner) | Upload a module bundle (content-hash versioned). |
@@ -74,6 +76,68 @@ filters applied per request so the same DB rows serve every audience:
    overrides are unchanged: they mutate `circuit_state` / `enabled` at apply time
    and are dropped by the enabled+circuit DB finder, so they are **not** in the
    active scope set (no regression).
+
+### Vanity subdomains (`<username>.<domain>`)
+
+A user can serve their PUBLIC profile at `https://<username>.snapdragon.systems`.
+The federation API owns the **resolve** step.
+
+**The flow (end to end):**
+
+```
+wildcard DNS *.<domain>  ─►  backend ingress  ─►  fe-gateway
+   (Host: alice.<domain>)                          │
+   the fe-gateway has a Host=*.<domain> route, ORDERED AFTER the apex + the
+   reserved service hosts (id. api. matrix. mastodon. scale. headscale.), so the
+   reserved subdomains are matched first and never captured by the wildcard
+                                                    │
+                              GET /api/federation/vanity  (Host: alice.<domain>)
+                                                    ▼
+   federation-api: first DNS label `alice` ─► VanityService.resolve("alice")
+       SELECT … WHERE slug='profile-alice' AND kind='fragment'
+                   AND visibility='public' AND enabled AND circuit_state='closed'
+   ─► VanityProfileDto { remoteEntryUrl, contentHash, /_fragments/profile-alice/<hash>/ }
+                                                    ▼
+   the vanity host renders that fragment (remote-fragment serves the bytes)
+```
+
+**username ↔ fragment association (the chosen convention).** A user's public
+profile is ONE `federation_modules` row:
+
+| column | value | why |
+|---|---|---|
+| `slug` | `profile-<username>` | deterministic from the username → the resolve is a single **unique-slug** lookup, no extra mapping table (the `slug` column is already UNIQUE + indexed). |
+| `kind` | `fragment` | served by the remote-fragment sync-and-serve-static fleet, exactly like every other fragment bundle. |
+| `owner_user_id` | `<username>` (Casdoor subject) | the `scope=user` kill-switch already covers a user's vanity profile with **no new wiring**. |
+| `visibility` | `public` | **the gate** — only `public` fragments are resolvable at a vanity host. |
+
+The resolve keys on the **slug** (single indexed equality, no scan);
+`owner_user_id` is set for ownership/kill-switch.
+
+**Why it's safe to expose without a JWT.** The vanity endpoint is `permitAll`
+(`GET /api/federation/vanity/**`) because it IS the public profile — anonymous
+browsers hit it. The finder
+(`findBySlugAndKindAndVisibilityAndEnabledTrueAndCircuitState`) filters
+`visibility='public'` + `enabled` + `circuit_state='closed'` **in the query**, and
+`VanityService` re-asserts the public-fragment invariant **in code**
+(`.filter(isPublicProfileFragment)`). An internal / disabled / kill-switched /
+missing fragment therefore yields an empty `Mono` → the controller maps it to
+**404**. There is no code path through this endpoint to an internal row, and it is
+GET-only so it can never mutate. Fully reactive (`Mono` throughout — no blocking).
+
+**Username extraction.** `GET /api/federation/vanity/{username}` takes it
+explicitly; `GET /api/federation/vanity` extracts it from the FIRST DNS LABEL of
+the `Host` header (`VanityController.firstLabel`: strips `:port`, lower-cases,
+requires ≥3 labels so the apex returns no username). The controller also refuses
+reserved first-labels (`id api matrix mastodon scale headscale www`) defensively —
+the gateway route order already prevents those from arriving.
+
+**Seed (changeset 015).** `profile-alice` (public) + `profile-bob` (internal) are
+seeded so the H2 PG-compat slice test resolves a public profile fragment AND
+confirms an internal one 404s, against the REAL applied changelog. They reuse only
+existing `010` columns (no schema change). A NULL `content_hash` means "module
+registered, bundle not yet synced" — the resolve still returns the descriptor (with
+a null `fragmentPath`) so the host can tell that case apart from "served".
 
 ## Schema (Liquibase — `src/main/resources/db/changelog`)
 
@@ -200,6 +264,70 @@ These are intentionally NOT implemented in the scaffold and are documented here:
   `<keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)`
   table exists (created by the cluster init CQL, as the games stack does); the
   service does not create it.
+- **Vanity PUBLISH path (cross-service — NOT wired this pass).** The vanity
+  *resolve* (this repo) is complete and gates on `visibility='public'`. What is
+  **not** implemented is the step that *creates/marks* a user's
+  `slug=profile-<username>`, `kind=fragment`, `visibility=public` module when the
+  user opts in. Today:
+  - `snapdragon-user-bff-api` `ProfileService.save` persists
+    `user_profile.visibility` (`public|internal`) and `vanity_subdomain_enabled`,
+    but has **no** federation call — flipping those flags does **not** register or
+    publish a profile fragment.
+  - `FederationApiClient` (in user-bff-api) can already `PUT
+    /api/federation/bundles/{slug}` (writes a `user_modules` bundle row) and the
+    `CardsController` exposes it — but a `user_modules` bundle row is **not** a
+    `federation_modules` row. `BundleService.put` records the bundle bytes only; it
+    does **not** create the `federation_modules` registry row the manifest +
+    vanity-resolve read from. Registering a `federation_modules` row is
+    `ROLE_ADMIN`-gated (`ModuleRegistryController`).
+
+  **What must be wired (follow-up), source of truth + gate.** The
+  **`user_profile.vanity_subdomain_enabled` + `visibility` flags in user-bff-api
+  are the source of truth** for whether a profile is published public; **federation
+  gates the serve on `federation_modules.visibility='public'`.** To connect them,
+  on `ProfileService.save` when `visibility='public' && vanitySubdomainEnabled`:
+  1. publish the profile fragment bytes (`PUT
+     /api/federation/bundles/profile-<username>?visibility=public` — already
+     possible via `FederationApiClient`); then
+  2. **upsert the `federation_modules` row** (`slug=profile-<username>`,
+     `kind=fragment`, `owner_user_id=<username>`, `visibility=public`,
+     `content_hash` = the published bundle hash). This is the missing link. Two
+     clean options: (a) add an **owner-scoped, self-publish-profile** endpoint to
+     federation (e.g. `PUT /api/federation/vanity/{username}` owner-gated to the JWT
+     subject) that upserts the module from the caller's own bundle — keeps the
+     admin registry CRUD admin-only; or (b) have `BundleService.put` optionally
+     upsert a `federation_modules` row for `kind=fragment` self-publish bundles.
+     Option (a) is recommended (explicit, owner-enforced, no widening of the admin
+     registry). When the user sets `visibility=internal` or disables vanity,
+     symmetrically flip the module to `visibility='internal'` (or `enabled=false`)
+     so the resolve 404s again.
+- **Vanity SERVING (how the resolved fragment is rendered at the host).** The
+  resolved `VanityProfileDto.fragmentPath`
+  (`/_fragments/profile-<username>/<contentHash>/`) is served by the EXISTING
+  `snapdragon-remote-fragment` sync-and-serve-static fleet: its sidecar polls
+  `GET /api/federation/manifest`, filters `kind=='fragment'`, and mirrors each
+  bundle's bytes to `/_fragments/<slug>/<contentHash>/…` where nginx serves them
+  statically (no per-request proxy). The fe-gateway already routes `/_fragments/**`
+  to that fleet. **Gap:** remote-fragment only syncs fragments that appear in the
+  manifest, and the manifest only emits `federation_modules` rows — so a profile
+  fragment is synced/served **only once the publish path above creates its
+  `federation_modules` row**. The vanity HOST page (the shell that the wildcard
+  host serves and that calls `loadRemoteModule(fragmentPath + 'remoteEntry.json')`
+  to render the profile) is a `snapdragon.systems` host concern and is **not** built
+  in this pass — documented as the front-end follow-up.
+- **Gateway PUBLIC_PATHS allowlist (cross-service — THIRD repo, deferred).** The
+  generator adds the `Host=*.snapdragon.systems` fe-gateway route pointing directly
+  at federation (the public vanity read needs no JWT, and federation already
+  `permitAll`s `GET /api/federation/vanity/**`). BUT the **shared gateway image**
+  (`snapdragon-gateway` repo) ends every Spring Security chain with
+  `anyExchange().authenticated()` and only opens a hardcoded `PUBLIC_PATHS`
+  allowlist (`/api/auth`, `/api/registration`, `/api/login`, the login/registration
+  remotes). `/api/federation/vanity/**` is **not** in that allowlist, so the
+  fe-gateway pod would itself **401** the anonymous vanity request before it
+  reaches federation. To make the public vanity host actually reachable end-to-end,
+  add `/api/federation/vanity/**` (or a `Host=*.<domain>` public rule) to the
+  gateway `PUBLIC_PATHS`. That is a one-line change in the `snapdragon-gateway`
+  repo, out of scope for this two-repo (federation + generator) pass.
 
 ## Conventions mirrored
 
