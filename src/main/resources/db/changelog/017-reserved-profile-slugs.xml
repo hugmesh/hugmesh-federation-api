@@ -30,7 +30,7 @@
         are unaffected; only the profile-fragment naming space is constrained.
     -->
 
-    <changeSet id="016-1-reserved-profile-slugs-check" author="federation">
+    <changeSet id="017-1-reserved-profile-slugs-check" author="federation">
         <sql>
             ALTER TABLE federation_modules
                 ADD CONSTRAINT ck_fed_modules_reserved_profile_slug

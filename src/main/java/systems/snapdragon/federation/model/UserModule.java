@@ -22,6 +22,12 @@ public class UserModule {
     private String slug;
     /** Opaque {@code BundleStorage} locator ({@code file:/...} or {@code s3://...}). */
     private String versionDir;
+    /**
+     * Relative filename of the bundle's entry file inside {@code versionDir} (the
+     * single source file the card editor authored; default {@code remoteEntry.json}).
+     * Persisted so the owner can RE-READ the card's current body bytes by slug.
+     */
+    private String entryFile;
     /** SHA-256 hex of the bundle tree; the sync key + version. */
     private String contentHash;
     /** Bundle manifest JSON (round-trips as a String — no r2dbc JSONB codec). */
@@ -35,6 +41,7 @@ public class UserModule {
     public String getOwnerUserId() { return ownerUserId; }
     public String getSlug() { return slug; }
     public String getVersionDir() { return versionDir; }
+    public String getEntryFile() { return entryFile; }
     public String getContentHash() { return contentHash; }
     public String getManifestJson() { return manifestJson; }
     public String getVisibility() { return visibility; }
@@ -45,6 +52,7 @@ public class UserModule {
     public void setOwnerUserId(String ownerUserId) { this.ownerUserId = ownerUserId; }
     public void setSlug(String slug) { this.slug = slug; }
     public void setVersionDir(String versionDir) { this.versionDir = versionDir; }
+    public void setEntryFile(String entryFile) { this.entryFile = entryFile; }
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     public void setManifestJson(String manifestJson) { this.manifestJson = manifestJson; }
     public void setVisibility(String visibility) { this.visibility = visibility; }
