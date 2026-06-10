@@ -29,6 +29,13 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-oauth2-resource-server</artifactId></dependency>
 
+    <!-- jakarta Bean Validation (Hibernate Validator) — @Valid on request bodies,
+         @NotBlank/@Pattern/@Size on DTO fields, and @Validated path/param checks on
+         the controllers. The reactive ValidationWebExchangeAdvice maps a
+         WebExchangeBindException / ConstraintViolationException to a clean 400 with
+         field errors instead of a 500 or a raw DB-constraint error. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+
     <!-- SpringDoc — OpenAPI 3 spec at /v3/api-docs + Swagger UI. WEBFLUX
          variant to match the reactive stack (the servlet starter would drag in
          spring-webmvc and break the WebFlux app). 2.7.0 = the same pin
