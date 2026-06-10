@@ -24,4 +24,17 @@ public interface FederationModuleRepository extends ReactiveCrudRepository<Feder
     Mono<FederationModule> findBySlug(String slug);
 
     Flux<FederationModule> findByOwnerUserId(String ownerUserId);
+
+    /**
+     * The VANITY-RESOLVE finder. Returns the single module for a public profile
+     * fragment iff it is serveable: matched by its deterministic slug
+     * ({@code profile-<username>}), {@code kind='fragment'}, {@code visibility='public'},
+     * {@code enabled=true}, and {@code circuit_state='closed'}. The DB-side
+     * predicate guarantees an internal / disabled / circuit-broken fragment is
+     * NEVER returned to the public vanity read path — there is no code path that
+     * can leak a non-public fragment through this finder. Mono because the slug is
+     * unique (one row max).
+     */
+    Mono<FederationModule> findBySlugAndKindAndVisibilityAndEnabledTrueAndCircuitState(
+            String slug, String kind, String visibility, String circuitState);
 }
