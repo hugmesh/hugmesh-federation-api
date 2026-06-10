@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        federation_override.cleared_at — the scope-override ACTIVE lifecycle.
+
+        federation_override (013) is an append-only audit log. For per-module-slug
+        intent the action mutates federation_modules directly, so the manifest read
+        path drops the remote via the existing enabled+circuit DB finder (no extra
+        state needed). But a scope=all|user|role override does NOT name a single
+        module to mutate — it must be applied at EVERY manifest render, across the
+        whole catalogue, until an admin rearms it.
+
+        To express "is this scope override still in effect?" we add a nullable
+        cleared_at timestamp:
+
+          cleared_at IS NULL  → the scope override is ACTIVE (applied at render)
+          cleared_at IS NOT NULL → it has been rearmed/cleared (no longer applied)
+
+        OverrideService.apply writes the row with cleared_at NULL (active);
+        OverrideService.clearScope stamps cleared_at = now (rearm). The read path
+        loads the active set with findByScopeInAndClearedAtIsNull(...) in ONE
+        reactive query. Existing rows (none in a fresh DB) get NULL; that is
+        harmless because the read path only matches scope in {all,user,role} rows
+        that the new apply path writes with the scope_value in target.
+
+        No DBMS-specific default is needed (the column defaults to SQL NULL), so no
+        ${now} property is referenced here; the header/style mirrors 013 so the H2
+        PG-compat slice tests apply this identical DDL.
+    -->
+
+    <changeSet id="014-1-federation-override-cleared-at" author="federation">
+        <addColumn tableName="federation_override">
+            <column name="cleared_at" type="timestamp">
+                <!-- NULL = scope override active; non-NULL = cleared/rearmed. -->
+            </column>
+        </addColumn>
+
+        <!-- The active-set finder filters by (scope, cleared_at IS NULL). -->
+        <createIndex tableName="federation_override" indexName="idx_fed_override_active">
+            <column name="scope"/>
+            <column name="cleared_at"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -40,7 +40,8 @@ by inventing new patterns.
 | `/api/federation/moderation/{id}/refer` | POST | ROLE_MOD/ADMIN | Refer a request up to admins. |
 | `/api/federation/moderation/{id}/decide` | POST | ROLE_ADMIN | Approve / deny. |
 | `/api/federation/overrides` | GET/POST | ROLE_ADMIN | Kill-switch: list / apply (`circuit-break` \| `unpublish` \| `remove`). |
-| `/api/federation/overrides/{slug}/rearm` | POST | ROLE_ADMIN | Recover a circuit-broken module. |
+| `/api/federation/overrides/{slug}/rearm` | POST | ROLE_ADMIN | Recover a circuit-broken module (per-slug). |
+| `/api/federation/overrides/clear` | POST | ROLE_ADMIN | Rearm an active scope override (`{scope,target}`; stamps `cleared_at`). |
 
 ### The manifest read path (the keystone)
 
@@ -55,6 +56,24 @@ filters applied per request so the same DB rows serve every audience:
 3. **visibility / role** — `public` remotes to everyone; `internal` remotes only
    to `ROLE_ADMIN` / `ROLE_INTERNAL` callers (in `ManifestService`, against the
    JWT authorities).
+4. **active scope overrides** — a `scope=all|user|role` `federation_override` that
+   has not been rearmed (`cleared_at IS NULL`) is applied across the **whole
+   catalogue** at render time (these carry no single module slug to mutate). Loaded
+   reactively once per render via `findByScopeInAndClearedAtIsNull(...)` and applied
+   in code (`isSuppressedByScope`):
+   - `scope=all` — global kill: **every** module drops until rearmed.
+   - `scope=user` (target = a Casdoor subject) — drops modules with
+     `owner_user_id = target` (system NULL-owner modules untouched).
+   - `scope=role` (target = a role name) — drops modules whose **declared**
+     `metadata.requiresRole` (case-insensitive) equals the target role. See the
+     honest limitation under *Deferred / stubbed* — this is a content-declared cut,
+     not an owner-holds-role or per-caller-audience cut.
+
+   Rearm with `POST /api/federation/overrides/clear` `{scope,target}` (stamps
+   `cleared_at`; the suppressed modules return on the next render). Per-module-slug
+   overrides are unchanged: they mutate `circuit_state` / `enabled` at apply time
+   and are dropped by the enabled+circuit DB finder, so they are **not** in the
+   active scope set (no regression).
 
 ## Schema (Liquibase — `src/main/resources/db/changelog`)
 
@@ -64,7 +83,11 @@ filters applied per request so the same DB rows serve every audience:
   (locator + content_hash + manifest_json + visibility + superseded_at).
 - **`moderation_requests`** — recommend / refer / decide workflow.
 - **`federation_override`** — kill-switch audit; scope triple (`all|role|user` +
-  target) mirrors the games `game_access` pattern.
+  target) mirrors the games `game_access` pattern. `cleared_at` (changeset 014) is
+  the scope-override **active lifecycle**: a `scope=all|user|role` row is ACTIVE
+  (applied at every manifest render) while `cleared_at IS NULL`, and is rearmed
+  when `clearScope` stamps it. Per-module-slug rows keep `cleared_at` NULL but are
+  applied via direct module mutation, not the active-set finder.
 
 ### A note on the JSON columns (honest constraint)
 
@@ -156,9 +179,23 @@ These are intentionally NOT implemented in the scaffold and are documented here:
   Kept as two auditable steps (decide, then apply) for now; wire
   `ModerationService.decide(approve)` → `OverrideService.apply` when the policy is
   finalised.
-- **Per-role-BFF read path.** The override `scope` triple (`all|role|user`) is
-  recorded but the manifest read path applies only the visibility/role cut; a
-  scoped per-role-BFF filter can layer on the recorded scope later.
+- **`scope=role` semantics (honest limitation — now IMPLEMENTED, with a caveat).**
+  The active scope read-path (`scope=all|user|role`) is implemented (see *The
+  manifest read path*). `scope=role` suppresses modules whose **declared**
+  `metadata.requiresRole` (case-insensitive) equals the target role. This is
+  deliberately a *content-declared* cut for two reasons:
+  - There is **no module role column** and **no user→role table** in this service
+    (roles live only in the Casdoor JWT), so "drop modules **owned by users who
+    hold** role R" is not expressible here. To get that semantic later, add a
+    `federation_modules.owner_role` column or wire a Casdoor user-roles lookup.
+  - An **audience cut** (filter the manifest by the *caller's* roles) is rejected
+    because the manifest cache stores a single **public-safe view**; per-caller
+    filtering would poison the shared cached body (the first caller's roles would
+    decide everyone's cached manifest). The scope cut therefore runs on the same
+    public-safe stream and stays cache-safe.
+
+  Consequence to be aware of: a module with **no** `requiresRole` in its metadata
+  is **unaffected** by a `scope=role` kill.
 - **Cassandra cache schema bootstrap.** The cache assumes a
   `<keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)`
   table exists (created by the cluster init CQL, as the games stack does); the

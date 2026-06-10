@@ -26,9 +26,26 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  *   <li>{@code remove}        -> hard-delete the module</li>
  * </ul>
  *
- * <p>The override's {@code target} names the module slug to act on (the scope
- * triple — all/role/user — records WHO the action was decided against; the
- * per-role-BFF read path can layer scope filtering on top later, see README).
+ * <p>An override has TWO effects, both audited on the one row:
+ *
+ * <ul>
+ *   <li><b>Per-module mutation</b> (unchanged): the targeted {@code moduleSlug}'s
+ *       read-path fields are mutated (circuit_state / enabled, or hard-delete), so
+ *       the manifest's enabled+circuit DB finder drops it on the next render.</li>
+ *   <li><b>Scope-override active row</b> (changeset 014): the row's
+ *       {@code scope}/{@code target} describe WHO the kill applies to
+ *       ({@code all} = everything; {@code user} = an owner's modules;
+ *       {@code role} = modules declaring that required role). While
+ *       {@code cleared_at IS NULL} the row is ACTIVE and
+ *       {@link ManifestService} applies it across the whole catalogue at render
+ *       time. {@link #clearScope} stamps {@code cleared_at} to rearm.</li>
+ * </ul>
+ *
+ * <p>Audit-format note (intentional change): for scope=user|role the row's
+ * {@code target} now carries the SCOPE VALUE (userId / role name) so the read path
+ * has a clean key to match on; for scope=all {@code target} is NULL. Genuine
+ * per-module intent still mutates the named module. This replaces the previous
+ * {@code "slug@scopeValue"} fold (see README).
  */
 @Service
 public class OverrideService {
@@ -85,14 +102,26 @@ public class OverrideService {
                                                     String action, String setBy) {
         FederationOverride o = new FederationOverride();
         o.setScope(scope);
-        // target carries BOTH the module slug being acted on and the scope_value;
-        // we record the slug as the primary target and fold the scope_value in
-        // when present so the audit row is self-describing.
-        o.setTarget(scopeValue == null || scopeValue.isBlank() ? moduleSlug : moduleSlug + "@" + scopeValue);
+        // The active scope-override row's target is the read-path match KEY:
+        //   scope=all  -> NULL (matches every module — global kill)
+        //   scope=user -> the owner userId (matched vs module.owner_user_id)
+        //   scope=role -> the role name  (matched vs module metadata requiresRole)
+        // (the named moduleSlug is still mutated above for genuine per-slug intent).
+        o.setTarget(scopeForTarget(scope, moduleSlug, scopeValue));
         o.setAction(action);
         o.setSetBy(setBy);
         o.setTs(Instant.now());
+        // clearedAt stays NULL => the scope override is ACTIVE (changeset 014).
         return overrides.save(o);
+    }
+
+    /** Decision-1 target rule: NULL for 'all'; the scope_value for user/role; the
+     *  slug only when no scope_value was given (genuine per-slug intent). */
+    private static String scopeForTarget(String scope, String moduleSlug, String scopeValue) {
+        if ("all".equals(scope)) {
+            return null;
+        }
+        return (scopeValue == null || scopeValue.isBlank()) ? moduleSlug : scopeValue;
     }
 
     /** Re-arm a circuit-broken module (admin recovery): flip circuit_state back to closed. */
@@ -105,6 +134,32 @@ public class OverrideService {
                     m.setUpdatedAt(Instant.now());
                     return modules.save(m);
                 });
+    }
+
+    /**
+     * Rearm a SCOPE override (admin recovery for an all/user/role kill): stamp
+     * {@code cleared_at} on every matching active row so the manifest read path
+     * stops applying it (the suppressed modules return to the next render). For
+     * scope=all the target is NULL and we key on scope alone.
+     *
+     * <p>Returns the number of rows cleared. Scope kills are render-time only
+     * (modules are never mutated), so clearing the row is sufficient to restore;
+     * per-module recovery still uses {@link #rearm(String)}.
+     */
+    public Mono<Long> clearScope(String scope, String target) {
+        if (!isScope(scope)) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST, "scope must be all | role | user"));
+        }
+        Flux<FederationOverride> active = "all".equals(scope)
+                ? overrides.findByScopeAndClearedAtIsNull("all")
+                : overrides.findByScopeAndTargetAndClearedAtIsNull(scope, target);
+        Instant now = Instant.now();
+        return active
+                .flatMap(o -> {
+                    o.setClearedAt(now);
+                    return overrides.save(o);
+                })
+                .count();
     }
 
     private static boolean isAction(String a) {
