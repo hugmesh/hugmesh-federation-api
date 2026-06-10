@@ -13,7 +13,7 @@ import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.VanityProfileDto;
 import systems.snapdragon.federation.service.VanityService;
 
-import java.util.Set;
+import static systems.snapdragon.federation.controller.ReservedNames.RESERVED_LABELS;
 
 /**
  * Vanity-subdomain resolve — the PUBLIC read path behind
@@ -49,14 +49,14 @@ import java.util.Set;
 public class VanityController {
 
     /**
-     * Reserved first DNS labels that are platform service subdomains, NOT
-     * usernames. The gateway route order already prevents these from reaching the
-     * wildcard route; this is defence-in-depth so a direct call with a reserved
-     * Host can never resolve a "user" named e.g. {@code api}.
+     * Reserved first DNS labels that are platform service subdomains / dedicated app
+     * route prefixes, NOT usernames. The FULL canonical list lives in
+     * {@link ReservedNames#RESERVED_LABELS} (its javadoc cites the canonical source —
+     * the fe-/be-gateway routes + reserved subdomains + the games-derived prefixes).
+     * Imported statically here so a reserved first-label can never resolve a "user"
+     * named e.g. {@code api} or {@code admin}: the gateway route order already keeps
+     * these off the vanity wildcard, this is defence-in-depth at the serving layer.
      */
-    static final Set<String> RESERVED_LABELS = Set.of(
-            "id", "api", "matrix", "mastodon", "scale", "headscale", "www");
-
     private final VanityService vanity;
 
     public VanityController(VanityService vanity) {

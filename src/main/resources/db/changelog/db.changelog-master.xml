@@ -27,6 +27,7 @@
         014 — federation_override.cleared_at (scope-override active lifecycle)
         015 — vanity profile fragments (seed; slug=profile-<username> convention)
         016 — user_modules.entry_file (read-my-card-body by slug; default remoteEntry.json)
+        017 — reserved-profile-slug CHECK (a profile-<reserved> fragment is rejected)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -50,4 +51,5 @@
     <include file="db/changelog/014-federation-override-active.xml"/>
     <include file="db/changelog/015-vanity-profile-fragment.xml"/>
     <include file="db/changelog/016-user-modules-entry-file.xml"/>
+    <include file="db/changelog/017-reserved-profile-slugs.xml"/>
 </databaseChangeLog>
