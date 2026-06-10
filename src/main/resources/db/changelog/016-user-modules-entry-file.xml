@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        user_modules.entry_file — the relative filename of the bundle's entry file
+        (the single source file the WYSIWYG card editor authored, default
+        remoteEntry.json). The PUT pipeline already accepts an `entryFile` request
+        param but, until now, discarded it after staging. Persisting it lets the
+        owner RE-READ the card's current body bytes by slug (read-my-card-body) so
+        the editor can pre-fill for Edit, without guessing the filename inside the
+        content-addressed version dir.
+
+        Backfill: pre-existing rows default to 'remoteEntry.json' — the same
+        default the PUT pipeline used, so historical single-file card bundles
+        resolve correctly. NULLABLE: an R2DBC writer that leaves the field null
+        is tolerated (the read path defaults a null/blank entry to
+        'remoteEntry.json'), so this column never breaks an existing writer.
+    -->
+
+    <changeSet id="016-1-user-modules-entry-file" author="federation">
+        <addColumn tableName="user_modules">
+            <column name="entry_file" type="${str.type}" defaultValue="remoteEntry.json"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>
