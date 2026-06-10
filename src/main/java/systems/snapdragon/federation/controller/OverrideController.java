@@ -32,6 +32,8 @@ public class OverrideController {
 
     public record ApplyRequest(String moduleSlug, String scope, String scopeValue, String action) {}
 
+    public record ClearScopeRequest(String scope, String target) {}
+
     @Operation(summary = "List applied overrides (audit trail).")
     @GetMapping
     public Flux<FederationOverride> list() {
@@ -54,5 +56,19 @@ public class OverrideController {
     @PostMapping("/{moduleSlug}/rearm")
     public Mono<FederationModule> rearm(@PathVariable String moduleSlug) {
         return overrides.rearm(moduleSlug);
+    }
+
+    @Operation(
+        summary = "Clear (re-arm) an active scope override.",
+        description = """
+            Rearms an active scope=all|user|role kill: stamps cleared_at on the
+            matching active federation_override row(s) so the manifest read path
+            stops suppressing the affected modules (they return on the next
+            render). target = the scope_value (userId for 'user', role name for
+            'role'); omit/null for 'all'. Returns the count of rows cleared.
+            """)
+    @PostMapping("/clear")
+    public Mono<Long> clearScope(@RequestBody ClearScopeRequest req) {
+        return overrides.clearScope(req.scope(), req.target());
     }
 }

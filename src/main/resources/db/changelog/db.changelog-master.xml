@@ -24,6 +24,7 @@
         011 — user_modules         (per-user bundles; mirror of games game_uploads)
         012 — moderation_requests  (recommend/refer/decide workflow)
         013 — federation_override  (kill-switch: circuit-break / unpublish / remove)
+        014 — federation_override.cleared_at (scope-override active lifecycle)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -44,4 +45,5 @@
     <include file="db/changelog/011-user-modules.xml"/>
     <include file="db/changelog/012-moderation-requests.xml"/>
     <include file="db/changelog/013-federation-override.xml"/>
+    <include file="db/changelog/014-federation-override-active.xml"/>
 </databaseChangeLog>

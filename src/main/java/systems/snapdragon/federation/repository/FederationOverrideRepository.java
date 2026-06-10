@@ -4,6 +4,8 @@ import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import reactor.core.publisher.Flux;
 import systems.snapdragon.federation.model.FederationOverride;
 
+import java.util.Collection;
+
 /**
  * Reactive (R2DBC) store for the kill-switch / scoped-action audit
  * ({@code federation_override}).
@@ -13,4 +15,23 @@ public interface FederationOverrideRepository extends ReactiveCrudRepository<Fed
     Flux<FederationOverride> findAllByOrderByTsDesc();
 
     Flux<FederationOverride> findByTarget(String target);
+
+    /**
+     * The manifest read path's active scope-override set: rows whose {@code scope}
+     * is one of {@code all|user|role} that have NOT been cleared/rearmed
+     * ({@code cleared_at IS NULL}). Loaded once per render, applied in code.
+     */
+    Flux<FederationOverride> findByScopeInAndClearedAtIsNull(Collection<String> scopes);
+
+    /**
+     * The active scope=user|role override(s) for a specific {@code target}
+     * (scope_value), used by {@code clearScope} to find what to rearm.
+     */
+    Flux<FederationOverride> findByScopeAndTargetAndClearedAtIsNull(String scope, String target);
+
+    /**
+     * The active scope=all override(s). scope=all carries a NULL target, so the
+     * target-bearing finder cannot match it; this variant keys on scope alone.
+     */
+    Flux<FederationOverride> findByScopeAndClearedAtIsNull(String scope);
 }
