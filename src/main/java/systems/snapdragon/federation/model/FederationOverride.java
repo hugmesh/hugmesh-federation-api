@@ -39,6 +39,15 @@ public class FederationOverride {
      * module directly, so the read path drops them via the enabled/circuit finder).
      */
     private Instant clearedAt;
+    /**
+     * SOURCE tag (changeset 019): identifies WHAT created this scope override so it
+     * can be cleared by exactly that source. The account-states profile-ban path
+     * writes {@code 'access_suspension:<id>'}; a manual admin kill leaves it NULL.
+     * {@code OverrideService.clearScopeBySource} clears ONLY the active rows whose
+     * {@code reason} equals the given source, so an expiring suspension never
+     * rearms an unrelated manual kill (which carries a NULL / different reason).
+     */
+    private String reason;
 
     public Long getId() { return id; }
     public String getScope() { return scope; }
@@ -47,6 +56,7 @@ public class FederationOverride {
     public String getSetBy() { return setBy; }
     public Instant getTs() { return ts; }
     public Instant getClearedAt() { return clearedAt; }
+    public String getReason() { return reason; }
 
     public void setId(Long id) { this.id = id; }
     public void setScope(String scope) { this.scope = scope; }
@@ -55,4 +65,5 @@ public class FederationOverride {
     public void setSetBy(String setBy) { this.setBy = setBy; }
     public void setTs(Instant ts) { this.ts = ts; }
     public void setClearedAt(Instant clearedAt) { this.clearedAt = clearedAt; }
+    public void setReason(String reason) { this.reason = reason; }
 }

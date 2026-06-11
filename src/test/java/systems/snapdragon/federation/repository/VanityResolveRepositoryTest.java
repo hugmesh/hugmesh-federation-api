@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Import;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.config.R2dbcConvertersConfig;
 import systems.snapdragon.federation.model.FederationModule;
+import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.service.VanityService;
 import systems.snapdragon.federation.support.TestDatabaseConfig;
 
@@ -31,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class VanityResolveRepositoryTest {
 
     @Autowired FederationModuleRepository repo;
+    @Autowired FederationOverrideRepository overrides;
 
     // The production resolve-predicate values (kind/visibility/circuit_state) the
     // VanityService passes into the finder; inlined here (different package, the
@@ -77,7 +79,9 @@ class VanityResolveRepositoryTest {
 
     @Test
     void endToEnd_serviceResolvesPublic_and404sInternal_overRealSchema() {
-        VanityService svc = new VanityService(repo);
+        // Real override repo too: no active scope=user ban is seeded, so the
+        // owner-ban gate passes through and alice resolves over the real schema.
+        VanityService svc = new VanityService(repo, overrides);
 
         StepVerifier.create(svc.resolve("alice"))
                 .assertNext(dto -> {
@@ -92,5 +96,34 @@ class VanityResolveRepositoryTest {
         // internal + non-existent both resolve empty (controller -> 404).
         StepVerifier.create(svc.resolve("bob")).verifyComplete();
         StepVerifier.create(svc.resolve("nobody")).verifyComplete();
+    }
+
+    @Test
+    void bannedOwner_404s_evenForSeededPublicFragment_overRealSchema() {
+        // Apply an ACTIVE scope=user override against alice's owner_user_id via the
+        // real override repo, then prove the seeded PUBLIC profile-alice fragment
+        // no longer resolves (it would without the ban). Source-tagged so it could
+        // be cleared by its source later.
+        FederationOverride ban = new FederationOverride();
+        ban.setScope("user");
+        ban.setTarget("alice");
+        ban.setAction("unpublish");
+        ban.setSetBy("test");
+        ban.setReason("access_suspension:slice");
+        ban.setTs(java.time.Instant.now());
+        overrides.save(ban).block();
+
+        VanityService svc = new VanityService(repo, overrides);
+
+        // Banned -> empty (404) despite the public+enabled+closed seed row.
+        StepVerifier.create(svc.resolve("alice")).verifyComplete();
+
+        // Clearing the row (rearm) lets alice resolve again — proves the gate is
+        // driven by the ACTIVE (cleared_at IS NULL) row, not a permanent change.
+        ban.setClearedAt(java.time.Instant.now());
+        overrides.save(ban).block();
+        StepVerifier.create(svc.resolve("alice"))
+                .assertNext(dto -> assertThat(dto.slug()).isEqualTo("profile-alice"))
+                .verifyComplete();
     }
 }

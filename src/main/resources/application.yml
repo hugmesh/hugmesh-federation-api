@@ -79,6 +79,24 @@ springdoc:
     path: /swagger-ui.html
   packages-to-scan: systems.snapdragon.federation
 
+# Resilience4j circuit breaker for the access-suspension profile-ban write path.
+# OverrideService.applyUserScope / clearScopeBySource wrap their DIRECT-repo
+# federation_override write in @CircuitBreaker(name = "federationOverride") so a
+# wedged override store fails FAST instead of stalling the ban caller (mod-bff /
+# admin-bff). Correctness does not depend on the write succeeding inline: the
+# durable row IS the source of truth, so the vanity read path + manifest converge
+# once it lands. Tuning mirrors the admin-bff / actions casdoor breaker
+# (window 10, minCalls 5, 50% threshold, 30s open, 3 half-open probes).
+resilience4j:
+  circuitbreaker:
+    instances:
+      federationOverride:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+
 management:
   endpoints:
     web:

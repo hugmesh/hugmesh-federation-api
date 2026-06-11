@@ -24,6 +24,21 @@ public interface ManifestCache {
      */
     Mono<FederationManifestDto> get();
 
+    /**
+     * Best-effort DELETE of the cached manifest row so the next read is a forced
+     * cache-miss that re-renders from Postgres. Called on a scope=user mutation
+     * (the access-suspension profile-ban path) so a just-banned profile's modules
+     * can NEVER be served from a stale cached manifest — the durable
+     * federation_override row already removes them from the Postgres render, and
+     * dropping the cache guarantees the next poll reflects it immediately.
+     *
+     * <p>Best-effort like {@link #put}: a failure (unconfigured / unreachable
+     * cache) must NEVER block the ban write path — the authoritative Postgres read
+     * already excludes the banned modules, so a failed invalidate only means a
+     * bounded staleness until the cache TTL / next put, never an incorrect serve.
+     */
+    Mono<Void> invalidate();
+
     /** Implementation name for log lines ({@code cassandra} / {@code noop}). */
     String label();
 }

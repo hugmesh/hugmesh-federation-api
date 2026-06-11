@@ -105,6 +105,20 @@ public class CassandraManifestCache implements ManifestCache {
     }
 
     @Override
+    public Mono<Void> invalidate() {
+        return Mono.<Void>fromRunnable(() ->
+                session().execute(SimpleStatement.builder(
+                        "DELETE FROM federation_manifest WHERE id = ?")
+                        .addPositionalValue(KEY).build()))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(e -> {
+                    log.warn("[manifest-cache] best-effort invalidate failed: {} "
+                            + "(Postgres render already excludes the banned modules)", e.toString());
+                    return Mono.empty();
+                }).then();
+    }
+
+    @Override
     public String label() {
         return "cassandra";
     }
