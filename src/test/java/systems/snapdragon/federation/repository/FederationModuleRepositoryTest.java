@@ -45,6 +45,27 @@ class FederationModuleRepositoryTest {
     }
 
     @Test
+    void forumModule_isRegistered_andShaped() {
+        // Changeset 022 registers the phpBB forum as a federation module:
+        // slug='forum', kind='remote-shell', visibility='internal', mounted at
+        // /social/forum, requiring the 'forum' role. (Its successful presence also
+        // proves changeset 021 applied — the whole changelog must run for the
+        // slice DB to come up.)
+        FederationModule forum = repo.findBySlug("forum").block();
+        assertThat(forum).isNotNull();
+        assertThat(forum.getKind()).isEqualTo("remote-shell");
+        assertThat(forum.getVisibility()).isEqualTo("internal");
+        assertThat(forum.isEnabled()).isTrue();
+        assertThat(forum.getCircuitState()).isEqualTo("closed");
+        assertThat(forum.getExposedModule()).isEqualTo("./routes");
+        // metadata (jsonb/clob round-trips as String) carries the role + mount path.
+        assertThat(forum.getMetadata()).contains("\"requiresRole\":\"forum\"");
+        assertThat(forum.getMetadata()).contains("\"mountAt\":\"/social/forum\"");
+        // Platform/first-party module — no owner.
+        assertThat(forum.getOwnerUserId()).isNull();
+    }
+
+    @Test
     void insertUpdateDelete_roundTrip() {
         FederationModule m = new FederationModule();
         m.setSlug("test-remote");

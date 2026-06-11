@@ -53,7 +53,9 @@ class ReservedProfileSlugConstraintTest {
             "profile-admin", "profile-api", "profile-login", "profile-mod",
             "profile-bff", "profile-user", "profile-games", "profile-play",
             "profile-id", "profile-www", "profile-_matrix", "profile-oauth",
-            "profile-publisher", "profile-registry", "profile-actuator"})
+            "profile-publisher", "profile-registry", "profile-actuator",
+            // phpBB forum: 'forum' reserved (changeset 021 DROP+re-ADD of the 017 CHECK)
+            "profile-forum"})
     void reservedProfileFragmentInsert_isRejectedByCheckConstraint(String reservedSlug) {
         StepVerifier.create(
                         db.sql("INSERT INTO federation_modules "

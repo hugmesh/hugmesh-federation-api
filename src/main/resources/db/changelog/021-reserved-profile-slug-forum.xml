@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        RESERVED-PROFILE-SLUG guard — extend for the phpBB FORUM surface.
+
+        The phpBB forum is integrated as a backend-only service wrapped by
+        snapdragon-forum-ui (served at the apex path /social/forum) + a Spring BFF.
+        'forum' is therefore added to the canonical ReservedNames.RESERVED_LABELS
+        (this repo's controller/ReservedNames + the user-bff mirror) so a vanity
+        username 'forum' can never collide with a future forum.<domain> subdomain
+        or a forum/ first-segment path. The DB-LEVEL backstop must agree: a
+        'fragment' row slug='profile-forum' must be rejected by the same CHECK the
+        serving + user-profile layers enforce.
+
+        WHY A NEW CHANGESET (not an in-place edit of 017):
+        017-1 (ck_fed_modules_reserved_profile_slug) is ALREADY DEPLOYED. Liquibase
+        validates each ran changeSet by checksum; editing 017 in place changes its
+        checksum and makes Liquibase fail on every environment where 017 already
+        ran. So we DROP the existing constraint and re-ADD it with 'profile-forum'
+        included — a brand-new changeSet with its own checksum, idempotent rollback.
+
+        The forbidden slug list below is byte-for-byte the 017 list PLUS
+        'profile-forum' (inserted in alphabetical position). Keep it generated from
+        ReservedNames.RESERVED_LABELS; this is the same plain-ANSI
+        `kind <> 'fragment' OR slug NOT IN (...)` CHECK that runs identically on
+        production Postgres and the H2 PostgreSQL-compat slice DB.
+    -->
+
+    <changeSet id="021-1-reserved-profile-slug-forum" author="federation">
+        <!-- DROP the existing (017-1) CHECK constraint so it can be re-added with
+             the forum slug. On a fresh DB 017 ran first, so the constraint exists;
+             Liquibase runs the <sql> blocks in order (drop then re-add). A CHECK
+             constraint is NOT a unique constraint, so the drop is raw SQL (no
+             <dropUniqueConstraint>). -->
+        <sql>
+            ALTER TABLE federation_modules
+                DROP CONSTRAINT ck_fed_modules_reserved_profile_slug
+        </sql>
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_reserved_profile_slug
+                CHECK (
+                    kind &lt;&gt; 'fragment'
+                    OR slug NOT IN (
+                        'profile-_fragments', 'profile-_matrix', 'profile-_remotes',
+                        'profile-actuator', 'profile-admin', 'profile-api', 'profile-api-docs',
+                        'profile-apidocs', 'profile-argocd', 'profile-assets', 'profile-auth',
+                        'profile-banned', 'profile-be', 'profile-bff', 'profile-docs',
+                        'profile-favicon', 'profile-forum', 'profile-fragments', 'profile-games',
+                        'profile-games-dodecahedron', 'profile-games-rpg-maker',
+                        'profile-games-three-wizards', 'profile-games-vn-maker', 'profile-gitlab',
+                        'profile-gm', 'profile-headscale', 'profile-health', 'profile-healthz',
+                        'profile-help', 'profile-id', 'profile-login', 'profile-logout',
+                        'profile-mastodon', 'profile-matrix', 'profile-metrics', 'profile-mod',
+                        'profile-oauth', 'profile-oauth2', 'profile-pki', 'profile-play',
+                        'profile-pleroma', 'profile-producer', 'profile-producer-registration',
+                        'profile-public',
+                        'profile-publisher', 'profile-registration', 'profile-registry',
+                        'profile-robots', 'profile-root', 'profile-scale', 'profile-sitemap',
+                        'profile-social', 'profile-static', 'profile-status', 'profile-support',
+                        'profile-user', 'profile-users', 'profile-vault', 'profile-wasm',
+                        'profile-wasm-fragment', 'profile-well-known', 'profile-www'
+                    )
+                )
+        </sql>
+
+        <rollback>
+            <!-- Restore the pre-021 constraint (the 017-1 list WITHOUT
+                 'profile-forum') so a rollback reproduces the prior state exactly. -->
+            ALTER TABLE federation_modules
+                DROP CONSTRAINT ck_fed_modules_reserved_profile_slug;
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_reserved_profile_slug
+                CHECK (
+                    kind &lt;&gt; 'fragment'
+                    OR slug NOT IN (
+                        'profile-_fragments', 'profile-_matrix', 'profile-_remotes',
+                        'profile-actuator', 'profile-admin', 'profile-api', 'profile-api-docs',
+                        'profile-apidocs', 'profile-argocd', 'profile-assets', 'profile-auth',
+                        'profile-banned', 'profile-be', 'profile-bff', 'profile-docs',
+                        'profile-favicon', 'profile-fragments', 'profile-games',
+                        'profile-games-dodecahedron', 'profile-games-rpg-maker',
+                        'profile-games-three-wizards', 'profile-games-vn-maker', 'profile-gitlab',
+                        'profile-gm', 'profile-headscale', 'profile-health', 'profile-healthz',
+                        'profile-help', 'profile-id', 'profile-login', 'profile-logout',
+                        'profile-mastodon', 'profile-matrix', 'profile-metrics', 'profile-mod',
+                        'profile-oauth', 'profile-oauth2', 'profile-pki', 'profile-play',
+                        'profile-pleroma', 'profile-producer', 'profile-producer-registration',
+                        'profile-public',
+                        'profile-publisher', 'profile-registration', 'profile-registry',
+                        'profile-robots', 'profile-root', 'profile-scale', 'profile-sitemap',
+                        'profile-social', 'profile-static', 'profile-status', 'profile-support',
+                        'profile-user', 'profile-users', 'profile-vault', 'profile-wasm',
+                        'profile-wasm-fragment', 'profile-well-known', 'profile-www'
+                    )
+                );
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
