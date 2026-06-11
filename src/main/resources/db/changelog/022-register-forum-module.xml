@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER the phpBB forum as a federation module (the registry row the
+        Angular host loads at runtime).
+
+        snapdragon-forum-ui is an Angular native-federation REMOTE (kind
+        = 'remote-shell', exactly like the 'admin'/'login' seed rows in 010-2),
+        served at the apex PATH /social/forum (NOT a subdomain — the vanity
+        wildcard would swallow forum.<domain>). It is gated by the forum access
+        role at the gateway; here at the catalog level we mark it:
+
+          • kind          = 'remote-shell'      (a federated remote, like admin/login).
+          • visibility    = 'internal'          (only ROLE_ADMIN / ROLE_INTERNAL
+                            callers see it in the manifest read path; the forum
+                            role-gate itself is the gateway route-access rule
+                            /social/forum=ROLE_FORUM — this is the catalog cut).
+          • metadata.requiresRole = 'forum'      (the declared required role; the
+                            scope=role kill-switch matches on this, and the host
+                            uses it for role-responsive rendering).
+          • metadata.mountAt      = '/social/forum'  (the apex path the host mounts
+                            the remote at — mirrors /social/mastodon, /social/matrix).
+          • owner_user_id = NULL                 (platform/first-party module).
+
+        010-2 (seed-initial-modules) only runs when federation_modules is EMPTY, so
+        this forum row needs its own changeSet. Idempotent: the preCondition seeds
+        only when the 'forum' slug is absent, so re-running over an existing DB is a
+        no-op (matches the 010-2 / 015-1 seed-guard style). The remote_entry_url is
+        a placeholder wired by the deployment's snapdragon-forum-ui Service.
+    -->
+
+    <changeSet id="022-1-register-forum-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'forum'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="forum"/>
+            <column name="display_name" value="Forum (phpBB)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-forum-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;forum&quot;,&quot;mountAt&quot;:&quot;/social/forum&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

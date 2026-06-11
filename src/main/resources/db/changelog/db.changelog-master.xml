@@ -36,6 +36,13 @@
         020 — username_skeleton (confusable-skeleton cache: NON-unique skeleton
               index + ICU version stamp; recomputable, NOT a unique identity — the
               slug UNIQUE + 017 reserved CHECK stay the real exact-username backstop)
+        021 — reserved-profile-slug + forum (DROP+re-ADD the 017
+              ck_fed_modules_reserved_profile_slug to also forbid 'profile-forum';
+              017 is deployed so it is re-issued as a new changeSet, never edited
+              in place — phpBB forum reserves the 'forum' label)
+        022 — register the phpBB forum as a federation module (slug='forum',
+              kind='remote-shell', mountAt /social/forum, requiresRole 'forum';
+              idempotent seed-guard, like 010-2/015-1)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -63,4 +70,6 @@
     <include file="db/changelog/018-enum-check-constraints.xml"/>
     <include file="db/changelog/019-federation-override-reason.xml"/>
     <include file="db/changelog/020-username-skeleton.xml"/>
+    <include file="db/changelog/021-reserved-profile-slug-forum.xml"/>
+    <include file="db/changelog/022-register-forum-module.xml"/>
 </databaseChangeLog>
