@@ -30,6 +30,9 @@
         017 — reserved-profile-slug CHECK (a profile-<reserved> fragment is rejected)
         018 — enum/domain CHECK constraints (DB parity for the API-enforced
               kind/visibility/circuit_state/scope/action/status vocabularies)
+        019 — federation_override.reason (SOURCE tag for the access-suspension
+              profile-ban path: a scope=user row tagged access_suspension:<id> so
+              clearScopeBySource clears ONLY rows it owns, never a manual kill)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -55,4 +58,5 @@
     <include file="db/changelog/016-user-modules-entry-file.xml"/>
     <include file="db/changelog/017-reserved-profile-slugs.xml"/>
     <include file="db/changelog/018-enum-check-constraints.xml"/>
+    <include file="db/changelog/019-federation-override-reason.xml"/>
 </databaseChangeLog>

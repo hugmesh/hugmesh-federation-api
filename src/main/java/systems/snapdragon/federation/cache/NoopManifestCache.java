@@ -22,6 +22,7 @@ public class NoopManifestCache {
         return new ManifestCache() {
             @Override public Mono<Void> put(FederationManifestDto manifest) { return Mono.empty(); }
             @Override public Mono<FederationManifestDto> get() { return Mono.empty(); }
+            @Override public Mono<Void> invalidate() { return Mono.empty(); }
             @Override public String label() { return "noop"; }
         };
     }

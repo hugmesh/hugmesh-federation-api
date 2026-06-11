@@ -108,7 +108,7 @@ profile is ONE `federation_modules` row:
 |---|---|---|
 | `slug` | `profile-<username>` | deterministic from the username → the resolve is a single **unique-slug** lookup, no extra mapping table (the `slug` column is already UNIQUE + indexed). |
 | `kind` | `fragment` | served by the remote-fragment sync-and-serve-static fleet, exactly like every other fragment bundle. |
-| `owner_user_id` | `<username>` (Casdoor subject) | the `scope=user` kill-switch already covers a user's vanity profile with **no new wiring**. |
+| `owner_user_id` | `<username>` | the `scope=user` kill-switch / access-suspension ban keys on this field (NOT the Casdoor sub), so it covers a user's vanity profile + manifest modules with **no new wiring**. |
 | `visibility` | `public` | **the gate** — only `public` fragments are resolvable at a vanity host. |
 
 The resolve keys on the **slug** (single indexed equality, no scan);
@@ -131,6 +131,43 @@ the `Host` header (`VanityController.firstLabel`: strips `:port`, lower-cases,
 requires ≥3 labels so the apex returns no username). The controller also refuses
 reserved first-labels (`id api matrix mastodon scale headscale www`) defensively —
 the gateway route order already prevents those from arriving.
+
+### Account-states profile-ban foundation (read/write path)
+
+The platform's access-suspension foundation (admin-bff / mod-bff) bans a USER's
+public profile through this service — the **read** path (vanity / manifest) and a
+direct **write** path on `OverrideService`:
+
+- **`OverrideService.applyUserScope(ownerUsername, action, setBy, source)`** writes
+  a `scope='user'` `federation_override` row **directly via the repository** — no
+  module lookup, **no existing-module requirement**. This is the fix for the prior
+  404 when a banned user has never published a module: the durable row exists
+  regardless, drops every owned module from the manifest render, and blocks the
+  vanity read. The row is tagged `reason='access_suspension:<id>'` (the *source*).
+- **`VanityService.resolve()`** now also consults
+  `FederationOverrideRepository.findByScopeAndTargetAndClearedAtIsNull('user', owner)`
+  on the resolved fragment's `owner_user_id` and returns empty → **404 even for a
+  public + enabled + circuit-closed fragment** when the owner is suspended.
+  Identity is pinned on **`owner_user_id`** (the value the ban writer targets and
+  the publisher stores), NOT the Casdoor sub.
+- **`ManifestCache.invalidate()`** is called on every `scope=user` mutation so a
+  just-banned profile is never served from a stale cached manifest (the durable row
+  already removes it from the authoritative Postgres render).
+- **`OverrideService.clearScopeBySource(source)`** (the suspension lifting/expiring)
+  stamps `cleared_at` on **only** the rows whose `reason` equals that source — so an
+  expiring suspension never rearms an unrelated manual `scope=user` kill an admin
+  applied separately (which carries a NULL / different `reason`).
+- Both direct-repo writes are wrapped in `@CircuitBreaker(name="federationOverride")`
+  (fail-fast): the durable row is the source of truth, so the read path converges
+  once it lands; the breaker sheds load against a wedged store rather than stalling
+  the ban caller.
+
+Scope of the profile ban: **unpublish / vanity-suppress only** — there is no
+`ROLE_USER` self-publish endpoint today (`ModuleRegistryController` is ADMIN-only),
+so the ban suppresses the existing/future profile rather than gating a create path.
+The homeserver (akkoma/tuwunel) and the access-suspension table + reconcile loop
+live in their own repos (generator / admin-bff / mod-bff) — this service owns only
+the federation profile read/write leg.
 
 **Seed (changeset 015).** `profile-alice` (public) + `profile-bob` (internal) are
 seeded so the H2 PG-compat slice test resolves a public profile fragment AND

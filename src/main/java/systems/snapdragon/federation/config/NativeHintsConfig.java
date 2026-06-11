@@ -10,6 +10,7 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.model.UserModule;
+import systems.snapdragon.federation.service.OverrideService;
 
 /**
  * GraalVM native-image / AOT reachability hints for the JSON-bound DTOs +
@@ -37,6 +38,13 @@ public class NativeHintsConfig {
                     .registerType(FederationManifestDto.class, dtoCategories())
                     .registerType(FederationManifestDto.FederationRemoteDto.class, dtoCategories());
 
+            // Resilience4j @CircuitBreaker advised bean: the account-states
+            // profile-ban write path (OverrideService.applyUserScope /
+            // clearScopeBySource) is wrapped in @CircuitBreaker, so keep the
+            // advised target's constructors + methods reachable for the AOT proxy.
+            hints.reflection()
+                    .registerType(OverrideService.class, proxyTargetCategories());
+
             // Swagger UI static assets shipped inside the springdoc webflux-ui
             // starter's webjar; native-image drops classpath resources unless
             // explicitly included. The /v3/api-docs JSON is bean-produced and
@@ -51,6 +59,14 @@ public class NativeHintsConfig {
                     MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
                     MemberCategory.INVOKE_DECLARED_METHODS,
                     MemberCategory.DECLARED_FIELDS,
+            };
+        }
+
+        /** Constructors + methods for a Resilience4j-advised bean's AOT proxy. */
+        private static MemberCategory[] proxyTargetCategories() {
+            return new MemberCategory[] {
+                    MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                    MemberCategory.INVOKE_DECLARED_METHODS,
             };
         }
     }

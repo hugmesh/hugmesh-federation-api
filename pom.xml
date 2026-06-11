@@ -46,6 +46,25 @@
       <version>2.7.0</version>
     </dependency>
 
+    <!-- Resilience4j circuit breaker — wraps the DIRECT-repo override apply/clear
+         on the access-suspension profile-ban write path (account-states
+         foundation). The breaker fails FAST when the override store is unhealthy;
+         the durable federation_override row is the source of truth, so the vanity
+         read path + manifest converge once the row lands (no need to block the
+         caller behind a flaky write). 2.2.0 = the pin snapdragon-actions uses on
+         the Spring Boot 3.5.x baseline; resilience4j-reactor adds the
+         CircuitBreakerOperator support for Mono/Flux return types. -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-spring-boot3</artifactId>
+      <version>2.2.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-reactor</artifactId>
+      <version>2.2.0</version>
+    </dependency>
+
     <!-- Reactive data access: R2DBC for ALL runtime reads/writes (federation
          modules, user modules, moderation, overrides). -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-r2dbc</artifactId></dependency>

@@ -1,9 +1,11 @@
 package systems.snapdragon.federation.service;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import systems.snapdragon.federation.cache.ManifestCache;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
@@ -46,16 +48,49 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * has a clean key to match on; for scope=all {@code target} is NULL. Genuine
  * per-module intent still mutates the named module. This replaces the previous
  * {@code "slug@scopeValue"} fold (see README).
+ *
+ * <h2>Account-states profile-ban path (foundation)</h2>
+ * {@link #applyUserScope} / {@link #clearScopeBySource} are the read/write path the
+ * access-suspension foundation (admin-bff / mod-bff) drives when a USER is banned:
+ *
+ * <ul>
+ *   <li><b>No existing-module requirement.</b> Unlike {@link #apply}, which looks
+ *       up a {@code federation_modules} slug and 404s when none exists,
+ *       {@code applyUserScope} writes the scope=user {@code federation_override}
+ *       row DIRECTLY via the repository. This FIXES the prior 404 when a banned
+ *       user has never published a module: the durable row exists regardless and
+ *       (a) drops every owned module from the manifest render AND (b) blocks the
+ *       vanity profile read — both keyed on {@code owner_user_id} — and persists
+ *       to block any FUTURE publish.</li>
+ *   <li><b>Source-scoped clear.</b> The row is tagged
+ *       {@code reason='access_suspension:<id>'} so {@code clearScopeBySource}
+ *       (called when the suspension lifts/expires) rearms ONLY the row(s) that
+ *       suspension wrote — never an unrelated manual scope=user kill an admin
+ *       applied separately (which carries a NULL / different reason).</li>
+ *   <li><b>Cache invalidation.</b> Both mutate {@link ManifestCache#invalidate()}
+ *       so a just-banned profile is never served from a stale cached manifest.</li>
+ *   <li><b>Fail-fast.</b> Both wrap the direct-repo write in
+ *       {@code @CircuitBreaker(name = "federationOverride")}; the durable row is
+ *       the source of truth, so the read path converges once it lands — the breaker
+ *       sheds load against a wedged store rather than stalling the ban caller.</li>
+ * </ul>
  */
 @Service
 public class OverrideService {
 
+    /** Resilience4j breaker instance (see application.yml resilience4j config). */
+    static final String CB = "federationOverride";
+
     private final FederationOverrideRepository overrides;
     private final FederationModuleRepository modules;
+    private final ManifestCache cache;
 
-    public OverrideService(FederationOverrideRepository overrides, FederationModuleRepository modules) {
+    public OverrideService(FederationOverrideRepository overrides,
+                           FederationModuleRepository modules,
+                           ManifestCache cache) {
         this.overrides = overrides;
         this.modules = modules;
+        this.cache = cache;
     }
 
     public Flux<FederationOverride> list() {
@@ -160,6 +195,102 @@ public class OverrideService {
                     return overrides.save(o);
                 })
                 .count();
+    }
+
+    // ── Account-states profile-ban path (foundation) ────────────────────────────
+
+    /**
+     * Apply a scope=user override DIRECTLY (the access-suspension profile-ban
+     * write). Unlike {@link #apply} there is NO module lookup and NO existing-module
+     * requirement — the durable {@code federation_override} row is written straight
+     * to the repository, which is exactly what FIXES the prior 404 when the banned
+     * user has never published a module. The row:
+     *
+     * <ul>
+     *   <li>has {@code scope='user'} + {@code target=<ownerUsername>} — matched at
+     *       manifest render against {@code module.owner_user_id} (drops every owned
+     *       module) and by the vanity resolve's owner-ban check;</li>
+     *   <li>is tagged {@code reason=<source>} (e.g. {@code 'access_suspension:<id>'})
+     *       so {@link #clearScopeBySource} can rearm ONLY this row;</li>
+     *   <li>has {@code cleared_at=NULL} (ACTIVE).</li>
+     * </ul>
+     *
+     * <p>{@code ownerUsername} is the value stored in {@code owner_user_id}
+     * (username / localpart), NOT the Casdoor sub — the vanity profile pins identity
+     * on {@code owner_user_id}, so the ban must key on the same field. After the
+     * write the manifest cache is invalidated so a just-banned profile is never
+     * served stale.
+     *
+     * <p>Wrapped in {@code @CircuitBreaker} (fail-fast): the durable row is the
+     * source of truth, so the read path converges once it lands; the breaker sheds
+     * load against a wedged override store rather than stalling the ban caller.
+     *
+     * @param ownerUsername the {@code owner_user_id} value to ban (username / localpart)
+     * @param action        the override verb ({@code unpublish} for a profile ban —
+     *                       there is no ROLE_USER self-publish endpoint today, so the
+     *                       ban is unpublish / vanity-suppress only)
+     * @param setBy         the Casdoor subject (or service identity) applying the ban
+     * @param source        the SOURCE tag, e.g. {@code 'access_suspension:<id>'}
+     */
+    @CircuitBreaker(name = CB)
+    public Mono<FederationOverride> applyUserScope(String ownerUsername, String action,
+                                                   String setBy, String source) {
+        if (ownerUsername == null || ownerUsername.isBlank()) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST, "ownerUsername is required"));
+        }
+        if (!isAction(action)) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST,
+                    "action must be circuit-break | unpublish | remove"));
+        }
+        if (source == null || source.isBlank()) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST,
+                    "source (reason tag) is required so the row is clearable by its source"));
+        }
+        FederationOverride o = new FederationOverride();
+        o.setScope("user");
+        o.setTarget(ownerUsername.trim());
+        o.setAction(action);
+        o.setSetBy(setBy);
+        o.setReason(source.trim());
+        o.setTs(Instant.now());
+        // clearedAt stays NULL => ACTIVE. No module mutation: the scope=user row is
+        // applied at render time across the catalogue (ManifestService) and gates
+        // the vanity read (VanityService) — no module need exist.
+        return overrides.save(o)
+                // Invalidate AFTER the durable row lands so the next manifest poll
+                // re-renders from Postgres (which now excludes the banned owner's
+                // modules) instead of serving a stale cached body.
+                .flatMap(saved -> cache.invalidate().thenReturn(saved));
+    }
+
+    /**
+     * Clear (rearm) the scope override(s) created by a specific {@code source}
+     * (the suspension lifting/expiring). Stamps {@code cleared_at} on EVERY active
+     * row whose {@code reason} equals {@code source}, and ONLY those — a manual
+     * scope=user kill an admin applied separately carries a NULL / different reason
+     * and is therefore never rearmed. After clearing, the manifest cache is
+     * invalidated so the owner's modules return on the next render.
+     *
+     * <p>Returns the number of rows cleared. Wrapped in {@code @CircuitBreaker}
+     * (fail-fast) for symmetry with {@link #applyUserScope}.
+     *
+     * @param source the SOURCE tag whose rows to clear, e.g. {@code 'access_suspension:<id>'}
+     */
+    @CircuitBreaker(name = CB)
+    public Mono<Long> clearScopeBySource(String source) {
+        if (source == null || source.isBlank()) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST, "source is required"));
+        }
+        Instant now = Instant.now();
+        return overrides.findByReasonAndClearedAtIsNull(source.trim())
+                .flatMap(o -> {
+                    o.setClearedAt(now);
+                    return overrides.save(o);
+                })
+                .count()
+                // Only touch the cache when we actually cleared something, but the
+                // invalidate is cheap + best-effort either way.
+                .flatMap(n -> cache.invalidate().thenReturn(n));
     }
 
     private static boolean isAction(String a) {

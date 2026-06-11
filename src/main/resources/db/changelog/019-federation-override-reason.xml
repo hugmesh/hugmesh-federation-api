@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        federation_override.reason — the SOURCE tag for a scope override.
+
+        The account-states foundation introduces a profile-ban write path: when a
+        USER is access-suspended, the foundation (admin-bff / mod-bff) calls
+        OverrideService.applyUserScope(ownerUsername, action, setBy, source) which
+        writes a scope='user' federation_override row DIRECTLY (no module lookup —
+        this is what fixes the old 404 when a user has no published module). To
+        make that row CLEARABLE by exactly the suspension that wrote it — without
+        rearming an UNRELATED admin/manual kill that happens to target the same
+        owner — the row is tagged with the SOURCE that created it:
+
+          reason = 'access_suspension:<id>'   (the suspension that owns this row)
+
+        clearScopeBySource(source) then clears ONLY the active rows whose reason
+        equals that source, so an expiring suspension never touches a manual
+        scope=user kill an admin applied separately (which carries a NULL/other
+        reason). Pre-existing rows (manual kills) get NULL reason and are therefore
+        never matched by a source-scoped clear — exactly the desired isolation.
+
+        Nullable ${str.type} (text on Postgres; bounded varchar on the H2 PG-compat
+        slice DB) so the SAME DDL applies in the slice tests. The reason value is a
+        short tag, well within the H2 bound; it is indexed so the source-scoped
+        clear stays an indexed lookup rather than a scan. Mirrors the style of 013
+        / 014 so the H2 slice tests apply this identical DDL.
+    -->
+
+    <changeSet id="019-1-federation-override-reason" author="federation">
+        <addColumn tableName="federation_override">
+            <column name="reason" type="${str.type}">
+                <!-- SOURCE tag, e.g. 'access_suspension:<id>'. NULL for a manual
+                     admin kill, so a source-scoped clear never rearms it. -->
+            </column>
+        </addColumn>
+
+        <!-- clearScopeBySource keys on (reason, cleared_at IS NULL); index reason
+             so it is an indexed lookup, not a full-table scan. -->
+        <createIndex tableName="federation_override" indexName="idx_fed_override_reason">
+            <column name="reason"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
