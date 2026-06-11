@@ -20,6 +20,15 @@
 
   <properties>
     <java.version>21</java.version>
+    <!-- ICU4J is PINNED (exact version). The Unicode confusable SKELETON is a
+         RECOMPUTABLE CACHE, never a unique DB identity, BECAUSE the skeleton
+         transform is NOT stable across ICU releases (ICU4J SpoofChecker javadoc:
+         "confusable mappings ... can change between releases"). Every icu4j bump
+         MUST be gated behind a re-index migration that recomputes + re-checks all
+         stored skeletons in one transaction. The version is also stamped into
+         username_skeleton.skeleton_icu_version so a drift is detectable. -->
+    <icu4j.version>77.1</icu4j.version>
+    <commons-text.version>1.13.1</commons-text.version>
   </properties>
 
   <dependencies>
@@ -63,6 +72,26 @@
       <groupId>io.github.resilience4j</groupId>
       <artifactId>resilience4j-reactor</artifactId>
       <version>2.2.0</version>
+    </dependency>
+
+    <!-- ICU4J — the Unicode SpoofChecker (CONFUSABLE | RESTRICTION_LEVEL) +
+         getSkeleton/getBidiSkeleton drives the canonical username/displayName
+         confusable fold (homoglyph + mixed-script + bidi). PINNED via
+         ${icu4j.version} (see the properties comment): the skeleton is a
+         recomputable cache, NOT a unique DB identity, precisely because the fold
+         can shift between ICU releases. -->
+    <dependency>
+      <groupId>com.ibm.icu</groupId>
+      <artifactId>icu4j</artifactId>
+      <version>${icu4j.version}</version>
+    </dependency>
+
+    <!-- commons-text — Damerau-Levenshtein typo-squat distance (the length-scaled
+         edit-distance tier vs the reserved-skeleton set). PINNED. -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-text</artifactId>
+      <version>${commons-text.version}</version>
     </dependency>
 
     <!-- Reactive data access: R2DBC for ALL runtime reads/writes (federation

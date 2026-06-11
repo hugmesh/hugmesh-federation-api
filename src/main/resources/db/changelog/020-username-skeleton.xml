@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        username_skeleton — the CONFUSABLE-SKELETON cache for registration-time
+        username uniqueness + look-alike rejection (UsernameSkeletonService).
+
+        A row is written in the SAME flow that mints slug='profile-<username>' (the
+        vanity profile fragment) and on a registration grant. The skeleton is the
+        canonical confusable fold (homoglyph + leet + collapse) so an indexed
+        equality lookup finds the look-alike collision: 'adm1n' and 'admin' share a
+        skeleton; Cyrillic 'аdmin' is rejected before it ever folds.
+
+        ── The skeleton is a RECOMPUTABLE CACHE, NOT a unique DB identity ──
+        The ICU confusable skeleton is NOT stable across icu4j releases, so:
+          • the skeleton column carries a NON-unique index (ix_username_skeleton_skel)
+            — there is NO UNIQUE(skeleton) constraint;
+          • skeleton_icu_version stamps the ICU version that produced the row so an
+            icu4j upgrade is detectable and gated behind a re-index migration that
+            recomputes + re-checks every skeleton in one transaction;
+          • the REAL DB backstop is unchanged: the federation_modules.slug UNIQUE
+            column + the 017 reserved-profile-slug CHECK stay the authoritative
+            exact-username uniqueness guard. This table is defence-in-depth.
+
+        ── username is the natural PK ──
+        No surrogate id; the username IS the key (UsernameSkeleton implements
+        Persistable so a mint is always an INSERT). owner_user_id is the Casdoor
+        subject that owns the username (self-exclusion is by EXACT username, so the
+        owner column is for audit / kill-switch correlation, not the dedupe key).
+
+        Portability: plain columns + a plain index, identical on production Postgres
+        and the H2 PostgreSQL-compat slice DB. str.type = text (Postgres) /
+        varchar(1024) (H2) so the indexed column applies the same DDL both places.
+    -->
+
+    <changeSet id="020-1-username-skeleton-table" author="federation">
+        <createTable tableName="username_skeleton">
+            <column name="username" type="${str.type}">
+                <!-- natural PK: the minted username (lower-cased DNS-label token). -->
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="owner_user_id" type="${str.type}">
+                <!-- Casdoor subject that owns the username (audit / kill-switch). -->
+            </column>
+            <column name="skeleton" type="${str.type}">
+                <!-- RECOMPUTABLE confusable fold. NON-unique index below. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="skeleton_first" type="varchar(8)">
+                <!-- First char of the skeleton — bucket key for the bounded sweep. -->
+            </column>
+            <column name="skeleton_icu_version" type="varchar(32)">
+                <!-- ICU version that produced the skeleton (re-index gate). -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- NON-unique on purpose: the skeleton is a cache, NOT an identity. The
+             collision is RESOLVED in the service (reason=exact|confusable|reserved),
+             never enforced as a DB UNIQUE that an ICU shift could later violate. -->
+        <createIndex tableName="username_skeleton" indexName="ix_username_skeleton_skel">
+            <column name="skeleton"/>
+        </createIndex>
+        <createIndex tableName="username_skeleton" indexName="ix_username_skeleton_first">
+            <column name="skeleton_first"/>
+        </createIndex>
+        <createIndex tableName="username_skeleton" indexName="ix_username_skeleton_owner">
+            <column name="owner_user_id"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="020-2-seed-username-skeleton" author="federation">
+        <!-- Seed rows mirroring the 015 vanity-profile seeds (alice/bob) so the
+             slice tests exercise the EXACT-skeleton finder against the real DDL.
+             skeleton values are the UsernameSkeletonService fold of the username:
+               alice -> aiice  (ICU l->i via the leet chain)
+               bob   -> bob
+             Idempotent guard (matches the 010-2 / 015 seed style). -->
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM username_skeleton WHERE username = 'alice'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="username_skeleton">
+            <column name="username" value="alice"/>
+            <column name="owner_user_id" value="alice"/>
+            <column name="skeleton" value="aiice"/>
+            <column name="skeleton_first" value="a"/>
+            <column name="skeleton_icu_version" value="77.1"/>
+        </insert>
+        <insert tableName="username_skeleton">
+            <column name="username" value="bob"/>
+            <column name="owner_user_id" value="bob"/>
+            <column name="skeleton" value="bob"/>
+            <column name="skeleton_first" value="b"/>
+            <column name="skeleton_icu_version" value="77.1"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
