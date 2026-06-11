@@ -39,6 +39,10 @@ import java.util.Map;
  *       VanityService only ever returns public/enabled/circuit-closed fragments);</li>
  *   <li>manifest read ({@code GET /api/federation/manifest}) = authenticated
  *       (visibility/role-filtered in code by ManifestService);</li>
+ *   <li>username availability / confusable check
+ *       ({@code /api/federation/username/**}) = ROLE_SERVICE/ADMIN (INTERNAL — an
+ *       enumeration oracle, never public; override + debug narrowed to ADMIN by
+ *       method security);</li>
  *   <li>module-write ({@code /api/federation/modules/**}), overrides
  *       ({@code /api/federation/overrides/**}) = ROLE_ADMIN;</li>
  *   <li>moderation ({@code /api/federation/moderation/**}) = ROLE_MOD/ADMIN
@@ -72,6 +76,15 @@ public class SecurityConfig {
         // code); an internal / disabled / missing one is 404. GET-only so it can
         // never mutate. Declared BEFORE the authenticated catch-alls.
         ex.pathMatchers(HttpMethod.GET, "/api/federation/vanity", "/api/federation/vanity/**").permitAll();
+        // Username availability / confusable check = INTERNAL / ROLE_SERVICE (or
+        // ADMIN). NOT public — every response is an enumeration oracle (matchedWith
+        // names the colliding username / reserved label). The registration mint
+        // paths (Casdoor pre-signup webhook, OAuth handle mint, actions / user-bff /
+        // admin-bff) call it with an internal service credential; the ADMIN-only
+        // override + /confusables debug are narrowed further by @PreAuthorize.
+        // Declared BEFORE the authenticated catch-alls so it can never fall through
+        // to plain authenticated.
+        ex.pathMatchers("/api/federation/username/**").hasAnyRole("SERVICE", "ADMIN");
         // Registry write + kill-switch = admin only (defence-in-depth on top of
         // the @PreAuthorize method gates).
         ex.pathMatchers("/api/federation/modules/**").hasRole("ADMIN");

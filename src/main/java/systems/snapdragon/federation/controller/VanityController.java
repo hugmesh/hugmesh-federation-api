@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.VanityProfileDto;
+import systems.snapdragon.federation.service.UsernameSkeletonService;
 import systems.snapdragon.federation.service.VanityService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -52,19 +53,21 @@ import static systems.snapdragon.federation.controller.ReservedNames.RESERVED_LA
 @Validated
 public class VanityController {
 
-    /**
-     * Reserved first DNS labels that are platform service subdomains / dedicated app
-     * route prefixes, NOT usernames. The FULL canonical list lives in
-     * {@link ReservedNames#RESERVED_LABELS} (its javadoc cites the canonical source —
-     * the fe-/be-gateway routes + reserved subdomains + the games-derived prefixes).
-     * Imported statically here so a reserved first-label can never resolve a "user"
-     * named e.g. {@code api} or {@code admin}: the gateway route order already keeps
-     * these off the vanity wildcard, this is defence-in-depth at the serving layer.
-     */
+    /** The vanity resolve service — returns ONLY public/enabled/circuit-closed
+     *  profile fragments (an internal/disabled/missing one yields empty -> 404). */
     private final VanityService vanity;
+    /**
+     * The confusable-skeleton service. Its precomputed reserved-skeleton set drives
+     * the READ-LAYER defence: an O(1) membership check on the first DNS label (NO DB
+     * hit) so a CONFUSABLE of a reserved label ({@code 4dmin}, {@code akk0ma}) that
+     * somehow minted a {@code profile-<label>} slug — via backfill, a race, or an
+     * ICU shift — still hard-404s here, not just an exact reserved label.
+     */
+    private final UsernameSkeletonService skeletons;
 
-    public VanityController(VanityService vanity) {
+    public VanityController(VanityService vanity, UsernameSkeletonService skeletons) {
         this.vanity = vanity;
+        this.skeletons = skeletons;
     }
 
     @Operation(
@@ -102,11 +105,24 @@ public class VanityController {
         return resolveLabel(label);
     }
 
-    /** Shared resolve: reject reserved labels, then resolve-or-404. */
+    /**
+     * Shared resolve (READ-LAYER enforcement): reject an EXACT reserved label, then
+     * reject a CONFUSABLE-of-reserved first label (O(1) precomputed reserved-skeleton
+     * membership, NO DB hit), then resolve-or-404. The skeleton check is
+     * defence-in-depth: even if a {@code profile-4dmin} fragment slipped past the
+     * write-layer gate (backfill / race / ICU shift), its vanity host still 404s
+     * here. A non-foldable label (mixed-script / zero-width) is treated as
+     * not-reserved by the skeleton probe and falls through to the public-fragment
+     * resolve, which 404s a non-existent slug anyway.
+     */
     private Mono<VanityProfileDto> resolveLabel(String label) {
         if (label != null && RESERVED_LABELS.contains(label.toLowerCase())) {
             return Mono.error(new ResponseStatusException(
                     HttpStatus.NOT_FOUND, "reserved subdomain, not a vanity username: " + label));
+        }
+        if (label != null && skeletons.isReservedSkeleton(label)) {
+            return Mono.error(new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "confusable of a reserved subdomain, not a vanity username: " + label));
         }
         return vanity.resolve(label)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(

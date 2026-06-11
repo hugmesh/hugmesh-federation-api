@@ -8,6 +8,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.VanityProfileDto;
+import systems.snapdragon.federation.service.UsernameSkeletonService;
 import systems.snapdragon.federation.service.VanityService;
 
 import java.util.Set;
@@ -26,6 +27,10 @@ import static org.mockito.Mockito.when;
  * mocked; assertions are reactive (StepVerifier).
  */
 class VanityControllerTest {
+
+    /** Real (dependency-free) skeleton service — its reserved-skeleton set drives
+     *  the READ-LAYER confusable-of-reserved 404 the controller now applies. */
+    private static final UsernameSkeletonService SKEL = new UsernameSkeletonService();
 
     private static VanityProfileDto dto(String username) {
         return new VanityProfileDto(username, "profile-" + username, username + " — Profile",
@@ -58,7 +63,7 @@ class VanityControllerTest {
     @Test
     void reservedSubdomain_is404_notResolved() {
         VanityService svc = mock(VanityService.class);
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolve("api"))
                 .expectErrorSatisfies(e -> {
@@ -85,7 +90,7 @@ class VanityControllerTest {
     @MethodSource("reservedLabels")
     void everyReservedLabel_is404_andNeverHitsService(String label) {
         VanityService svc = mock(VanityService.class);
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolve(label))
                 .expectErrorSatisfies(e -> {
@@ -104,7 +109,7 @@ class VanityControllerTest {
     @Test
     void resolveByHost_reservedHost_is404() {
         VanityService svc = mock(VanityService.class);
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolveByHost("api.snapdragon.systems"))
                 .expectError(ResponseStatusException.class)
@@ -115,7 +120,7 @@ class VanityControllerTest {
     @Test
     void resolveByHost_apexHost_is404_noUsername() {
         VanityService svc = mock(VanityService.class);
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolveByHost("snapdragon.systems"))
                 .expectError(ResponseStatusException.class)
@@ -129,7 +134,7 @@ class VanityControllerTest {
     void resolve_existingPublicProfile_returnsDescriptor() {
         VanityService svc = mock(VanityService.class);
         when(svc.resolve(eq("alice"))).thenReturn(Mono.just(dto("alice")));
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolve("alice"))
                 .assertNext(d -> assertThat(d.slug()).isEqualTo("profile-alice"))
@@ -140,7 +145,7 @@ class VanityControllerTest {
     void resolve_emptyService_mapsTo404() {
         VanityService svc = mock(VanityService.class);
         when(svc.resolve(eq("ghost"))).thenReturn(Mono.empty());
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolve("ghost"))
                 .expectErrorSatisfies(e ->
@@ -152,10 +157,53 @@ class VanityControllerTest {
     void resolveByHost_vanityHost_delegatesWithFirstLabel() {
         VanityService svc = mock(VanityService.class);
         when(svc.resolve(eq("alice"))).thenReturn(Mono.just(dto("alice")));
-        VanityController c = new VanityController(svc);
+        VanityController c = new VanityController(svc, SKEL);
 
         StepVerifier.create(c.resolveByHost("alice.snapdragon.systems:443"))
                 .assertNext(d -> assertThat(d.username()).isEqualTo("alice"))
+                .verifyComplete();
+        verify(svc).resolve("alice");
+    }
+
+    // ---- READ-LAYER: a CONFUSABLE of a reserved label hard-404s, no DB hit ----
+
+    /**
+     * The read-layer defence: a first label that is NOT an exact reserved label but
+     * whose SKELETON equals a reserved-label skeleton ({@code 4dmin ~ admin},
+     * {@code v4ult ~ vault}, {@code r00t ~ root}) must hard-404 and NEVER reach the
+     * resolve service — even though no {@code profile-4dmin} fragment exists. This
+     * catches anything that slipped past the write gate via backfill / race / ICU
+     * shift, with an O(1) precomputed-set membership check (no DB hit).
+     */
+    @Test
+    void confusableOfReservedLabel_is404_andNeverHitsService() {
+        VanityService svc = mock(VanityService.class);
+        VanityController c = new VanityController(svc, SKEL);
+
+        for (String confusable : new String[] {"4dmin", "v4ult", "r00t"}) {
+            StepVerifier.create(c.resolve(confusable))
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(ResponseStatusException.class);
+                        assertThat(((ResponseStatusException) e).getStatusCode())
+                                .isEqualTo(HttpStatus.NOT_FOUND);
+                    })
+                    .verify();
+        }
+        verify(svc, never()).resolve(any());
+    }
+
+    /**
+     * A clean (non-reserved, non-confusable) username still resolves through the
+     * service — the read-layer skeleton gate does not over-block real usernames.
+     */
+    @Test
+    void cleanUsername_passesThroughTheReadLayerSkeletonGate() {
+        VanityService svc = mock(VanityService.class);
+        when(svc.resolve(eq("alice"))).thenReturn(Mono.just(dto("alice")));
+        VanityController c = new VanityController(svc, SKEL);
+
+        StepVerifier.create(c.resolve("alice"))
+                .assertNext(d -> assertThat(d.slug()).isEqualTo("profile-alice"))
                 .verifyComplete();
         verify(svc).resolve("alice");
     }

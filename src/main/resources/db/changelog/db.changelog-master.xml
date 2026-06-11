@@ -33,6 +33,9 @@
         019 — federation_override.reason (SOURCE tag for the access-suspension
               profile-ban path: a scope=user row tagged access_suspension:<id> so
               clearScopeBySource clears ONLY rows it owns, never a manual kill)
+        020 — username_skeleton (confusable-skeleton cache: NON-unique skeleton
+              index + ICU version stamp; recomputable, NOT a unique identity — the
+              slug UNIQUE + 017 reserved CHECK stay the real exact-username backstop)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -59,4 +62,5 @@
     <include file="db/changelog/017-reserved-profile-slugs.xml"/>
     <include file="db/changelog/018-enum-check-constraints.xml"/>
     <include file="db/changelog/019-federation-override-reason.xml"/>
+    <include file="db/changelog/020-username-skeleton.xml"/>
 </databaseChangeLog>
