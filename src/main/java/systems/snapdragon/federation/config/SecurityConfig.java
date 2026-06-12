@@ -76,6 +76,17 @@ public class SecurityConfig {
         // code); an internal / disabled / missing one is 404. GET-only so it can
         // never mutate. Declared BEFORE the authenticated catch-alls.
         ex.pathMatchers(HttpMethod.GET, "/api/federation/vanity", "/api/federation/vanity/**").permitAll();
+        // Capabilities is a PUBLIC install-state projection (slug + installed +
+        // mountAt + requiresRole, no internal locator/detail) — a LOGGED-OUT or
+        // non-admin host reads it to grey-out OPTIONAL services that are absent /
+        // disabled. It MUST be public: the manifest is authenticated() +
+        // visibility-filtered (anon -> 401, internal remotes stripped for
+        // non-admins), so a logged-out host can't use it to drive greying. Safe
+        // because the projection is GET-only (never mutates), caller-independent
+        // (same body for all), and exposes no internal detail. Declared BEFORE the
+        // authenticated catch-alls so it can never fall through to authenticated —
+        // mirrors the /api/federation/vanity public read rule above.
+        ex.pathMatchers(HttpMethod.GET, "/api/federation/capabilities").permitAll();
         // Username availability / confusable check = INTERNAL / ROLE_SERVICE (or
         // ADMIN). NOT public — every response is an enumeration oracle (matchedWith
         // names the colliding username / reserved label). The registration mint
