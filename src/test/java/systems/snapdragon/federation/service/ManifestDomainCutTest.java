@@ -149,6 +149,72 @@ class ManifestDomainCutTest {
         verify(cache).put(any());
     }
 
+    // CROSS-USER: the internal-visibility cut is ORTHOGONAL to the domain cut — a
+    // per-domain NON-ADMIN sees ONLY their brand's PUBLIC rows; the internal row is
+    // dropped even though it is in their own brand.
+    @Test
+    void perDomainNonAdmin_seesOnlyOwnBrandPublicRows_internalDropped() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        FederationOverrideRepository ovr = mock(FederationOverrideRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", "brandx"))
+                .thenReturn(Flux.just(module("x-login", "public"), module("x-admin", "internal")));
+        when(ovr.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq("brandx")))
+                .thenReturn(Flux.empty());
+
+        ManifestService svc = new ManifestService(repo, ovr, noopCache());
+        FederationManifestDto manifest =
+                svc.render(Set.of("ROLE_USER"), DomainScope.of("brandx")).block();
+
+        // own brand's PUBLIC row only — the internal row needs ADMIN/INTERNAL.
+        assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactly("x-login");
+    }
+
+    // A per-domain ADMIN sees their brand's internal rows too (the internal cut keys
+    // off ROLE_ADMIN/INTERNAL, not the domain).
+    @Test
+    void perDomainAdmin_seesOwnBrandInternalRows() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        FederationOverrideRepository ovr = mock(FederationOverrideRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", "brandx"))
+                .thenReturn(Flux.just(module("x-login", "public"), module("x-admin", "internal")));
+        when(ovr.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq("brandx")))
+                .thenReturn(Flux.empty());
+
+        ManifestService svc = new ManifestService(repo, ovr, noopCache());
+        FederationManifestDto manifest =
+                svc.render(Set.of("ROLE_USER", "ROLE_ADMIN"), DomainScope.of("brandx")).block();
+        assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactlyInAnyOrder("x-login", "x-admin");
+    }
+
+    // CROSS-USER FAIL-CLOSED: a principal whose issuer could not be resolved is pinned
+    // to the NO_DOMAIN sentinel; the domain-pinned finder is asked for that sentinel
+    // (which matches NO row), so the manifest is EMPTY — never silently cross-domain
+    // nor un-pinned (the all-brands finder is never touched).
+    @Test
+    void unresolvedIssuerScope_rendersEmpty_neverLeaksAnotherBrand() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        FederationOverrideRepository ovr = mock(FederationOverrideRepository.class);
+        // The sentinel pins both finders; with no rows tagged " no-domain" they return
+        // empty (here stubbed empty to model the real no-match query).
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(
+                eq("closed"), eq(DomainScope.NO_DOMAIN)))
+                .thenReturn(Flux.empty());
+        when(ovr.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq(DomainScope.NO_DOMAIN)))
+                .thenReturn(Flux.empty());
+
+        ManifestService svc = new ManifestService(repo, ovr, noopCache());
+        DomainScope failClosed = DomainScope.of(null); // collapses to NO_DOMAIN
+        FederationManifestDto manifest = svc.render(Set.of("ROLE_USER"), failClosed).block();
+
+        assertThat(manifest.remotes()).isEmpty();
+        // The query was pinned to the sentinel, NOT run un-pinned (all-brands).
+        verify(repo).findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(
+                "closed", DomainScope.NO_DOMAIN);
+        verify(repo, never()).findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(any());
+    }
+
     // A SUPERADMIN authority set with NO explicit domain (back-compat render(Set))
     // still gets the cross-domain tier.
     @Test

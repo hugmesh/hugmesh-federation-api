@@ -139,4 +139,47 @@ class SecurityConfigConverterTest {
         assertThat(a).doesNotContain("DOMAIN_brandy");
         assertThat(a.stream().filter(s -> s.startsWith("DOMAIN_")).count()).isEqualTo(1L);
     }
+
+    @Test
+    void crossUser_rolesEntryNamedLikeADomain_isInert_notATenantScope() {
+        // A bare roles entry "brandy" (a real DOMAIN value) cannot grant brandy's
+        // tenant scope: it gains the ROLE_ prefix -> ROLE_BRANDY (inert), while the
+        // ONLY DOMAIN_ stays the validated issuer's (brandx).
+        Set<String> a = authoritiesOf(MULTI,
+                jwt("https://id.brandx.example", Map.of("roles", List.of("brandy"))));
+        assertThat(a).contains("ROLE_BRANDY", "DOMAIN_brandx");
+        assertThat(a).doesNotContain("DOMAIN_brandy");
+        assertThat(a.stream().filter(s -> s.startsWith("DOMAIN_")).count()).isEqualTo(1L);
+    }
+
+    @Test
+    void crossUser_reservedPrefixGuard_isCaseAndWhitespaceInsensitive() {
+        // The reserved-prefix guard upper-cases + trims before matching, so neither a
+        // lower-case nor a leading-whitespace spelling of a reserved-prefix permission
+        // can sneak a forged ROLE_/DOMAIN_ authority through. Each of these verbatim
+        // permission entries must be DROPPED.
+        Set<String> a = authoritiesOf(MULTI, jwt("https://id.brandx.example", Map.of(
+                "permissions", List.of(
+                        "domain_brandy",        // lower-case DOMAIN_ -> dropped
+                        "  DOMAIN_brandy",      // leading whitespace -> dropped
+                        "role_superadmin",      // lower-case ROLE_ -> dropped
+                        " ROLE_ADMIN ",         // padded ROLE_ -> dropped
+                        "federation:read"))));  // a legit non-reserved perm -> kept
+        assertThat(a).contains("DOMAIN_brandx", "federation:read");
+        assertThat(a).doesNotContain("DOMAIN_brandy", "domain_brandy", "  DOMAIN_brandy");
+        assertThat(a).doesNotContain("ROLE_SUPERADMIN", "role_superadmin", " ROLE_ADMIN ");
+        // No forged ROLE_ADMIN sneaks in via the padded permission entry, and exactly
+        // one (issuer) DOMAIN_ survives.
+        assertThat(a).doesNotContain("ROLE_ADMIN");
+        assertThat(a.stream().filter(s -> s.startsWith("DOMAIN_")).count()).isEqualTo(1L);
+    }
+
+    @Test
+    void singleIssuer_emitsExactlyOneDomainDefault_withRoleUserFloor() {
+        // Single-issuer back-compat: ROLE_USER floor + exactly one DOMAIN_default and
+        // nothing else moves.
+        Set<String> a = authoritiesOf(jwt(Map.of()));
+        assertThat(a).contains("ROLE_USER", "DOMAIN_default");
+        assertThat(a.stream().filter(s -> s.startsWith("DOMAIN_")).count()).isEqualTo(1L);
+    }
 }
