@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.ModerationRequest;
+import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.service.ModerationService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -37,9 +39,11 @@ import systems.snapdragon.federation.web.ValidationPatterns;
 public class ModerationController {
 
     private final ModerationService moderation;
+    private final DomainRegistry domains;
 
-    public ModerationController(ModerationService moderation) {
+    public ModerationController(ModerationService moderation, DomainRegistry domains) {
         this.moderation = moderation;
+        this.domains = domains;
     }
 
     /**
@@ -56,37 +60,40 @@ public class ModerationController {
             @Size(max = 1024, message = "target must be at most 1024 chars") String target,
             @Size(max = 1024, message = "reason must be at most 1024 chars") String reason) {}
 
-    @Operation(summary = "List moderation requests (optionally by status).")
+    @Operation(summary = "List moderation requests in the caller's domain (SUPERADMIN: all; optionally by status).")
     @GetMapping
-    @PreAuthorize("hasAnyRole('MOD','ADMIN')")
+    @PreAuthorize("hasAnyRole('MOD','ADMIN','SUPERADMIN')")
     public Flux<ModerationRequest> list(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false)
             @Pattern(regexp = ValidationPatterns.MODERATION_STATUS,
                     message = "status must be recommended|referred|approved|denied") String status) {
-        return status == null ? moderation.list() : moderation.listByStatus(status);
+        DomainScope scope = DomainScope.resolve(jwt, domains);
+        return status == null ? moderation.list(scope) : moderation.listByStatus(status, scope);
     }
 
-    @Operation(summary = "Submit a moderation request (mod recommends).")
+    @Operation(summary = "Submit a moderation request (mod recommends; stamped with the caller's domain).")
     @PostMapping
-    @PreAuthorize("hasAnyRole('MOD','ADMIN')")
+    @PreAuthorize("hasAnyRole('MOD','ADMIN','SUPERADMIN')")
     public Mono<ModerationRequest> submit(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody SubmitRequest req) {
-        return moderation.submit(jwt.getSubject(), req.kind(), req.target(), req.reason());
+        return moderation.submit(jwt.getSubject(), req.kind(), req.target(), req.reason(),
+                DomainScope.resolve(jwt, domains));
     }
 
-    @Operation(summary = "Refer a request up to admins (mod escalates).")
+    @Operation(summary = "Refer a request up to admins (mod escalates; scoped to the caller's domain).")
     @PostMapping("/{id}/refer")
-    @PreAuthorize("hasAnyRole('MOD','ADMIN')")
+    @PreAuthorize("hasAnyRole('MOD','ADMIN','SUPERADMIN')")
     public Mono<ModerationRequest> refer(@AuthenticationPrincipal Jwt jwt,
                                          @PathVariable @Positive(message = "id must be a positive number") Long id) {
-        return moderation.refer(id, jwt.getSubject());
+        return moderation.refer(id, jwt.getSubject(), DomainScope.resolve(jwt, domains));
     }
 
-    @Operation(summary = "Decide a request (admin approves / denies).")
+    @Operation(summary = "Decide a request (admin approves / denies; scoped to the caller's domain).")
     @PostMapping("/{id}/decide")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERADMIN')")
     public Mono<ModerationRequest> decide(@AuthenticationPrincipal Jwt jwt,
                                           @PathVariable @Positive(message = "id must be a positive number") Long id,
                                           @RequestParam boolean approve) {
-        return moderation.decide(id, approve, jwt.getSubject());
+        return moderation.decide(id, approve, jwt.getSubject(), DomainScope.resolve(jwt, domains));
     }
 }

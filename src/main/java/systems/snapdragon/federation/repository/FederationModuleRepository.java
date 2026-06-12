@@ -18,10 +18,37 @@ public interface FederationModuleRepository extends ReactiveCrudRepository<Feder
     Flux<FederationModule> findAllByEnabledTrueOrderByKindAscSlugAsc();
 
     /** Manifest read path, narrowed to circuit-closed rows (the kill-switch
-     *  drops circuit-open remotes). */
+     *  drops circuit-open remotes). SUPERADMIN tier uses this (all domains). */
     Flux<FederationModule> findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(String circuitState);
 
+    /**
+     * DOMAIN-scoped manifest read path (multi-tenancy, changeset 026): the same
+     * enabled + circuit-closed, kind-then-slug ordered finder, additionally pinned to
+     * the caller's {@code domain}. A per-domain principal's manifest therefore lists
+     * ONLY their own brand's remotes; the SUPERADMIN tier uses the un-pinned finder
+     * above to see every domain's remotes. The DB-side predicate guarantees a
+     * cross-domain remote is NEVER returned to a domain-scoped caller — the per-domain
+     * CUT is enforced in the query, not (spoofable) in code.
+     */
+    Flux<FederationModule> findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(
+            String circuitState, String domain);
+
     Mono<FederationModule> findBySlug(String slug);
+
+    /**
+     * DOMAIN-scoped slug lookup (multi-tenancy, changeset 026): the same single-row
+     * slug finder, but additionally pinned to the principal's {@code domain}. The
+     * registry CRUD / kill-switch paths use this so a per-domain admin can only
+     * read/mutate a module IN THEIR OWN domain — a slug that exists in another
+     * brand's domain returns EMPTY (404), never the cross-domain row. SUPERADMIN
+     * bypasses this and uses {@link #findBySlug(String)} (no domain predicate).
+     */
+    Mono<FederationModule> findBySlugAndDomain(String slug, String domain);
+
+    /** DOMAIN-scoped admin listing (multi-tenancy, changeset 026): every registry
+     *  row in the principal's domain. SUPERADMIN uses the inherited {@code findAll()}
+     *  (all domains). */
+    Flux<FederationModule> findByDomain(String domain);
 
     Flux<FederationModule> findByOwnerUserId(String ownerUserId);
 

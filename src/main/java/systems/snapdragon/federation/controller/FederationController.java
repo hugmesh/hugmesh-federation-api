@@ -4,11 +4,15 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationManifestDto;
+import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.service.ManifestService;
 
 import java.util.Set;
@@ -33,9 +37,11 @@ import java.util.stream.Collectors;
 public class FederationController {
 
     private final ManifestService manifest;
+    private final DomainRegistry domains;
 
-    public FederationController(ManifestService manifest) {
+    public FederationController(ManifestService manifest, DomainRegistry domains) {
         this.manifest = manifest;
+        this.domains = domains;
     }
 
     @Operation(
@@ -47,8 +53,13 @@ public class FederationController {
             The host calls this on bootstrap + every full reload.
             """)
     @GetMapping("/manifest")
-    public Mono<FederationManifestDto> manifest(Authentication auth) {
-        return manifest.render(authoritiesOf(auth));
+    public Mono<FederationManifestDto> manifest(Authentication auth, @AuthenticationPrincipal Jwt jwt) {
+        // The manifest is DOMAIN-scoped: a per-domain principal sees ONLY their own
+        // brand's remotes; SUPERADMIN (cross-domain infra role) sees every brand's.
+        // The domain is derived from the cryptographically-validated issuer (via the
+        // registry), never a spoofable claim — fail-closed to a no-match domain when
+        // the issuer is unknown in multi-brand mode.
+        return manifest.render(authoritiesOf(auth), DomainScope.resolve(jwt, domains));
     }
 
     static Set<String> authoritiesOf(Authentication auth) {

@@ -48,6 +48,17 @@ public class FederationOverride {
      * rearms an unrelated manual kill (which carries a NULL / different reason).
      */
     private String reason;
+    /**
+     * The brand/domain this kill-switch row belongs to (multi-tenancy, changeset
+     * 026). Stamped at write time from the principal's issuer-derived
+     * {@code DOMAIN_<x>}; a per-domain admin only applies / lists overrides in their
+     * own domain (SUPERADMIN sees all). DEFAULTs to {@code "default"} so pre-existing
+     * rows + single-issuer clusters are unchanged. Field-initialised to
+     * {@code "default"} so a programmatically-built row saved over R2DBC (which sends
+     * every column, bypassing the DB DEFAULT) never violates the NOT-NULL column; the
+     * service overwrites it from the authenticated principal on a scoped write.
+     */
+    private String domain = "default";
 
     public Long getId() { return id; }
     public String getScope() { return scope; }
@@ -57,6 +68,7 @@ public class FederationOverride {
     public Instant getTs() { return ts; }
     public Instant getClearedAt() { return clearedAt; }
     public String getReason() { return reason; }
+    public String getDomain() { return domain; }
 
     public void setId(Long id) { this.id = id; }
     public void setScope(String scope) { this.scope = scope; }
@@ -66,4 +78,5 @@ public class FederationOverride {
     public void setTs(Instant ts) { this.ts = ts; }
     public void setClearedAt(Instant clearedAt) { this.clearedAt = clearedAt; }
     public void setReason(String reason) { this.reason = reason; }
+    public void setDomain(String domain) { this.domain = domain; }
 }

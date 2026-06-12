@@ -53,6 +53,13 @@
         025 — register games as a federation module (slug='games',
               kind='remote-shell', mountAt /games, requiresRole 'ROLE_GAMES';
               mirrors 022, slug-absent MARK_RAN seed-guard — OPTIONAL service)
+        026 — multi-tenancy domain scoping: add a NOT-NULL domain column
+              (DEFAULT 'default') + index to federation_modules / federation_override
+              / moderation_requests so a principal only sees/mutates their own
+              brand/domain's rows (the per-domain CUT; SUPERADMIN sees all). The
+              domain is the principal's issuer-derived DOMAIN_<x> at write time; the
+              'default' default keeps every pre-existing row + single-issuer clusters
+              unchanged.
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -85,4 +92,5 @@
     <include file="db/changelog/023-register-akkoma-module.xml"/>
     <include file="db/changelog/024-register-tuwunel-module.xml"/>
     <include file="db/changelog/025-register-games-module.xml"/>
+    <include file="db/changelog/026-domain-scoping.xml"/>
 </databaseChangeLog>

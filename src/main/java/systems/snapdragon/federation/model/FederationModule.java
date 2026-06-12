@@ -75,6 +75,15 @@ public class FederationModule {
     private String circuitState;
     /** Free-form JSON metadata (integrity hashes, scope flags, dependencies). */
     private String metadata;
+    /**
+     * The brand/domain this row belongs to (multi-tenancy, changeset 026). Stamped
+     * at write time from the principal's issuer-derived {@code DOMAIN_<x>} (NEVER a
+     * user-settable claim); a principal only sees/mutates rows in their own domain
+     * (SUPERADMIN sees all). DEFAULTs to {@code "default"} so pre-existing rows +
+     * single-issuer clusters are unchanged. NOT settable by the API client — the
+     * service overwrites it from the authenticated principal on create.
+     */
+    private String domain = "default";
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -91,6 +100,7 @@ public class FederationModule {
     public boolean isEnabled() { return enabled; }
     public String getCircuitState() { return circuitState; }
     public String getMetadata() { return metadata; }
+    public String getDomain() { return domain; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
@@ -107,6 +117,7 @@ public class FederationModule {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public void setCircuitState(String circuitState) { this.circuitState = circuitState; }
     public void setMetadata(String metadata) { this.metadata = metadata; }
+    public void setDomain(String domain) { this.domain = domain; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 }

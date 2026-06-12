@@ -10,6 +10,7 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
+import systems.snapdragon.federation.security.DomainScope;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,19 +53,22 @@ class OverrideServiceTest {
         return new OverrideService(overrides, modules, noopCache());
     }
 
+    /** The per-domain caller scope these tests act under (default brand). */
+    private static final DomainScope DEFAULT = DomainScope.of("default");
+
     @Test
     void apply_circuitBreak_mutatesModule_andRecordsActiveScopeRow() {
         FederationModuleRepository modules = mock(FederationModuleRepository.class);
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         FederationModule m = module("admin");
-        when(modules.findBySlug("admin")).thenReturn(Mono.just(m));
+        when(modules.findBySlugAndDomain("admin", "default")).thenReturn(Mono.just(m));
         when(modules.save(any())).thenReturn(Mono.just(m));
         ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
         when(overrides.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         OverrideService svc = service(overrides, modules);
 
-        StepVerifier.create(svc.apply("admin", "role", "admin", "circuit-break", "set-by-1"))
+        StepVerifier.create(svc.apply("admin", "role", "admin", "circuit-break", "set-by-1", DEFAULT))
                 .expectNextCount(1)
                 .verifyComplete();
 
@@ -78,6 +82,8 @@ class OverrideServiceTest {
         assertThat(row.getTarget()).isEqualTo("admin");
         assertThat(row.getAction()).isEqualTo("circuit-break");
         assertThat(row.getClearedAt()).isNull();
+        // DOMAIN stamped from the caller's scope (changeset 026).
+        assertThat(row.getDomain()).isEqualTo("default");
     }
 
     @Test
@@ -85,14 +91,14 @@ class OverrideServiceTest {
         FederationModuleRepository modules = mock(FederationModuleRepository.class);
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         FederationModule m = module("host");
-        when(modules.findBySlug("host")).thenReturn(Mono.just(m));
+        when(modules.findBySlugAndDomain("host", "default")).thenReturn(Mono.just(m));
         when(modules.save(any())).thenReturn(Mono.just(m));
         ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
         when(overrides.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         OverrideService svc = service(overrides, modules);
 
-        svc.apply("host", "all", null, "unpublish", "set-by-1").block();
+        svc.apply("host", "all", null, "unpublish", "set-by-1", DEFAULT).block();
 
         FederationOverride row = saved.getValue();
         assertThat(row.getScope()).isEqualTo("all");
@@ -106,13 +112,13 @@ class OverrideServiceTest {
         FederationModuleRepository modules = mock(FederationModuleRepository.class);
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         FederationModule m = module("some-slug");
-        when(modules.findBySlug("some-slug")).thenReturn(Mono.just(m));
+        when(modules.findBySlugAndDomain("some-slug", "default")).thenReturn(Mono.just(m));
         when(modules.save(any())).thenReturn(Mono.just(m));
         ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
         when(overrides.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         OverrideService svc = service(overrides, modules);
-        svc.apply("some-slug", "user", "", "circuit-break", "set-by-1").block();
+        svc.apply("some-slug", "user", "", "circuit-break", "set-by-1", DEFAULT).block();
 
         // No scope_value given => target falls back to the slug (per-slug intent).
         assertThat(saved.getValue().getTarget()).isEqualTo("some-slug");
@@ -122,7 +128,7 @@ class OverrideServiceTest {
     void apply_rejectsBadAction() {
         OverrideService svc = service(
                 mock(FederationOverrideRepository.class), mock(FederationModuleRepository.class));
-        StepVerifier.create(svc.apply("x", "all", null, "nuke", "set-by-1"))
+        StepVerifier.create(svc.apply("x", "all", null, "nuke", "set-by-1", DEFAULT))
                 .expectError()
                 .verify();
     }
@@ -133,6 +139,7 @@ class OverrideServiceTest {
         FederationOverride active = new FederationOverride();
         active.setScope("user");
         active.setTarget("ownerX");
+        active.setDomain("default"); // same brand as the clearing admin
         when(overrides.findByScopeAndTargetAndClearedAtIsNull("user", "ownerX"))
                 .thenReturn(Flux.just(active));
         ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
@@ -140,7 +147,7 @@ class OverrideServiceTest {
 
         OverrideService svc = service(overrides, mock(FederationModuleRepository.class));
 
-        StepVerifier.create(svc.clearScope("user", "ownerX"))
+        StepVerifier.create(svc.clearScope("user", "ownerX", DEFAULT))
                 .expectNext(1L)
                 .verifyComplete();
 
@@ -152,12 +159,14 @@ class OverrideServiceTest {
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         FederationOverride active = new FederationOverride();
         active.setScope("all");
+        // domain left NULL: matchesDomain treats a pre-026 NULL as "default" so a
+        // default-domain admin can still clear legacy rows (single-issuer back-compat).
         when(overrides.findByScopeAndClearedAtIsNull("all")).thenReturn(Flux.just(active));
         when(overrides.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         OverrideService svc = service(overrides, mock(FederationModuleRepository.class));
 
-        StepVerifier.create(svc.clearScope("all", null))
+        StepVerifier.create(svc.clearScope("all", null, DEFAULT))
                 .expectNext(1L)
                 .verifyComplete();
 
@@ -170,7 +179,7 @@ class OverrideServiceTest {
     void clearScope_rejectsBadScope() {
         OverrideService svc = service(
                 mock(FederationOverrideRepository.class), mock(FederationModuleRepository.class));
-        StepVerifier.create(svc.clearScope("bogus", "x"))
+        StepVerifier.create(svc.clearScope("bogus", "x", DEFAULT))
                 .expectError()
                 .verify();
     }
@@ -181,12 +190,12 @@ class OverrideServiceTest {
         FederationModule m = module("admin");
         m.setCircuitState("open");
         m.setEnabled(false);
-        when(modules.findBySlug("admin")).thenReturn(Mono.just(m));
+        when(modules.findBySlugAndDomain("admin", "default")).thenReturn(Mono.just(m));
         when(modules.save(any())).thenReturn(Mono.just(m));
 
         OverrideService svc = service(mock(FederationOverrideRepository.class), modules);
 
-        svc.rearm("admin").block();
+        svc.rearm("admin", DEFAULT).block();
         assertThat(m.getCircuitState()).isEqualTo("closed");
         assertThat(m.isEnabled()).isTrue();
     }
