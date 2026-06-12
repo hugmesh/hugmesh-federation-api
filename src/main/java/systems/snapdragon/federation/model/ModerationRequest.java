@@ -27,6 +27,17 @@ public class ModerationRequest {
     private String modReferrer;
     private String adminDecider;
     private Instant ts;
+    /**
+     * The brand/domain this moderation request belongs to (multi-tenancy, changeset
+     * 026). Stamped at submit time from the requester's issuer-derived
+     * {@code DOMAIN_<x>}; a per-domain mod/admin only lists / refers / decides
+     * requests in their own domain (SUPERADMIN sees all). DEFAULTs to
+     * {@code "default"} so pre-existing rows + single-issuer clusters are unchanged.
+     * Field-initialised to {@code "default"} so a programmatically-built row saved
+     * over R2DBC (which sends every column, bypassing the DB DEFAULT) never violates
+     * the NOT-NULL column; the service overwrites it from the requester's principal.
+     */
+    private String domain = "default";
 
     public Long getId() { return id; }
     public String getRequester() { return requester; }
@@ -37,6 +48,7 @@ public class ModerationRequest {
     public String getModReferrer() { return modReferrer; }
     public String getAdminDecider() { return adminDecider; }
     public Instant getTs() { return ts; }
+    public String getDomain() { return domain; }
 
     public void setId(Long id) { this.id = id; }
     public void setRequester(String requester) { this.requester = requester; }
@@ -47,4 +59,5 @@ public class ModerationRequest {
     public void setModReferrer(String modReferrer) { this.modReferrer = modReferrer; }
     public void setAdminDecider(String adminDecider) { this.adminDecider = adminDecider; }
     public void setTs(Instant ts) { this.ts = ts; }
+    public void setDomain(String domain) { this.domain = domain; }
 }

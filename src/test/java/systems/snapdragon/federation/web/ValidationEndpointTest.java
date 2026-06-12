@@ -81,7 +81,7 @@ class ValidationEndpointTest {
                 .jsonPath("$.fields.slug").exists()
                 .jsonPath("$.fields.kind").exists()
                 .jsonPath("$.fields.version").exists();
-        verify(registry, never()).create(any());
+        verify(registry, never()).create(any(), any());
     }
 
     @Test
@@ -93,21 +93,21 @@ class ValidationEndpointTest {
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.fields.kind").exists();
-        verify(registry, never()).create(any());
+        verify(registry, never()).create(any(), any());
     }
 
     @Test
     void createModule_valid_is2xx_callsService() {
         FederationModule saved = new FederationModule();
         saved.setSlug("ok-slug");
-        when(registry.create(any())).thenReturn(Mono.just(saved));
+        when(registry.create(any(), any())).thenReturn(Mono.just(saved));
         admin().post().uri("/api/federation/modules")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"slug\":\"ok-slug\",\"displayName\":\"D\",\"kind\":\"fragment\","
                         + "\"remoteEntryUrl\":\"/r\",\"version\":\"1\",\"visibility\":\"public\"}")
                 .exchange()
                 .expectStatus().isCreated();
-        verify(registry).create(any());
+        verify(registry).create(any(), any());
     }
 
     @Test
@@ -115,7 +115,7 @@ class ValidationEndpointTest {
         admin().get().uri("/api/federation/modules/Bad_Slug!")
                 .exchange()
                 .expectStatus().isBadRequest();
-        verify(registry, never()).get(anyString());
+        verify(registry, never()).get(anyString(), any());
     }
 
     // ------------------------------------------------------------------
@@ -130,7 +130,7 @@ class ValidationEndpointTest {
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.fields.kind").exists();
-        verify(moderation, never()).submit(any(), any(), any(), any());
+        verify(moderation, never()).submit(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -141,7 +141,7 @@ class ValidationEndpointTest {
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.fields.target").exists();
-        verify(moderation, never()).submit(any(), any(), any(), any());
+        verify(moderation, never()).submit(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -149,18 +149,18 @@ class ValidationEndpointTest {
         mod().get().uri("/api/federation/moderation?status=bogus")
                 .exchange()
                 .expectStatus().isBadRequest();
-        verify(moderation, never()).listByStatus(anyString());
+        verify(moderation, never()).listByStatus(anyString(), any());
     }
 
     @Test
     void submitModeration_valid_is2xx() {
-        when(moderation.submit(any(), any(), any(), any())).thenReturn(Mono.just(new ModerationRequest()));
+        when(moderation.submit(any(), any(), any(), any(), any())).thenReturn(Mono.just(new ModerationRequest()));
         mod().post().uri("/api/federation/moderation")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"kind\":\"instance-block\",\"target\":\"evil.example\",\"reason\":\"spam\"}")
                 .exchange()
                 .expectStatus().is2xxSuccessful();
-        verify(moderation).submit(any(), any(), any(), any());
+        verify(moderation).submit(any(), any(), any(), any(), any());
     }
 
     // ------------------------------------------------------------------
@@ -177,12 +177,12 @@ class ValidationEndpointTest {
                 .expectBody()
                 .jsonPath("$.fields.scope").exists()
                 .jsonPath("$.fields.action").exists();
-        verify(overrides, never()).apply(any(), any(), any(), any(), any());
+        verify(overrides, never()).apply(any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void applyOverride_valid_is2xx() {
-        when(overrides.apply(any(), any(), any(), any(), any()))
+        when(overrides.apply(any(), any(), any(), any(), any(), any()))
                 .thenReturn(Mono.just(new FederationOverride()));
         admin().post().uri("/api/federation/overrides")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -190,7 +190,7 @@ class ValidationEndpointTest {
                         + "\"action\":\"circuit-break\"}")
                 .exchange()
                 .expectStatus().is2xxSuccessful();
-        verify(overrides).apply(any(), any(), any(), any(), any());
+        verify(overrides).apply(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -201,6 +201,6 @@ class ValidationEndpointTest {
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody().jsonPath("$.fields.scope").exists();
-        verify(overrides, never()).clearScope(any(), any());
+        verify(overrides, never()).clearScope(any(), any(), any());
     }
 }

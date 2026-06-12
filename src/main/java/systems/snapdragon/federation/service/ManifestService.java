@@ -12,6 +12,8 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
+import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.federation.security.Roles;
 
 import java.time.Instant;
 import java.util.List;
@@ -78,35 +80,74 @@ public class ManifestService {
     }
 
     /**
-     * Render the manifest for a caller with the given authorities. {@code admin}
-     * controls whether {@code internal}-visibility remotes are included.
-     *
-     * <p>Always rendered from Postgres for the authoritative, per-caller-filtered
-     * result; the cache is written through on the (unfiltered-superset) public
-     * render so it never leaks internal rows to an anonymous poller.
+     * Back-compat render: a caller with only authorities (no domain context) renders
+     * the {@code "default"} domain's manifest (single-issuer / legacy behaviour). A
+     * SUPERADMIN authority set still gets the cross-domain (all-brands) tier so the
+     * infra control plane sees every remote even via this overload.
      */
     public Mono<FederationManifestDto> render(Set<String> authorities) {
+        DomainScope scope = (authorities != null && Roles.isSuperadmin(authorities))
+                ? DomainScope.superadmin()
+                : DomainScope.of("default");
+        return render(authorities, scope);
+    }
+
+    /**
+     * Render the manifest for a caller with the given authorities, scoped to their
+     * brand/domain. Two tiers:
+     *
+     * <ul>
+     *   <li><b>PER-DOMAIN</b> (the common case) — the module + active-scope-override
+     *       finders are pinned to {@code scope.domain()}, so a brand-X principal's
+     *       manifest lists ONLY brand-X remotes and a brand-X scope=all kill never
+     *       blanks brand-Y. This is the per-domain CUT, enforced in the QUERY.</li>
+     *   <li><b>SUPERADMIN</b> ({@code scope.isSuperadmin()}) — the un-pinned finders
+     *       run, so the cross-domain infra role sees EVERY brand's remotes in one
+     *       manifest (the control-plane tier). No domain predicate.</li>
+     * </ul>
+     *
+     * <p>{@code canSeeInternal} (ADMIN/INTERNAL) still controls whether
+     * {@code internal}-visibility remotes are included — orthogonal to the domain
+     * cut. Always rendered from Postgres for the authoritative, per-caller-filtered
+     * result; the cache is written through ONLY on the public-safe DEFAULT-domain
+     * render (see below) so it never leaks internal rows NOR another brand's remotes
+     * to an anonymous poller.
+     */
+    public Mono<FederationManifestDto> render(Set<String> authorities, DomainScope scope) {
         boolean canSeeInternal = authorities != null
-                && (authorities.contains("ROLE_ADMIN") || authorities.contains("ROLE_INTERNAL"));
-        // Load the active scope-override set ONCE per render (one reactive query),
-        // then stream + filter the modules against it. collectList -> flatMap keeps
-        // it fully reactive with no blocking on the event loop.
-        return overrides.findByScopeInAndClearedAtIsNull(SCOPE_KINDS)
+                && (authorities.contains("ROLE_ADMIN") || authorities.contains("ROLE_INTERNAL")
+                    || Roles.isSuperadmin(authorities));
+        boolean superadmin = scope != null && scope.isSuperadmin();
+        String domain = scope == null ? DomainScope.of("default").domain() : scope.domain();
+
+        // Active scope-override set + module stream — pinned to the caller's domain
+        // unless SUPERADMIN (un-pinned, all brands). Loaded ONCE per render.
+        Flux<FederationOverride> activeScope = superadmin
+                ? overrides.findByScopeInAndClearedAtIsNull(SCOPE_KINDS)
+                : overrides.findByScopeInAndClearedAtIsNullAndDomain(SCOPE_KINDS, domain);
+        Flux<FederationModule> modules = superadmin
+                ? repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed")
+                : repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", domain);
+
+        return activeScope
                 .collectList()
-                .flatMap(active -> repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed")
+                .flatMap(active -> modules
                         .filter(m -> isVisibleTo(m, canSeeInternal))
                         .filter(m -> !isSuppressedByScope(m, active)) // active scope cut
                         .map(FederationRemoteDto::from)
                         .collectList()
                         .map(remotes -> new FederationManifestDto(Instant.now().toString(), remotes))
                         .flatMap(manifest -> {
-                            // Write-through ONLY the public-safe view (no internal
-                            // rows) so a cache poller without a token never sees
-                            // internal remotes. Best-effort; failure swallowed in
-                            // the cache. The scope cut already ran on this same
-                            // stream, so the cached body is the public-safe +
-                            // scope-filtered view.
-                            if (!canSeeInternal) {
+                            // Write-through ONLY the public-safe DEFAULT-domain view
+                            // (no internal rows, no superadmin cross-domain superset)
+                            // so a cache poller without a token never sees internal
+                            // remotes NOR another brand's remotes. Best-effort; failure
+                            // swallowed in the cache. (A per-brand cache key is a later
+                            // enhancement — until then only the canonical default
+                            // public view is cached, never a brand-specific or
+                            // cross-domain one.)
+                            if (!canSeeInternal && !superadmin
+                                    && DomainScope.of("default").domain().equals(domain)) {
                                 return cache.put(manifest).thenReturn(manifest);
                             }
                             return Mono.just(manifest);

@@ -15,6 +15,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
+import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.service.OverrideService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -27,14 +29,16 @@ import systems.snapdragon.federation.web.ValidationPatterns;
 @Tag(name = "Override", description = "Federation kill-switch: circuit-break / unpublish / remove a module. ROLE_ADMIN required.")
 @RestController
 @RequestMapping("/api/federation/overrides")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasAnyRole('ADMIN','SUPERADMIN')")
 @Validated
 public class OverrideController {
 
     private final OverrideService overrides;
+    private final DomainRegistry domains;
 
-    public OverrideController(OverrideService overrides) {
+    public OverrideController(OverrideService overrides, DomainRegistry domains) {
         this.overrides = overrides;
+        this.domains = domains;
     }
 
     /**
@@ -62,10 +66,10 @@ public class OverrideController {
             String scope,
             @Size(max = 1024, message = "target must be at most 1024 chars") String target) {}
 
-    @Operation(summary = "List applied overrides (audit trail).")
+    @Operation(summary = "List applied overrides in the caller's domain (SUPERADMIN: all).")
     @GetMapping
-    public Flux<FederationOverride> list() {
-        return overrides.list();
+    public Flux<FederationOverride> list(@AuthenticationPrincipal Jwt jwt) {
+        return overrides.list(DomainScope.resolve(jwt, domains));
     }
 
     @Operation(
@@ -77,14 +81,16 @@ public class OverrideController {
             """)
     @PostMapping
     public Mono<FederationOverride> apply(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ApplyRequest req) {
-        return overrides.apply(req.moduleSlug(), req.scope(), req.scopeValue(), req.action(), jwt.getSubject());
+        return overrides.apply(req.moduleSlug(), req.scope(), req.scopeValue(), req.action(),
+                jwt.getSubject(), DomainScope.resolve(jwt, domains));
     }
 
-    @Operation(summary = "Re-arm a circuit-broken / unpublished module (admin recovery).")
+    @Operation(summary = "Re-arm a circuit-broken / unpublished module (admin recovery; scoped to caller's domain).")
     @PostMapping("/{moduleSlug}/rearm")
     public Mono<FederationModule> rearm(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid moduleSlug") String moduleSlug) {
-        return overrides.rearm(moduleSlug);
+        return overrides.rearm(moduleSlug, DomainScope.resolve(jwt, domains));
     }
 
     @Operation(
@@ -97,7 +103,7 @@ public class OverrideController {
             'role'); omit/null for 'all'. Returns the count of rows cleared.
             """)
     @PostMapping("/clear")
-    public Mono<Long> clearScope(@Valid @RequestBody ClearScopeRequest req) {
-        return overrides.clearScope(req.scope(), req.target());
+    public Mono<Long> clearScope(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ClearScopeRequest req) {
+        return overrides.clearScope(req.scope(), req.target(), DomainScope.resolve(jwt, domains));
     }
 }

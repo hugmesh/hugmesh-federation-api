@@ -1,0 +1,150 @@
+package systems.snapdragon.federation.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.convert.converter.Converter;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
+import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoders;
+import org.springframework.security.oauth2.server.resource.authentication.JwtIssuerReactiveAuthenticationManagerResolver;
+import org.springframework.security.oauth2.server.resource.authentication.JwtReactiveAuthenticationManager;
+import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import systems.snapdragon.federation.security.DomainRegistry;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * CONFIG-GATED, backward-compatible multi-issuer (per-brand Casdoor) wiring.
+ * COPIED VERBATIM (package adjusted) from the canonical
+ * {@code systems.snapdragon.gateway.config.TenancyResourceServerConfig}.
+ *
+ * <p>Contributes a per-issuer {@link ReactiveAuthenticationManagerResolver} ONLY
+ * when {@code app.tenancy.issuers} actually carries issuer=domain pairs (the
+ * {@code .contains('=')} guard) — NOT merely when the property is "present" with
+ * the empty {@code ${APP_TENANCY_ISSUERS:}} default, which a bare
+ * {@code @ConditionalOnProperty(name=...)} would have treated as present-and-true
+ * and so ALWAYS activated. {@link SecurityConfig} additionally only swaps onto this
+ * resolver when {@link DomainRegistry#isMultiIssuer()} (more than the lone
+ * back-compat entry), so a single-issuer cluster keeps the existing single
+ * {@code o.jwt(...)} jwk-set-uri / issuer-uri path verbatim and is byte-for-byte
+ * unchanged.
+ *
+ * <p><b>Fail-closed on unknown issuer.</b> The resolver's allowlist is exactly
+ * {@link DomainRegistry#trustedIssuers()} (the configured per-brand Casdoors). A
+ * token whose {@code iss} is not in that set gets NO manager and 401s before any
+ * authority is emitted.
+ *
+ * <p><b>Custom converter preserved per issuer.</b> The per-issuer
+ * {@link JwtReactiveAuthenticationManager} is built ourselves and set with the SAME
+ * Casdoor authorities converter the single-issuer path uses, so the
+ * {@code DOMAIN_<x>} authority is emitted in multi-issuer mode too — identical
+ * authority output to the single-issuer path.
+ */
+@Configuration
+// Fire ONLY when app.tenancy.issuers genuinely carries issuer=domain pairs. The
+// '=' guard makes the empty ${APP_TENANCY_ISSUERS:} default a no-op: an empty
+// string is "present and not false" to @ConditionalOnProperty, which would have
+// activated this bean (and silently routed single-issuer clusters through the
+// resolver / OIDC discovery). A valid CSV always contains at least one '='.
+@ConditionalOnExpression("'${app.tenancy.issuers:}'.contains('=')")
+public class TenancyResourceServerConfig {
+
+    private final DomainRegistry domainRegistry;
+
+    /** Explicit issuer-uri of the lone back-compat issuer (the single-issuer
+     *  {@code spring.security.oauth2.resourceserver.jwt.issuer-uri}). Paired with
+     *  {@link #backCompatJwkSetUri} to build a discovery-free decoder for it when a
+     *  jwk-set-uri is also configured. */
+    private final String backCompatIssuer;
+
+    /** Explicit jwk-set-uri of the lone back-compat issuer — used to build the
+     *  per-issuer decoder WITHOUT OIDC discovery. Empty on pure multi-brand configs
+     *  (each brand decoder discovers from its own iss) — this BFF's back-compat path
+     *  is issuer-uri (OIDC discovery), so this is normally empty. */
+    private final String backCompatJwkSetUri;
+
+    public TenancyResourceServerConfig(
+            DomainRegistry domainRegistry,
+            @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri:}") String backCompatIssuer,
+            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri:}") String backCompatJwkSetUri) {
+        this.domainRegistry = domainRegistry;
+        this.backCompatIssuer = trimSlash(backCompatIssuer);
+        this.backCompatJwkSetUri = backCompatJwkSetUri == null ? "" : backCompatJwkSetUri.trim();
+    }
+
+    private static String trimSlash(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        return t.endsWith("/") ? t.substring(0, t.length() - 1) : t;
+    }
+
+    @Bean
+    ReactiveAuthenticationManagerResolver<ServerWebExchange> tenantAuthManagerResolver() {
+        // Cache one manager per trusted issuer (decoder construction does network
+        // discovery — build lazily on first sight, never per request).
+        Map<String, ReactiveAuthenticationManager> byIssuer = new ConcurrentHashMap<>();
+
+        // Per-issuer resolver: ONLY trusted issuers (registry keys) get a manager;
+        // an unknown iss yields Mono.empty() -> 401 (fail-closed).
+        ReactiveAuthenticationManagerResolver<String> byIssuerResolver = issuer -> {
+            if (issuer == null || !domainRegistry.isTrusted(issuer)) {
+                return Mono.empty();
+            }
+            return Mono.just(byIssuer.computeIfAbsent(issuer, this::managerForIssuer));
+        };
+
+        JwtIssuerReactiveAuthenticationManagerResolver delegate =
+                new JwtIssuerReactiveAuthenticationManagerResolver(byIssuerResolver);
+        return delegate::resolve;
+    }
+
+    /** Build the per-issuer manager wired to the SAME Casdoor authorities converter
+     *  the single-issuer path uses, so the {@code DOMAIN_<x>} authority is emitted in
+     *  multi-issuer mode too. */
+    private ReactiveAuthenticationManager managerForIssuer(String issuer) {
+        JwtReactiveAuthenticationManager mgr =
+                new JwtReactiveAuthenticationManager(decoderForIssuer(issuer));
+        ReactiveJwtAuthenticationConverter converter = new ReactiveJwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter());
+        mgr.setJwtAuthenticationConverter(converter);
+        return mgr;
+    }
+
+    /** Decoder for an issuer. The lone back-compat issuer (the one with a configured
+     *  jwk-set-uri) gets a discovery-free {@code withJwkSetUri} decoder + the standard
+     *  exp/nbf validators + an {@code iss}-binding validator. Any other (per-brand)
+     *  issuer uses {@code fromIssuerLocation} discovery (the correct behaviour for a
+     *  genuinely multi-brand deployment). */
+    private ReactiveJwtDecoder decoderForIssuer(String issuer) {
+        String iss = trimSlash(issuer);
+        if (!backCompatJwkSetUri.isEmpty() && !backCompatIssuer.isEmpty()
+                && backCompatIssuer.equals(iss)) {
+            NimbusReactiveJwtDecoder decoder =
+                    NimbusReactiveJwtDecoder.withJwkSetUri(backCompatJwkSetUri).build();
+            OAuth2TokenValidator<Jwt> withIssuer = JwtValidators.createDefaultWithIssuer(iss);
+            decoder.setJwtValidator(withIssuer);
+            return decoder;
+        }
+        return ReactiveJwtDecoders.fromIssuerLocation(iss);
+    }
+
+    /** The Casdoor authorities converter — identical shape to
+     *  {@code SecurityConfig.casdoorAuthoritiesConverter()} (kept in sync via the
+     *  shared {@link CasdoorAuthorities}), with the issuer-derived {@code DOMAIN_<x>}
+     *  added. */
+    private Converter<Jwt, Flux<GrantedAuthority>> authoritiesConverter() {
+        return CasdoorAuthorities.converter(domainRegistry);
+    }
+}

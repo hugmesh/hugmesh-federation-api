@@ -6,6 +6,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.repository.ModerationRequestRepository;
+import systems.snapdragon.federation.security.DomainScope;
 
 import java.time.Instant;
 
@@ -36,16 +37,29 @@ public class ModerationService {
         this.repo = repo;
     }
 
-    public Flux<ModerationRequest> list() {
-        return repo.findAllByOrderByTsDesc();
+    /** DOMAIN-scoped workflow list. A per-domain mod/admin sees ONLY their own
+     *  brand's requests; SUPERADMIN sees every request across all brands. */
+    public Flux<ModerationRequest> list(DomainScope scope) {
+        return scope.isSuperadmin()
+                ? repo.findAllByOrderByTsDesc()
+                : repo.findByDomainOrderByTsDesc(scope.domain());
     }
 
-    public Flux<ModerationRequest> listByStatus(String status) {
-        return repo.findByStatusOrderByTsDesc(status);
+    /** DOMAIN-scoped workflow list filtered by status. */
+    public Flux<ModerationRequest> listByStatus(String status, DomainScope scope) {
+        return scope.isSuperadmin()
+                ? repo.findByStatusOrderByTsDesc(status)
+                : repo.findByStatusAndDomainOrderByTsDesc(status, scope.domain());
     }
 
-    /** A mod opens a request. {@code requester} is the mod's Casdoor subject. */
-    public Mono<ModerationRequest> submit(String requester, String kind, String target, String reason) {
+    /**
+     * A mod opens a request IN THEIR DOMAIN. {@code requester} is the mod's Casdoor
+     * subject; the row is stamped with the requester's domain (NEVER a body value) so
+     * the request is visible only to staff of the same brand. A SUPERADMIN submit
+     * (no domain in scope) lands in {@code "default"}.
+     */
+    public Mono<ModerationRequest> submit(String requester, String kind, String target, String reason,
+                                          DomainScope scope) {
         if (!isKind(kind)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST,
                     "kind must be instance-block | user-removal"));
@@ -56,14 +70,18 @@ public class ModerationService {
         r.setTarget(target);
         r.setReason(reason);
         r.setStatus("recommended");
+        r.setDomain(domainForWrite(scope));
         r.setTs(Instant.now());
         return repo.save(r);
     }
 
-    /** A mod refers a recommended request up to admins. */
-    public Mono<ModerationRequest> refer(Long id, String modReferrer) {
-        return repo.findById(id)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no request: " + id)))
+    /**
+     * A mod refers a recommended request up to admins. The request is loaded pinned
+     * to the caller's domain so a per-domain mod can NEVER refer another brand's
+     * request (a cross-domain id -> 404). SUPERADMIN refers any request.
+     */
+    public Mono<ModerationRequest> refer(Long id, String modReferrer, DomainScope scope) {
+        return load(id, scope)
                 .flatMap(r -> {
                     r.setStatus("referred");
                     r.setModReferrer(modReferrer);
@@ -72,16 +90,36 @@ public class ModerationService {
                 });
     }
 
-    /** An admin decides: {@code approve=true} -> approved, else denied. */
-    public Mono<ModerationRequest> decide(Long id, boolean approve, String adminDecider) {
-        return repo.findById(id)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no request: " + id)))
+    /**
+     * An admin decides: {@code approve=true} -> approved, else denied. The request is
+     * loaded pinned to the caller's domain so a per-domain admin can NEVER decide
+     * another brand's request (cross-domain id -> 404). SUPERADMIN decides any
+     * request.
+     */
+    public Mono<ModerationRequest> decide(Long id, boolean approve, String adminDecider, DomainScope scope) {
+        return load(id, scope)
                 .flatMap(r -> {
                     r.setStatus(approve ? "approved" : "denied");
                     r.setAdminDecider(adminDecider);
                     r.setTs(Instant.now());
                     return repo.save(r);
                 });
+    }
+
+    /** Load a request by id, domain-pinned for a per-domain principal (SUPERADMIN:
+     *  any). 404 when absent OR when it belongs to another brand (the cross-domain
+     *  finder returns empty). */
+    private Mono<ModerationRequest> load(Long id, DomainScope scope) {
+        Mono<ModerationRequest> found = scope.isSuperadmin()
+                ? repo.findById(id)
+                : repo.findByIdAndDomain(id, scope.domain());
+        return found.switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no request: " + id)));
+    }
+
+    /** The domain to stamp on a written request: the requester's domain, or
+     *  {@code "default"} for a SUPERADMIN submit (no domain in scope). */
+    private static String domainForWrite(DomainScope scope) {
+        return scope.isSuperadmin() ? DomainScope.of("default").domain() : scope.domain();
     }
 
     private static boolean isKind(String k) {

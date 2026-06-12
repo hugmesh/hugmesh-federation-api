@@ -11,6 +11,8 @@ import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
 
+import systems.snapdragon.federation.security.DomainScope;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -18,6 +20,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -77,23 +80,26 @@ class ManifestServiceTest {
         return cache;
     }
 
-    /** No active scope overrides (the common case). */
+    /** No active scope overrides (the common case). The DEFAULT-domain render path
+     *  consults the DOMAIN-scoped finder, so that is what we stub. */
     private static FederationOverrideRepository noScopeOverrides() {
         FederationOverrideRepository repo = mock(FederationOverrideRepository.class);
-        when(repo.findByScopeInAndClearedAtIsNull(anyCollection())).thenReturn(Flux.empty());
+        when(repo.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), anyString()))
+                .thenReturn(Flux.empty());
         return repo;
     }
 
     private static FederationOverrideRepository activeScope(FederationOverride... active) {
         FederationOverrideRepository repo = mock(FederationOverrideRepository.class);
-        when(repo.findByScopeInAndClearedAtIsNull(anyCollection())).thenReturn(Flux.just(active));
+        when(repo.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), anyString()))
+                .thenReturn(Flux.just(active));
         return repo;
     }
 
     @Test
     void anonymousCaller_seesOnlyPublicRows() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public"), module("admin", "internal")));
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
@@ -106,7 +112,7 @@ class ManifestServiceTest {
     @Test
     void adminCaller_seesInternalRows_too() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public"), module("admin", "internal")));
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
@@ -119,7 +125,7 @@ class ManifestServiceTest {
     @Test
     void readPath_queriesOnlyCircuitClosedRows() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.empty());
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
@@ -128,14 +134,14 @@ class ManifestServiceTest {
                 .verifyComplete();
 
         // The kill-switch contract: a circuit-broken remote is dropped because
-        // the manifest only ever asks for circuit_state='closed'.
-        verify(repo).findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed");
+        // the manifest only ever asks for circuit_state='closed' (DEFAULT-domain).
+        verify(repo).findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", "default");
     }
 
     @Test
     void writesThroughCache_onlyForPublicView() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public")));
         ManifestCache cache = noopCache();
 
@@ -159,7 +165,7 @@ class ManifestServiceTest {
     @Test
     void scopeAll_active_killsEverything_andCachesEmptyPublicView() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public"), module("admin", "internal")));
         ManifestCache cache = noopCache();
 
@@ -178,7 +184,7 @@ class ManifestServiceTest {
     @Test
     void scopeAll_active_killsEverything_evenForAdmin() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public"), module("admin", "internal")));
         ManifestCache cache = noopCache();
 
@@ -193,7 +199,7 @@ class ManifestServiceTest {
     @Test
     void scopeUser_active_dropsThatOwnersModules_keepsOthers() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(
                         owned("ownerX-game", "ownerX"),
                         owned("ownerY-game", "ownerY"),
@@ -209,7 +215,7 @@ class ManifestServiceTest {
     @Test
     void scopeRole_active_dropsModulesDeclaringThatRequiredRole_othersUnaffected() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(
                         withMetadata("admin", "{\"requiresRole\":\"admin\"}"),
                         withMetadata("login", "{\"public\":true}"),   // no requiresRole
@@ -230,7 +236,7 @@ class ManifestServiceTest {
         // The repo finder for the active set returns EMPTY (the override was
         // cleared => cleared_at IS NOT NULL => excluded). Modules are restored.
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(owned("ownerX-game", "ownerX"), module("host", "public")));
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
@@ -246,7 +252,7 @@ class ManifestServiceTest {
         // apply time, so the DB finder NEVER returns it; there is no active scope
         // row. The read path is unchanged from today.
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(eq("closed")))
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(module("login", "public"))); // the broken one not returned
         FederationOverrideRepository ovr = noScopeOverrides();
 
@@ -255,8 +261,8 @@ class ManifestServiceTest {
 
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactly("login");
-        // The active-scope finder is consulted exactly once per render.
-        verify(ovr).findByScopeInAndClearedAtIsNull(anyCollection());
+        // The active-scope finder is consulted exactly once per render (DEFAULT-domain).
+        verify(ovr).findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq("default"));
     }
 
     @Test

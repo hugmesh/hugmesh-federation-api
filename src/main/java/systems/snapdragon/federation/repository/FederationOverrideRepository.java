@@ -14,14 +14,31 @@ public interface FederationOverrideRepository extends ReactiveCrudRepository<Fed
 
     Flux<FederationOverride> findAllByOrderByTsDesc();
 
+    /** DOMAIN-scoped override audit list (multi-tenancy, changeset 026): the same
+     *  ts-desc audit trail, pinned to the principal's {@code domain}. A per-domain
+     *  admin sees ONLY their own brand's overrides; SUPERADMIN uses the un-pinned
+     *  {@link #findAllByOrderByTsDesc()}. */
+    Flux<FederationOverride> findByDomainOrderByTsDesc(String domain);
+
     Flux<FederationOverride> findByTarget(String target);
 
     /**
      * The manifest read path's active scope-override set: rows whose {@code scope}
      * is one of {@code all|user|role} that have NOT been cleared/rearmed
      * ({@code cleared_at IS NULL}). Loaded once per render, applied in code.
+     * SUPERADMIN tier uses this (active scope rows across ALL domains).
      */
     Flux<FederationOverride> findByScopeInAndClearedAtIsNull(Collection<String> scopes);
+
+    /**
+     * DOMAIN-scoped active scope-override set (multi-tenancy, changeset 026): the
+     * same active {@code all|user|role} rows ({@code cleared_at IS NULL}), pinned to
+     * the caller's {@code domain}. The per-domain manifest render applies ONLY its
+     * own brand's kill-switch scope rows, so a brand-X scope=all kill never blanks a
+     * brand-Y caller's manifest.
+     */
+    Flux<FederationOverride> findByScopeInAndClearedAtIsNullAndDomain(
+            Collection<String> scopes, String domain);
 
     /**
      * The active scope=user|role override(s) for a specific {@code target}

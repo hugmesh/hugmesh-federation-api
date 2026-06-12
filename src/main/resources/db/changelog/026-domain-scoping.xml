@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        MULTI-TENANCY DOMAIN SCOPING (feat/domain-foundation).
+
+        Adds a `domain` column to the three tenant-owned tables so a principal only
+        sees / mutates their OWN brand/domain's rows (the per-domain CUT enforced in
+        the service + R2DBC query layer; SUPERADMIN = no predicate, sees all).
+
+        The domain a row belongs to is the principal's domain at WRITE time, derived
+        from the cryptographically-validated token ISSUER (per-brand Casdoor =>
+        distinct iss) via DomainRegistry — NEVER a user-settable claim. See
+        systems.snapdragon.federation.config.CasdoorAuthorities (DOMAIN_<x>) +
+        systems.snapdragon.federation.security.Roles.domainOf(jwt, registry).
+
+        BACKWARD-COMPATIBLE: the column DEFAULTS to 'default' and is NOT NULL, so
+          • every PRE-EXISTING row (the 010-2 seed topology, the 015/022/023/024/025
+            registrations, any operator data) becomes domain='default';
+          • a single-issuer cluster mints DOMAIN_default for every token (see
+            DomainRegistry single-issuer back-compat), so its principals match the
+            'default' rows exactly — behaviour is unchanged.
+
+        tables scoped:
+          • federation_modules    — the registry CRUD + manifest read path
+          • federation_override   — the kill-switch / scope rows
+          • moderation_requests   — the recommend/refer/decide workflow
+
+        NOTE: user_modules / username_skeleton / vanity profile fragments are keyed
+        on owner_user_id (the homeserver localpart, already a per-domain namespace
+        under separate-Casdoor-per-brand) and the slug UNIQUE / 017 reserved CHECK —
+        they are owner-scoped, not brand-scoped, and unchanged here.
+    -->
+
+    <changeSet id="026-1-federation-modules-domain" author="federation">
+        <addColumn tableName="federation_modules">
+            <column name="domain" type="${str.type}" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <createIndex tableName="federation_modules" indexName="idx_fed_modules_domain">
+            <column name="domain"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="026-2-federation-override-domain" author="federation">
+        <addColumn tableName="federation_override">
+            <column name="domain" type="${str.type}" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <createIndex tableName="federation_override" indexName="idx_fed_override_domain">
+            <column name="domain"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="026-3-moderation-requests-domain" author="federation">
+        <addColumn tableName="moderation_requests">
+            <column name="domain" type="${str.type}" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <createIndex tableName="moderation_requests" indexName="idx_moderation_domain">
+            <column name="domain"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
