@@ -43,6 +43,16 @@
         022 — register the phpBB forum as a federation module (slug='forum',
               kind='remote-shell', mountAt /social/forum, requiresRole 'forum';
               idempotent seed-guard, like 010-2/015-1)
+        023 — register akkoma (Mastodon) as a federation module (slug='mastodon',
+              kind='remote-shell', mountAt /social/mastodon, requiresRole 'mastodon';
+              mirrors 022, slug-absent MARK_RAN seed-guard — an OPTIONAL service so
+              its install-state can appear/grey-out via the manifest/capabilities)
+        024 — register tuwunel (Matrix) as a federation module (slug='matrix',
+              kind='remote-shell', mountAt /social/matrix, requiresRole 'matrix';
+              mirrors 022, slug-absent MARK_RAN seed-guard — OPTIONAL service)
+        025 — register games as a federation module (slug='games',
+              kind='remote-shell', mountAt /games, requiresRole 'ROLE_GAMES';
+              mirrors 022, slug-absent MARK_RAN seed-guard — OPTIONAL service)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -72,4 +82,7 @@
     <include file="db/changelog/020-username-skeleton.xml"/>
     <include file="db/changelog/021-reserved-profile-slug-forum.xml"/>
     <include file="db/changelog/022-register-forum-module.xml"/>
+    <include file="db/changelog/023-register-akkoma-module.xml"/>
+    <include file="db/changelog/024-register-tuwunel-module.xml"/>
+    <include file="db/changelog/025-register-games-module.xml"/>
 </databaseChangeLog>

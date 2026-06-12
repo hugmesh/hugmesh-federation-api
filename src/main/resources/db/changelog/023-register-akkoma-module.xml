@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER akkoma (Mastodon/Pleroma-API social) as a federation module — the
+        registry row the Angular host loads at runtime + the row the PUBLIC
+        /api/federation/capabilities projection reports so a logged-out / non-admin
+        host can grey-out the service when it is NOT installed.
+
+        akkoma is an OPTIONAL service (add/remove-by-command on a generated USB):
+        until this row exists the slug 'mastodon' has NO registry row, so it can
+        neither appear NOR be greyed-out via the manifest/capabilities — it is just
+        missing. This changeset gives it a row so its install-state is a first-class,
+        toggleable fact (enabled / circuit_state / scope-override drive presence).
+
+        snapdragon-mastodon-ui is an Angular native-federation REMOTE (kind
+        = 'remote-shell', exactly like the forum/admin/login rows), served at the
+        apex PATH /social/mastodon (NOT a subdomain — the vanity wildcard would
+        swallow mastodon.<domain>). Mirrors 022-forum field-for-field:
+
+          • slug          = 'mastodon'           (DNS-label token; matches the
+                            /social/mastodon mount tail + the reserved label).
+          • kind          = 'remote-shell'       (a federated remote, like forum).
+          • visibility    = 'internal'           (only ROLE_ADMIN / ROLE_INTERNAL
+                            callers see it in the authed manifest read path; the
+                            social role-gate is the gateway route-access rule — this
+                            is the catalog cut, identical to forum).
+          • metadata.requiresRole = 'mastodon'   (the declared required role; the
+                            scope=role kill-switch matches on this, and the host
+                            uses it for role-responsive rendering — forum uses
+                            'forum', mirrored here).
+          • metadata.mountAt      = '/social/mastodon' (the apex path the host mounts
+                            the remote at — mirrors /social/forum, /social/matrix).
+          • owner_user_id = NULL                 (platform/first-party module).
+
+        Idempotent: the preCondition (MARK_RAN, slug-absent) seeds only when the
+        'mastodon' slug is absent, so re-running over an existing DB is a no-op
+        (matches the 022 forum / 010-2 / 015-1 seed-guard style). The
+        remote_entry_url is a placeholder wired by the deployment's
+        snapdragon-mastodon-ui Service. The ${json.type} clob/jsonb column round-trips
+        as a String over r2dbc (same harness as 022).
+    -->
+
+    <changeSet id="023-1-register-akkoma-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'mastodon'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="mastodon"/>
+            <column name="display_name" value="Mastodon (Akkoma)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-mastodon-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;mastodon&quot;,&quot;mountAt&quot;:&quot;/social/mastodon&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

@@ -66,6 +66,37 @@ class FederationModuleRepositoryTest {
     }
 
     @Test
+    void optionalServiceModules_areRegistered_andShaped() {
+        // Changesets 023/024/025 register the OPTIONAL federated services
+        // (akkoma=mastodon, tuwunel=matrix, games) mirroring the 022 forum row:
+        // kind='remote-shell', visibility='internal', enabled, circuit-closed,
+        // platform-owned, with metadata carrying requiresRole + the apex mountAt.
+        // Their presence proves the three new changesets applied cleanly (the whole
+        // changelog must run for the slice DB to come up).
+        assertOptionalService("mastodon", "Mastodon (Akkoma)", "mastodon", "/social/mastodon");
+        assertOptionalService("matrix", "Matrix (Tuwunel)", "matrix", "/social/matrix");
+        // games carries the explicit ROLE_GAMES role token + /games apex mount.
+        assertOptionalService("games", "Games", "ROLE_GAMES", "/games");
+    }
+
+    private void assertOptionalService(String slug, String displayName,
+                                       String requiresRole, String mountAt) {
+        FederationModule m = repo.findBySlug(slug).block();
+        assertThat(m).as("changeset registers slug=%s", slug).isNotNull();
+        assertThat(m.getDisplayName()).isEqualTo(displayName);
+        assertThat(m.getKind()).isEqualTo("remote-shell");
+        assertThat(m.getVisibility()).isEqualTo("internal");
+        assertThat(m.isEnabled()).isTrue();
+        assertThat(m.getCircuitState()).isEqualTo("closed");
+        assertThat(m.getExposedModule()).isEqualTo("./routes");
+        // metadata (jsonb/clob round-trips as String) carries the role + mount path.
+        assertThat(m.getMetadata()).contains("\"requiresRole\":\"" + requiresRole + "\"");
+        assertThat(m.getMetadata()).contains("\"mountAt\":\"" + mountAt + "\"");
+        // Platform/first-party module — no owner.
+        assertThat(m.getOwnerUserId()).isNull();
+    }
+
+    @Test
     void insertUpdateDelete_roundTrip() {
         FederationModule m = new FederationModule();
         m.setSlug("test-remote");
