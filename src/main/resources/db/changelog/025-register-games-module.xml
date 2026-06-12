@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER games (the games experience surface) as a federation module — the
+        registry row the Angular host loads at runtime + the row the PUBLIC
+        /api/federation/capabilities projection reports so a logged-out / non-admin
+        host can grey-out the service when it is NOT installed.
+
+        games is an OPTIONAL service (add/remove-by-command on a generated USB):
+        until this row exists the slug 'games' has NO registry row, so it can
+        neither appear NOR be greyed-out via the manifest/capabilities — it is just
+        missing. This changeset gives it a row so its install-state is a first-class,
+        toggleable fact (enabled / circuit_state / scope-override drive presence).
+
+        The games UI is an Angular native-federation REMOTE (kind = 'remote-shell',
+        like the forum/mastodon/matrix rows), served at the apex PATH /games. By
+        DEFAULT the games experience is reached at the games.<primary-domain>
+        subdomain until the .games TLD is obtained; either way the host mounts the
+        remote at the apex /games mount. Mirrors 022-forum field-for-field, with the
+        games-specific role:
+
+          • slug          = 'games'              (DNS-label token; matches the /games
+                            mount tail + the reserved 'games' label).
+          • kind          = 'remote-shell'       (a federated remote, like forum).
+          • visibility    = 'internal'           (only ROLE_ADMIN / ROLE_INTERNAL
+                            callers see it in the authed manifest read path; the
+                            games role-gate is the gateway route-access rule — this
+                            is the catalog cut, identical to forum).
+          • metadata.requiresRole = 'ROLE_GAMES' (the declared required role for the
+                            games surface; the scope=role kill-switch matches on this
+                            case-insensitively, and the host uses it for
+                            role-responsive rendering. Forum stores the bare label
+                            'forum'; games carries the explicit ROLE_GAMES role token
+                            per the optional-services design for the games tier.)
+          • metadata.mountAt      = '/games'     (the apex path the host mounts the
+                            games remote at — sibling to /social/forum etc.).
+          • owner_user_id = NULL                 (platform/first-party module).
+
+        Idempotent: the preCondition (MARK_RAN, slug-absent) seeds only when the
+        'games' slug is absent, so re-running over an existing DB is a no-op
+        (matches the 022 forum / 010-2 / 015-1 seed-guard style). The
+        remote_entry_url is a placeholder wired by the deployment's games UI Service.
+        The ${json.type} clob/jsonb column round-trips as a String over r2dbc (same
+        harness as 022).
+    -->
+
+    <changeSet id="025-1-register-games-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'games'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="games"/>
+            <column name="display_name" value="Games"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-games-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;ROLE_GAMES&quot;,&quot;mountAt&quot;:&quot;/games&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
