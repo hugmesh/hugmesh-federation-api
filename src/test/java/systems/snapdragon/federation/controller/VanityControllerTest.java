@@ -106,6 +106,36 @@ class VanityControllerTest {
         verify(svc, never()).resolve(any());
     }
 
+    /**
+     * The default-on Kiwix wiki reserves the {@code wiki} label (ReservedNames +
+     * changeset 027): a vanity username {@code wiki} must hard-404 (so it can never
+     * collide with the {@code wiki.<domain>} subdomain / {@code /wiki} apex mount)
+     * and must NEVER reach the resolve service — case-insensitively. Mirrors the
+     * forum guard. This is the serving-layer half; the DB CHECK on
+     * {@code profile-wiki} (027) is the other half.
+     */
+    @Test
+    void wikiVanityUsername_is404_andNeverHitsService() {
+        VanityService svc = mock(VanityService.class);
+        VanityController c = new VanityController(svc, SKEL);
+
+        StepVerifier.create(c.resolve("wiki"))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(ResponseStatusException.class);
+                    assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+                })
+                .verify();
+        StepVerifier.create(c.resolve("WIKI"))
+                .expectError(ResponseStatusException.class)
+                .verify();
+        // The vanity HOST form (wiki.snapdragon.systems) is rejected the same way.
+        StepVerifier.create(c.resolveByHost("wiki.snapdragon.systems"))
+                .expectError(ResponseStatusException.class)
+                .verify();
+
+        verify(svc, never()).resolve(any());
+    }
+
     @Test
     void resolveByHost_reservedHost_is404() {
         VanityService svc = mock(VanityService.class);

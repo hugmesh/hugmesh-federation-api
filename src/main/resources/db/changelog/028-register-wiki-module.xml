@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER the wiki (Kiwix-backed, BFF-authored) as a federation module — the
+        registry row the Angular host loads at runtime + the row the PUBLIC
+        /api/federation/capabilities projection reports.
+
+        The wiki is a 3-tier, DEFAULT-ON service (NOT opt-in): TIER 1 a writable
+        Postgres content store owned by snapdragon-wiki-bff-api; TIER 2 a CronJob
+        that (re)packages the store into a ZIM; TIER 3 kiwix-serve serving that ZIM
+        read-only. snapdragon-wiki-ui is an Angular native-federation REMOTE (kind =
+        'remote-shell', exactly like the forum/mastodon/matrix/games rows), served at
+        the apex PATH /wiki (NOT a subdomain — the vanity wildcard would swallow
+        wiki.<domain>) and surfaced role-gated in the host upper-left menu.
+
+        REGISTERED INERT (hidden until the UI + BFF exist): this row is seeded now so
+        the module is a first-class registry fact, but
+          • visibility = 'internal'  — so it is HIDDEN from non-role (anonymous /
+            plain-user) callers in the manifest read path; only ROLE_ADMIN /
+            ROLE_INTERNAL (and SUPERADMIN) see it until the surface ships. The wiki
+            role-gate itself is the gateway route-access rule /wiki=ROLE_WIKI — this
+            is the catalog cut, identical to forum/games.
+        Once PR5 (snapdragon-wiki-ui) + PR6 (host wiring) land, the remote_entry_url
+        placeholder is wired to the real wiki-ui Service and the surface goes live;
+        until then the internal row is inert/hidden to ordinary users.
+
+          • slug          = 'wiki'               (DNS-label token; matches the /wiki
+                            mount tail + the reserved 'wiki' label added in 027).
+          • kind          = 'remote-shell'       (a federated remote, like forum).
+          • visibility    = 'internal'           (only ROLE_ADMIN / ROLE_INTERNAL
+                            callers see it in the authed manifest read path).
+          • metadata.requiresRole = 'wiki'        (the declared required role; the
+                            scope=role kill-switch matches on this case-insensitively,
+                            and the host uses it for role-responsive rendering. Forum
+                            stores the bare label 'forum'; the wiki mirrors that bare
+                            'wiki' convention — the gateway maps it to ROLE_WIKI.)
+          • metadata.mountAt      = '/wiki'       (the apex path the host mounts the
+                            wiki remote at — sibling to /social/forum, /games).
+          • owner_user_id = NULL                 (platform/first-party module).
+
+        Idempotent: the preCondition (MARK_RAN, slug-absent) seeds only when the
+        'wiki' slug is absent, so re-running over an existing DB is a no-op (matches
+        the 022 forum / 025 games / 010-2 / 015-1 seed-guard style). The
+        remote_entry_url is a placeholder wired by the deployment's
+        snapdragon-wiki-ui Service. The ${json.type} clob/jsonb column round-trips as
+        a String over r2dbc (same harness as 022).
+    -->
+
+    <changeSet id="028-1-register-wiki-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'wiki'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="wiki"/>
+            <column name="display_name" value="Wiki (Kiwix)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-wiki-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;wiki&quot;,&quot;mountAt&quot;:&quot;/wiki&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

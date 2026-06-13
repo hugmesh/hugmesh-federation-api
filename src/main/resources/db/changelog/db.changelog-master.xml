@@ -60,6 +60,17 @@
               domain is the principal's issuer-derived DOMAIN_<x> at write time; the
               'default' default keeps every pre-existing row + single-issuer clusters
               unchanged.
+        027 — reserved-profile-slug + wiki (DROP+re-ADD the deployed
+              ck_fed_modules_reserved_profile_slug to ALSO forbid 'profile-wiki';
+              017/021 are deployed so it is re-issued as a NEW changeSet, never
+              edited in place — the default-on wiki reserves the 'wiki' label so a
+              vanity wiki.<domain> / wiki/ path can never collide)
+        028 — register the wiki as a federation module (slug='wiki',
+              kind='remote-shell', mountAt /wiki, requiresRole 'wiki',
+              visibility='internal'; idempotent slug-absent MARK_RAN seed-guard, like
+              022/025. Registered INERT — visibility='internal' HIDES it from
+              non-role users until the snapdragon-wiki-ui + snapdragon-wiki-bff-api
+              surfaces ship)
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -93,4 +104,6 @@
     <include file="db/changelog/024-register-tuwunel-module.xml"/>
     <include file="db/changelog/025-register-games-module.xml"/>
     <include file="db/changelog/026-domain-scoping.xml"/>
+    <include file="db/changelog/027-reserved-profile-slug-wiki.xml"/>
+    <include file="db/changelog/028-register-wiki-module.xml"/>
 </databaseChangeLog>
