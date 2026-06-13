@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        COMPLETE the federation_modules seed so the DB-driven dynamic manifest
+        (GET /api/federation/manifest) is AUTHORITATIVE for the host's remote
+        topology — it no longer omits remotes the host's bundled static manifest
+        (snapdragon.systems src/assets/federation.manifest{,.prod}.json) carries.
+
+        BACKGROUND. The host now resolves remotes DYNAMIC-FIRST (federation-api),
+        with the bundled static manifest as a UNION FLOOR (snapdragon.systems PR
+        #78): on a successful authenticated DB read the host returns
+        { ...staticFloor, ...dynamic } — the floor always present, the dynamic
+        overlay overriding/adding slugs. Until the seed is complete the floor was
+        the ONLY thing saving the remotes the DB omitted. The static manifest
+        lists 7 slugs: login, matrix, mastodon, admin, mod, user, apidocs. The DB
+        already seeds login (010-2), admin (010-2), matrix (024), mastodon (023)
+        — plus host/remote-fragment/forum/games/wiki. The THREE static slugs with
+        NO registry row were: mod, user, apidocs. This changeset adds them so an
+        authenticated dynamic fetch is a full superset of the static floor (which
+        then becomes a harmless union, shrinkable to host+login in a SEPARATE
+        host-only follow-up — NOT this PR).
+
+        PER-REMOTE visibility / requiresRole — MATCHED to the host's actual route
+        gating (snapdragon.systems src/app/app.routes.ts REMOTE_ROUTES + the
+        canActivate guards in src/app/guards/*), NOT guessed:
+
+          • mod     — REMOTE_ROUTES '/mod' is canActivate:[modGuard]; modGuard
+                      requires session.isMod() (Casdoor 'mod' role), else /login.
+                      The manifest visibility cut is BINARY (public=everyone vs
+                      internal=ADMIN/INTERNAL-only, per ManifestService.isVisibleTo
+                      + canSeeInternal) — there is NO "mod-or-above" tier, and a
+                      plain MOD is NOT ROLE_ADMIN. Marking 'mod' internal would
+                      therefore WRONGLY HIDE the mod console from a mod's own
+                      authoritative dynamic manifest (it would survive only on the
+                      shrinkable static floor), defeating this PR's "make the DB
+                      authoritative" goal — exactly the reasoning that put 'user'
+                      at 'public' below. So 'mod' is -> visibility='public'. Host
+                      gating stays with modGuard + BFF authz (the manifest is NOT
+                      the authz boundary; listing a public entry URL is not an
+                      authz weakening — same as user/matrix/mastodon). KEEP
+                      metadata.requiresRole='mod' (bare label, mirroring admin's
+                      'admin' / forum's 'forum'): it remains a host gating hint AND
+                      keeps the row scope=role-KILL-targetable (isSuppressedByScope
+                      matches on metadata.requiresRole, independent of visibility).
+                      mountAt '/mod'.
+
+          • apidocs — REMOTE_ROUTES 'admin/docs' is canActivate:[adminGuard] (the
+                      SAME guard as '/admin'); the route doc states "the admin-only
+                      API-docs console (/admin/docs) need the admin role".
+                      ROLE-GATED on ADMIN -> visibility='internal' +
+                      metadata.requiresRole='admin' (same gate as the admin
+                      console). mountAt '/admin/docs' (the more-specific path the
+                      host registers before '/admin').
+
+          • user    — REMOTE_ROUTES '/user' is canActivate:[userGuard]; userGuard
+                      returns true for session.isUser() — i.e. ANY authenticated
+                      identity (the route doc: "User is any authenticated
+                      identity"); it ONLY bounces anonymous visitors to /login. It
+                      is also the DEFAULT role-home landing for plain users
+                      (roleHomeGuard: user -> /user). So it is NOT admin-restricted
+                      and MUST appear in a plain ROLE_USER's authenticated manifest
+                      (the manifest is fetched WITH the user's bearer;
+                      anonymous/pre-login callers get a 401 and fall back to the
+                      static floor, never this dynamic row). The manifest
+                      visibility model is binary (public=everyone vs
+                      internal=admin/internal-only) with no "authenticated but not
+                      admin" tier, so marking 'user' internal would WRONGLY hide a
+                      plain user's own role-home from their dynamic manifest. Host
+                      gating is done by the route guards + BFF authz, NOT by
+                      manifest presence, so listing the public entry URL is not an
+                      authz weakening. -> visibility='public', NO requiresRole.
+                      mountAt '/user' retained as a host rendering hint.
+
+        remote_entry_url for each row matches the static manifest's CONTRACT
+        (slug -> remoteEntry URL): the static dev/prod files use per-deployment
+        URLs (localhost:420x dev / path-based prod), so — exactly like 022-025/028
+        — these rows carry the platform service-DNS placeholder
+        http://snapdragon-<slug>-ui:8080/remoteEntry.json that the deployment's
+        per-remote Service wires; the dynamic overlay then OVERRIDES the static
+        floor's URL for that slug at runtime. exposed_module './routes' matches
+        every other remote-shell row (LOGIN/ADMIN/MOD/USER/API_DOCS_ROUTES are all
+        exposed as './routes' per app.routes.ts).
+
+        Each INSERT is guarded by an idempotent slug-absent MARK_RAN preCondition
+        (the 022/023/024/025/028/010-2 pattern) so re-running over an existing DB —
+        or one already partially seeded — is a no-op. The ${json.type} clob/jsonb
+        column round-trips as a String over r2dbc (same harness as 022-028).
+    -->
+
+    <changeSet id="029-1-register-mod-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'mod'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="mod"/>
+            <column name="display_name" value="Moderator Console"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-mod-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;mod&quot;,&quot;mountAt&quot;:&quot;/mod&quot;}"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="029-2-register-apidocs-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'apidocs'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="apidocs"/>
+            <column name="display_name" value="API Docs Console"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-api-docs:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;admin&quot;,&quot;mountAt&quot;:&quot;/admin/docs&quot;}"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="029-3-register-user-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'user'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="user"/>
+            <column name="display_name" value="User Console"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-user-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="public"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;mountAt&quot;:&quot;/user&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
