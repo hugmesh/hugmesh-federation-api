@@ -20,6 +20,11 @@
 
   <properties>
     <java.version>21</java.version>
+    <!-- AWS SDK v2 BOM — pinned. The synchronous S3Client is used (not the async
+         client) because the async SDK pulls in Netty NIO, which conflicts with
+         Reactor Netty already on the classpath. Calls are wrapped in
+         Mono.fromCallable + subscribeOn(boundedElastic()) at the service layer. -->
+    <aws.sdk.version>2.28.3</aws.sdk.version>
     <!-- ICU4J is PINNED (exact version). The Unicode confusable SKELETON is a
          RECOMPUTABLE CACHE, never a unique DB identity, BECAUSE the skeleton
          transform is NOT stable across ICU releases (ICU4J SpoofChecker javadoc:
@@ -30,6 +35,18 @@
     <icu4j.version>77.1</icu4j.version>
     <commons-text.version>1.13.1</commons-text.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws.sdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <!-- Reactive web (WebFlux) — the whole service is non-blocking. -->
@@ -113,6 +130,15 @@
          Cassandra never blocks startup — the cache builds its own CqlSession
          lazily + gated and degrades to Postgres on any failure. -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-cassandra-reactive</artifactId></dependency>
+
+    <!-- AWS SDK v2 S3 (synchronous client) — used by S3BundleStorage.
+         Version managed by the aws.sdk BOM above. Only on the classpath when
+         app.bundles.storage=s3; the filesystem strategy (the default) never
+         touches this. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+    </dependency>
 
     <!-- test -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
