@@ -31,12 +31,23 @@
 
           • mod     — REMOTE_ROUTES '/mod' is canActivate:[modGuard]; modGuard
                       requires session.isMod() (Casdoor 'mod' role), else /login.
-                      ROLE-GATED -> visibility='internal' (only ROLE_ADMIN /
-                      ROLE_INTERNAL see internal rows in the manifest read path,
-                      per ManifestService.isVisibleTo) + metadata.requiresRole=
-                      'mod' (the declared role; bare label, mirroring admin's
-                      'admin' / forum's 'forum'). mountAt '/mod'. This mirrors the
-                      already-seeded admin row (internal + requiresRole 'admin').
+                      The manifest visibility cut is BINARY (public=everyone vs
+                      internal=ADMIN/INTERNAL-only, per ManifestService.isVisibleTo
+                      + canSeeInternal) — there is NO "mod-or-above" tier, and a
+                      plain MOD is NOT ROLE_ADMIN. Marking 'mod' internal would
+                      therefore WRONGLY HIDE the mod console from a mod's own
+                      authoritative dynamic manifest (it would survive only on the
+                      shrinkable static floor), defeating this PR's "make the DB
+                      authoritative" goal — exactly the reasoning that put 'user'
+                      at 'public' below. So 'mod' is -> visibility='public'. Host
+                      gating stays with modGuard + BFF authz (the manifest is NOT
+                      the authz boundary; listing a public entry URL is not an
+                      authz weakening — same as user/matrix/mastodon). KEEP
+                      metadata.requiresRole='mod' (bare label, mirroring admin's
+                      'admin' / forum's 'forum'): it remains a host gating hint AND
+                      keeps the row scope=role-KILL-targetable (isSuppressedByScope
+                      matches on metadata.requiresRole, independent of visibility).
+                      mountAt '/mod'.
 
           • apidocs — REMOTE_ROUTES 'admin/docs' is canActivate:[adminGuard] (the
                       SAME guard as '/admin'); the route doc states "the admin-only
@@ -94,7 +105,7 @@
             <column name="remote_entry_url" value="http://snapdragon-mod-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
-            <column name="visibility" value="internal"/>
+            <column name="visibility" value="public"/>
             <column name="enabled" valueBoolean="true"/>
             <column name="circuit_state" value="closed"/>
             <column name="metadata" value="{&quot;requiresRole&quot;:&quot;mod&quot;,&quot;mountAt&quot;:&quot;/mod&quot;}"/>

@@ -204,35 +204,44 @@ class ManifestServiceTest {
                 .containsExactlyInAnyOrder("login", "wiki");
     }
 
-    // ----- COMPLETED SEED (changeset 029): mod / apidocs (internal, role-gated)
-    //       + user (public, any-authenticated). The DB manifest is now a superset
-    //       of the host's static union floor, gated to match the host route guards. -----
+    // ----- COMPLETED SEED (changeset 029): mod + user (public) and apidocs
+    //       (internal, admin-gated). The DB manifest is now a superset of the host's
+    //       static union floor, gated to match the host route guards. The manifest
+    //       visibility cut is BINARY (public vs admin-only-internal) and is NOT the
+    //       authz boundary — host route guards (modGuard/userGuard) + BFF enforce
+    //       access — so role-homes that any authenticated caller may reach (mod,
+    //       user) are seeded 'public' to stay authoritative in their own manifest. -----
 
     /**
-     * The 'mod' remote is seeded visibility='internal' + requiresRole='mod' (029),
-     * mirroring the host's modGuard on /mod. A plain ROLE_USER caller must NOT see
-     * it in the manifest read path (the catalog cut), while a ROLE_ADMIN does — the
-     * same internal-visibility contract as the admin console. Co-renders the public
-     * 'user' remote (seeded public, 029) which BOTH callers see.
+     * The 'mod' remote is seeded visibility='public' + requiresRole='mod' (029).
+     * Because the manifest visibility cut is BINARY (public=everyone vs
+     * internal=ADMIN/INTERNAL-only) with no mod-tier, and a plain MOD is NOT
+     * ROLE_ADMIN, an 'internal' mod row would be HIDDEN from a mod's own
+     * authoritative dynamic manifest — so it is 'public', exactly like 'user'. A MOD
+     * (and indeed any authenticated caller) therefore sees the mod remote in the
+     * rendered manifest; the host modGuard + BFF — not manifest presence — enforce
+     * access. The kept metadata.requiresRole='mod' is a host gating hint and keeps
+     * the row scope=role-kill-targetable (independent of visibility).
      */
     @Test
-    void modModule_internal_isHiddenFromPlainUser_butVisibleToAdmin() {
+    void modModule_public_isVisibleToModAndAnyAuthenticatedCaller() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
         when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(
                         module("user", "public"),
-                        withInternalMetadata("mod", "{\"requiresRole\":\"mod\",\"mountAt\":\"/mod\"}")));
+                        withMetadata("mod", "{\"requiresRole\":\"mod\",\"mountAt\":\"/mod\"}")));
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
 
-        // A plain ROLE_USER sees the public user remote but NOT the internal mod one.
+        // A MOD sees the public mod remote (its role-home) alongside the public user one.
+        FederationManifestDto asMod = svc.render(Set.of("ROLE_USER", "ROLE_MOD")).block();
+        assertThat(asMod.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactlyInAnyOrder("user", "mod");
+
+        // It is PUBLIC, so a plain ROLE_USER sees it too — route guards + BFF (not the
+        // manifest) gate access, exactly as for the user/matrix/mastodon public rows.
         FederationManifestDto asUser = svc.render(Set.of("ROLE_USER")).block();
         assertThat(asUser.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
-                .containsExactly("user");
-
-        // A ROLE_ADMIN additionally sees the internal mod remote (manages the surface).
-        FederationManifestDto asAdmin = svc.render(Set.of("ROLE_USER", "ROLE_ADMIN")).block();
-        assertThat(asAdmin.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactlyInAnyOrder("user", "mod");
     }
 
@@ -276,12 +285,13 @@ class ManifestServiceTest {
         when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
                 .thenReturn(Flux.just(
                         withMetadata("user", "{\"mountAt\":\"/user\"}"),
-                        withInternalMetadata("mod", "{\"requiresRole\":\"mod\",\"mountAt\":\"/mod\"}")));
+                        withInternalMetadata("apidocs", "{\"requiresRole\":\"admin\",\"mountAt\":\"/admin/docs\"}")));
 
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
         FederationManifestDto manifest = svc.render(Set.of("ROLE_USER")).block();
 
-        // The public user role-home ships to the plain user; the internal mod row does not.
+        // The public user role-home ships to the plain user; the internal admin-gated
+        // apidocs row does not (the catalog cut keeps it out of a plain user's manifest).
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactly("user");
     }
