@@ -142,4 +142,5 @@
     <include file="db/changelog/031-register-owncast-module.xml"/>
     <include file="db/changelog/032-reserved-profile-slug-tube.xml"/>
     <include file="db/changelog/033-register-tube-module.xml"/>
+    <include file="db/changelog/034-user-modules-active-owner-unique.xml"/>
 </databaseChangeLog>

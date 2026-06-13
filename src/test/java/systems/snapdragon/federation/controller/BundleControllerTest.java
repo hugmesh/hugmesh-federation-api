@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.service.BundleService;
 
 import java.nio.charset.StandardCharsets;
@@ -147,6 +148,71 @@ class BundleControllerTest {
                                 Mono.just(ctx("bob", "ROLE_USER")))))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
                         .isEqualTo(HttpStatus.NOT_FOUND))
+                .verify();
+    }
+
+    // ---------- put ----------
+
+    @Test
+    void put_forwardsSubjectAsOwner_nonAdminFlag() {
+        BundleService svc = mock(BundleService.class);
+        UserModule saved = new UserModule();
+        saved.setOwnerUserId("alice");
+        // non-admin caller -> admin=false forwarded; subject forwarded as owner.
+        when(svc.put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
+                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                .thenReturn(Mono.just(saved));
+        BundleController c = new BundleController(svc);
+
+        StepVerifier.create(c.put(jwtFor("alice"), SLUG, "card.html", "internal", "{}",
+                        reactor.core.publisher.Flux.empty())
+                        .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
+                                Mono.just(ctx("alice", "ROLE_USER")))))
+                .assertNext(m -> assertThat(m.getOwnerUserId()).isEqualTo("alice"))
+                .verifyComplete();
+
+        verify(svc).put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
+                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
+    }
+
+    @Test
+    void put_adminFlag_isResolvedFromSecurityContext() {
+        BundleService svc = mock(BundleService.class);
+        UserModule saved = new UserModule();
+        saved.setOwnerUserId("root");
+        when(svc.put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                eq(true), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                .thenReturn(Mono.just(saved));
+        BundleController c = new BundleController(svc);
+
+        StepVerifier.create(c.put(jwtFor("root"), SLUG, null, null, null,
+                        reactor.core.publisher.Flux.empty())
+                        .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
+                                Mono.just(ctx("root", "ROLE_USER", "ROLE_ADMIN")))))
+                .assertNext(m -> assertThat(m.getOwnerUserId()).isEqualTo("root"))
+                .verifyComplete();
+
+        verify(svc).put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                eq(true), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
+    }
+
+    @Test
+    void put_propagatesServiceConflict_forCrossOwnerWrite() {
+        BundleService svc = mock(BundleService.class);
+        when(svc.put(eq("bob"), eq(SLUG), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "another owner")));
+        BundleController c = new BundleController(svc);
+
+        StepVerifier.create(c.put(jwtFor("bob"), SLUG, "card.html", "internal", "{}",
+                        reactor.core.publisher.Flux.empty())
+                        .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
+                                Mono.just(ctx("bob", "ROLE_USER")))))
+                .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT))
                 .verify();
     }
 }

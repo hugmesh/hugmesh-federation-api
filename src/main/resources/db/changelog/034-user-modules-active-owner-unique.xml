@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        user_modules — one ACTIVE bundle per (slug, owner) — DB-level backstop for
+        the owner-scoped PUT (the BFLA / cross-owner-write hardening).
+
+        A slug's active (non-superseded) bundle is a PER-OWNER resource: read/delete
+        are owner-scoped (findFirstBySlugAndOwnerUserIdAndSupersededAtIsNull...), and
+        PUT now supersedes only the CALLER'S OWN active row, rejecting (409) a
+        non-admin PUT to a slug whose active row belongs to another owner
+        (BundleService.supersedePriorOwned). This changeset makes the DB enforce the
+        SAME invariant the service enforces, so two ACTIVE rows for the same
+        (slug, owner_user_id) can never coexist regardless of which path writes —
+        the parity-backstop style of changesets 017/018.
+
+        Why NOT a plain `CREATE UNIQUE INDEX ... WHERE superseded_at IS NULL`:
+        Postgres supports that partial unique index natively, but H2 (the slice-test
+        DB, PostgreSQL-compat) does NOT support a WHERE predicate on CREATE INDEX, so
+        the identical-DDL approach the other changesets use is impossible here. We
+        therefore split by dbms:
+
+          • postgresql — the idiomatic partial UNIQUE index
+                UNIQUE (slug, owner_user_id) WHERE superseded_at IS NULL.
+
+          • h2 (slice tests) — an equivalent realised via a STORED generated key
+                column active_owner_key = slug || ':' || owner_user_id while active,
+                NULL once superseded; a UNIQUE index over it enforces the same rule
+                (NULLs are distinct, so superseded history rows never collide, and a
+                different owner yields a different key). The column is unmapped on the
+                UserModule entity, so Spring Data R2DBC inserts ignore it.
+
+        Both branches are guarded by a NOT-precondition so a re-run / partially
+        applied DB is a no-op (onFail MARK_RAN).
+    -->
+
+    <changeSet id="034-1-user-modules-active-owner-unique-pg" author="federation" dbms="postgresql">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <indexExists indexName="ux_user_modules_active_owner"/>
+            </not>
+        </preConditions>
+        <sql>
+            CREATE UNIQUE INDEX ux_user_modules_active_owner
+                ON user_modules (slug, owner_user_id)
+                WHERE superseded_at IS NULL
+        </sql>
+        <rollback>
+            DROP INDEX IF EXISTS ux_user_modules_active_owner
+        </rollback>
+    </changeSet>
+
+    <changeSet id="034-2-user-modules-active-owner-unique-h2" author="federation" dbms="h2">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="user_modules" columnName="active_owner_key"/>
+            </not>
+        </preConditions>
+        <sql>
+            ALTER TABLE user_modules
+                ADD COLUMN active_owner_key VARCHAR(2100)
+                GENERATED ALWAYS AS (
+                    CASE WHEN superseded_at IS NULL
+                         THEN slug || ':' || owner_user_id
+                         ELSE NULL END
+                )
+        </sql>
+        <sql>
+            CREATE UNIQUE INDEX ux_user_modules_active_owner
+                ON user_modules (active_owner_key)
+        </sql>
+        <rollback>
+            DROP INDEX IF EXISTS ux_user_modules_active_owner;
+            ALTER TABLE user_modules DROP COLUMN active_owner_key;
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

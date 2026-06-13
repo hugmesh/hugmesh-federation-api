@@ -86,7 +86,10 @@ public class BundleController {
         description = """
             Stages the request body, SHA-256-hashes it into a content-addressed
             version, installs it via the BundleStorage strategy, records a
-            user_modules row, and supersedes the prior active version for the slug.
+            user_modules row, and supersedes the CALLER'S OWN prior active version
+            for the slug. Owner-scoped: if the slug already has an active version
+            owned by ANOTHER user, a non-admin PUT is rejected (409) and the
+            victim's row is left untouched; ADMIN may supersede regardless of owner.
             The full multi-file zip pipeline is deferred (see README).
             """)
     @PutMapping(value = "/{slug}", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
@@ -100,7 +103,9 @@ public class BundleController {
                                         message = "visibility must be public|internal") String visibility,
                                 @RequestParam(value = "manifest", required = false) String manifestJson,
                                 @RequestBody Flux<DataBuffer> body) {
-        return bundles.put(jwt.getSubject(), slug, entryFile, visibility, manifestJson, body);
+        return adminMono()
+                .flatMap(admin -> bundles.put(jwt.getSubject(), slug, entryFile,
+                        visibility, manifestJson, admin, body));
     }
 
     @Operation(
