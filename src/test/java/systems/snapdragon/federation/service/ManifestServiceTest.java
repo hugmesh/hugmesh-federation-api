@@ -64,6 +64,14 @@ class ManifestServiceTest {
         return m;
     }
 
+    /** An internal-visibility module carrying metadata (the seeded wiki/forum shape:
+     *  visibility='internal' + {"requiresRole":..,"mountAt":..}). */
+    private static FederationModule withInternalMetadata(String slug, String metadata) {
+        FederationModule m = module(slug, "internal");
+        m.setMetadata(metadata);
+        return m;
+    }
+
     private static FederationOverride scope(String scope, String target) {
         FederationOverride o = new FederationOverride();
         o.setScope(scope);
@@ -149,6 +157,51 @@ class ManifestServiceTest {
         // Non-admin (public) render writes through.
         svc.render(Set.of("ROLE_USER")).block();
         verify(cache).put(any());
+    }
+
+    /**
+     * The wiki is REGISTERED INERT (changeset 028): visibility='internal' so the
+     * row is HIDDEN from anonymous / plain-user callers in the manifest read path
+     * until the snapdragon-wiki-ui surface ships. A ROLE_USER caller must NOT see it
+     * — exactly the catalog cut that keeps the inert module out of ordinary users'
+     * manifests. (The wiki row carries metadata.requiresRole='wiki', mountAt '/wiki'
+     * per 028; modelled here to mirror the seeded shape.)
+     */
+    @Test
+    void wikiModule_internal_isHiddenFromPlainUser() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
+                .thenReturn(Flux.just(
+                        module("login", "public"),
+                        withInternalMetadata("wiki", "{\"requiresRole\":\"wiki\",\"mountAt\":\"/wiki\"}")));
+
+        ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
+        FederationManifestDto manifest = svc.render(Set.of("ROLE_USER")).block();
+
+        // The inert wiki row is filtered out; only the public 'login' remote ships.
+        assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactly("login");
+    }
+
+    /**
+     * The admin/internal catalog cut: a ROLE_ADMIN caller DOES see the
+     * internal-visibility wiki row in the manifest read path (so admins can manage
+     * the surface once it exists), while plain users do not. Mirrors
+     * {@link #adminCaller_seesInternalRows_too}.
+     */
+    @Test
+    void wikiModule_internal_isVisibleToAdmin() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
+                .thenReturn(Flux.just(
+                        module("login", "public"),
+                        withInternalMetadata("wiki", "{\"requiresRole\":\"wiki\",\"mountAt\":\"/wiki\"}")));
+
+        ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
+        FederationManifestDto manifest = svc.render(Set.of("ROLE_USER", "ROLE_ADMIN")).block();
+
+        assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactlyInAnyOrder("login", "wiki");
     }
 
     @Test
