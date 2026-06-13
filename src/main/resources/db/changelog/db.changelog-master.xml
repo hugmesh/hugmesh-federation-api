@@ -71,6 +71,16 @@
               022/025. Registered INERT — visibility='internal' HIDES it from
               non-role users until the snapdragon-wiki-ui + snapdragon-wiki-bff-api
               surfaces ship)
+        029 — COMPLETE the federation_modules seed so the dynamic manifest is
+              AUTHORITATIVE: add the three static-manifest slugs that had no DB row
+              — mod (internal, requiresRole 'mod', mountAt /mod — mirrors admin),
+              apidocs (internal, requiresRole 'admin', mountAt /admin/docs — same
+              adminGuard as the admin console), user (PUBLIC, NO requiresRole,
+              mountAt /user — userGuard admits any authenticated identity + it is
+              the default role-home, so it must show in a plain user's manifest).
+              Each an idempotent slug-absent MARK_RAN seed-guard, like 022-028. With
+              login/admin/matrix/mastodon already seeded, the authed manifest is now
+              a full superset of the host's static union floor.
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -106,4 +116,5 @@
     <include file="db/changelog/026-domain-scoping.xml"/>
     <include file="db/changelog/027-reserved-profile-slug-wiki.xml"/>
     <include file="db/changelog/028-register-wiki-module.xml"/>
+    <include file="db/changelog/029-complete-federation-modules-seed.xml"/>
 </databaseChangeLog>

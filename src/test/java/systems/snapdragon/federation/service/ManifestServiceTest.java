@@ -204,6 +204,88 @@ class ManifestServiceTest {
                 .containsExactlyInAnyOrder("login", "wiki");
     }
 
+    // ----- COMPLETED SEED (changeset 029): mod / apidocs (internal, role-gated)
+    //       + user (public, any-authenticated). The DB manifest is now a superset
+    //       of the host's static union floor, gated to match the host route guards. -----
+
+    /**
+     * The 'mod' remote is seeded visibility='internal' + requiresRole='mod' (029),
+     * mirroring the host's modGuard on /mod. A plain ROLE_USER caller must NOT see
+     * it in the manifest read path (the catalog cut), while a ROLE_ADMIN does — the
+     * same internal-visibility contract as the admin console. Co-renders the public
+     * 'user' remote (seeded public, 029) which BOTH callers see.
+     */
+    @Test
+    void modModule_internal_isHiddenFromPlainUser_butVisibleToAdmin() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
+                .thenReturn(Flux.just(
+                        module("user", "public"),
+                        withInternalMetadata("mod", "{\"requiresRole\":\"mod\",\"mountAt\":\"/mod\"}")));
+
+        ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
+
+        // A plain ROLE_USER sees the public user remote but NOT the internal mod one.
+        FederationManifestDto asUser = svc.render(Set.of("ROLE_USER")).block();
+        assertThat(asUser.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactly("user");
+
+        // A ROLE_ADMIN additionally sees the internal mod remote (manages the surface).
+        FederationManifestDto asAdmin = svc.render(Set.of("ROLE_USER", "ROLE_ADMIN")).block();
+        assertThat(asAdmin.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactlyInAnyOrder("user", "mod");
+    }
+
+    /**
+     * The 'apidocs' remote is seeded visibility='internal' + requiresRole='admin'
+     * (029) — the admin-only API-docs console, gated by the SAME adminGuard as
+     * /admin in the host. It is HIDDEN from a non-admin caller and visible to a
+     * ROLE_ADMIN, exactly like the admin row.
+     */
+    @Test
+    void apidocsModule_internal_isAdminGated() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
+                .thenReturn(Flux.just(
+                        module("login", "public"),
+                        withInternalMetadata("apidocs", "{\"requiresRole\":\"admin\",\"mountAt\":\"/admin/docs\"}")));
+
+        ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
+
+        // Non-admin (a mere ROLE_MOD here) does NOT see the admin-gated apidocs row.
+        FederationManifestDto asMod = svc.render(Set.of("ROLE_USER", "ROLE_MOD")).block();
+        assertThat(asMod.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactly("login");
+
+        // ROLE_ADMIN sees it (internal-visibility cut).
+        FederationManifestDto asAdmin = svc.render(Set.of("ROLE_ADMIN")).block();
+        assertThat(asAdmin.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactlyInAnyOrder("login", "apidocs");
+    }
+
+    /**
+     * The 'user' remote is seeded visibility='public' (029) — the host's userGuard
+     * admits ANY authenticated identity and /user is the default role-home, so a
+     * plain ROLE_USER's authenticated manifest MUST list it (the DB being
+     * authoritative for the user role-home, not just the static floor). A public row
+     * is visible to every caller, role or not.
+     */
+    @Test
+    void userModule_public_isVisibleToAnyAuthenticatedCaller() {
+        FederationModuleRepository repo = mock(FederationModuleRepository.class);
+        when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(eq("closed"), eq("default")))
+                .thenReturn(Flux.just(
+                        withMetadata("user", "{\"mountAt\":\"/user\"}"),
+                        withInternalMetadata("mod", "{\"requiresRole\":\"mod\",\"mountAt\":\"/mod\"}")));
+
+        ManifestService svc = new ManifestService(repo, noScopeOverrides(), noopCache());
+        FederationManifestDto manifest = svc.render(Set.of("ROLE_USER")).block();
+
+        // The public user role-home ships to the plain user; the internal mod row does not.
+        assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
+                .containsExactly("user");
+    }
+
     @Test
     void visibilityHelper_defaultsUnknownToVisible() {
         assertThat(ManifestService.isVisibleTo(module("x", "public"), false)).isTrue();
