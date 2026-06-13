@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        RESERVED-PROFILE-SLUG guard — extend for the TUBE (LocalTube) surface.
+
+        Tube is a DEFAULT-OFF, GPU-gated optional video-subscription-archiver service
+        (per-domain, superadmin-enabled). 'tube' is added to the canonical reserved-label
+        set so a vanity username 'tube' can never collide with a future tube.<domain>
+        subdomain or tube/ first-segment path. The DB-LEVEL backstop must agree: a
+        'fragment' row slug='profile-tube' is rejected by the CHECK the serving +
+        user-profile layers enforce.
+
+        WHY A NEW CHANGESET: 030 is the preceding deployed constraint. Drop + re-add
+        inserting 'profile-tube' alphabetically (between 'profile-support' and
+        'profile-user'). Rollback restores the pre-032 (030) list exactly.
+    -->
+
+    <changeSet id="032-1-reserved-profile-slug-tube" author="federation">
+        <sql>
+            ALTER TABLE federation_modules
+                DROP CONSTRAINT ck_fed_modules_reserved_profile_slug
+        </sql>
+        <sql>
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_reserved_profile_slug
+                CHECK (
+                    kind &lt;&gt; 'fragment'
+                    OR slug NOT IN (
+                        'profile-_fragments', 'profile-_matrix', 'profile-_remotes',
+                        'profile-actuator', 'profile-admin', 'profile-api', 'profile-api-docs',
+                        'profile-apidocs', 'profile-argocd', 'profile-assets', 'profile-auth',
+                        'profile-banned', 'profile-be', 'profile-bff', 'profile-docs',
+                        'profile-favicon', 'profile-forum', 'profile-fragments', 'profile-games',
+                        'profile-games-dodecahedron', 'profile-games-rpg-maker',
+                        'profile-games-three-wizards', 'profile-games-vn-maker', 'profile-gitlab',
+                        'profile-gm', 'profile-headscale', 'profile-health', 'profile-healthz',
+                        'profile-help', 'profile-id', 'profile-login', 'profile-logout',
+                        'profile-mastodon', 'profile-matrix', 'profile-metrics', 'profile-mod',
+                        'profile-oauth', 'profile-oauth2', 'profile-owncast', 'profile-pki', 'profile-play',
+                        'profile-pleroma', 'profile-producer', 'profile-producer-registration',
+                        'profile-public',
+                        'profile-publisher', 'profile-registration', 'profile-registry',
+                        'profile-robots', 'profile-root', 'profile-scale', 'profile-sitemap',
+                        'profile-social', 'profile-static', 'profile-status', 'profile-support',
+                        'profile-tube', 'profile-user', 'profile-users', 'profile-vault', 'profile-wasm',
+                        'profile-wasm-fragment', 'profile-well-known', 'profile-wiki',
+                        'profile-www'
+                    )
+                )
+        </sql>
+
+        <rollback>
+            ALTER TABLE federation_modules
+                DROP CONSTRAINT ck_fed_modules_reserved_profile_slug;
+            ALTER TABLE federation_modules
+                ADD CONSTRAINT ck_fed_modules_reserved_profile_slug
+                CHECK (
+                    kind &lt;&gt; 'fragment'
+                    OR slug NOT IN (
+                        'profile-_fragments', 'profile-_matrix', 'profile-_remotes',
+                        'profile-actuator', 'profile-admin', 'profile-api', 'profile-api-docs',
+                        'profile-apidocs', 'profile-argocd', 'profile-assets', 'profile-auth',
+                        'profile-banned', 'profile-be', 'profile-bff', 'profile-docs',
+                        'profile-favicon', 'profile-forum', 'profile-fragments', 'profile-games',
+                        'profile-games-dodecahedron', 'profile-games-rpg-maker',
+                        'profile-games-three-wizards', 'profile-games-vn-maker', 'profile-gitlab',
+                        'profile-gm', 'profile-headscale', 'profile-health', 'profile-healthz',
+                        'profile-help', 'profile-id', 'profile-login', 'profile-logout',
+                        'profile-mastodon', 'profile-matrix', 'profile-metrics', 'profile-mod',
+                        'profile-oauth', 'profile-oauth2', 'profile-owncast', 'profile-pki', 'profile-play',
+                        'profile-pleroma', 'profile-producer', 'profile-producer-registration',
+                        'profile-public',
+                        'profile-publisher', 'profile-registration', 'profile-registry',
+                        'profile-robots', 'profile-root', 'profile-scale', 'profile-sitemap',
+                        'profile-social', 'profile-static', 'profile-status', 'profile-support',
+                        'profile-user', 'profile-users', 'profile-vault', 'profile-wasm',
+                        'profile-wasm-fragment', 'profile-well-known', 'profile-wiki',
+                        'profile-www'
+                    )
+                );
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
