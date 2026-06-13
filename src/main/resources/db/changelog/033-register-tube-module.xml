@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER Tube (LocalTube) as a federation module — the registry row the Angular
+        host loads at runtime + the row the PUBLIC /api/federation/capabilities projection
+        reports (gated on enabled=true).
+
+        Tube is a DEFAULT-OFF, GPU-gated, optional YouTube-subscription-archiver service:
+        Google youtube.readonly OAuth connect → subscribed channels in DB → yt-dlp CronJob
+        downloads to per-domain PVC → in-platform HLS playback. Per-domain, superadmin-
+        enabled (checks GPU node presence). RTMP not applicable; media served via be-gateway
+        range + route-access ROLE_TUBE. Off by default / ships-dark.
+
+        REGISTERED INERT (hidden until the UI + BFF path is wired + GPU node present):
+          • visibility = 'internal' — hidden from non-ROLE_ADMIN callers in the manifest.
+            The manifest is NOT the authz boundary; the gateway route-access /tube/**=ROLE_TUBE
+            is the enforcement floor. 'internal' here means the dynamic manifest entry is
+            invisible to plain users until the service is enabled per-domain and ROLE_TUBE
+            is granted.
+
+          • slug          = 'tube'
+          • kind          = 'remote-shell'     (an Angular native-federation REMOTE,
+                            like forum/wiki/games/owncast).
+          • visibility    = 'internal'
+          • enabled       = false              (GPU-gated; superadmin enables per-domain
+                            after verifying GPU node presence).
+          • metadata.requiresRole = 'tube'     (bare label; gateway maps to ROLE_TUBE;
+                            scope=role kill-switch matches on this).
+          • metadata.mountAt      = '/tube'    (apex path).
+          • owner_user_id = NULL               (platform/first-party module).
+
+        Idempotent (MARK_RAN preCondition on slug-absent). remote_entry_url is the
+        platform service-DNS placeholder the deployment's Service wires at runtime
+        (identical pattern to 022-025/028/029/031).
+    -->
+
+    <changeSet id="033-1-register-tube-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'tube'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="tube"/>
+            <column name="display_name" value="My Tube (LocalTube)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-tube-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="false"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;tube&quot;,&quot;mountAt&quot;:&quot;/tube&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

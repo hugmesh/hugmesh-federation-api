@@ -81,6 +81,27 @@
               Each an idempotent slug-absent MARK_RAN seed-guard, like 022-028. With
               login/admin/matrix/mastodon already seeded, the authed manifest is now
               a full superset of the host's static union floor.
+        030 — reserved-profile-slug + owncast (DROP+re-ADD the deployed
+              ck_fed_modules_reserved_profile_slug to ALSO forbid 'profile-owncast';
+              027 is deployed so it is re-issued as a NEW changeSet. Owncast is a
+              DEFAULT-OFF, GPU-gated optional live-streaming service; 'owncast'
+              reserved so a vanity owncast.<domain> / owncast/ path can never collide).
+        031 — register Owncast as a federation module (slug='owncast',
+              kind='remote-shell', mountAt /owncast, requiresRole 'owncast',
+              enabled=false, visibility='internal'; idempotent slug-absent MARK_RAN
+              seed-guard. REGISTERED INERT and DISABLED — GPU-gated; superadmin
+              enables per-domain after verifying GPU node presence; hidden from
+              non-role callers until service is enabled and ROLE_OWNCAST is granted).
+        032 — reserved-profile-slug + tube (DROP+re-ADD to ALSO forbid 'profile-tube';
+              Tube is a DEFAULT-OFF, GPU-gated optional YouTube-subscription-archiver
+              service; 'tube' reserved so a vanity tube.<domain> / tube/ path can
+              never collide).
+        033 — register Tube as a federation module (slug='tube',
+              kind='remote-shell', mountAt /tube, requiresRole 'tube',
+              enabled=false, visibility='internal'; idempotent slug-absent MARK_RAN
+              seed-guard. REGISTERED INERT and DISABLED — GPU-gated; superadmin
+              enables per-domain; hidden from non-role callers until enabled and
+              ROLE_TUBE is granted).
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -117,4 +138,8 @@
     <include file="db/changelog/027-reserved-profile-slug-wiki.xml"/>
     <include file="db/changelog/028-register-wiki-module.xml"/>
     <include file="db/changelog/029-complete-federation-modules-seed.xml"/>
+    <include file="db/changelog/030-reserved-profile-slug-owncast.xml"/>
+    <include file="db/changelog/031-register-owncast-module.xml"/>
+    <include file="db/changelog/032-reserved-profile-slug-tube.xml"/>
+    <include file="db/changelog/033-register-tube-module.xml"/>
 </databaseChangeLog>
