@@ -19,6 +19,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 /**
@@ -65,9 +66,17 @@ public class BundleService {
      * <p>{@code entryFile} is the relative filename inside the bundle dir (e.g.
      * {@code remoteEntry.json}). Blocking filesystem work is wrapped on
      * boundedElastic to keep the WebFlux event loop clean.
+     *
+     * <p>OWNER-SCOPED (mirrors read/delete): a slug's active version is a
+     * per-owner resource, so a PUT may only supersede an active row the CALLER
+     * owns. If the slug already has an active row owned by ANOTHER user, a
+     * non-admin PUT is rejected with 409 BEFORE any supersede/insert runs (a
+     * fail-closed short-circuit), so an attacker can never displace a victim's
+     * active card by PUTting to their slug. An {@code admin} caller may supersede
+     * the slug's active row regardless of owner (the admin-override flow).
      */
     public Mono<UserModule> put(String ownerUserId, String slug, String entryFile,
-                                String visibility, String manifestJson, Flux<DataBuffer> body) {
+                                String visibility, String manifestJson, boolean admin, Flux<DataBuffer> body) {
         if (slug == null || slug.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "slug required"));
         }
@@ -89,7 +98,9 @@ public class BundleService {
                 .flatMap(hl -> {
                     String hash = hl[0];
                     String locator = hl[1];
-                    return supersedePrior(slug)
+                    // Owner-scoped supersede: rejects (409) a cross-owner PUT BEFORE
+                    // the new row is assembled/saved (fail-closed short-circuit).
+                    return supersedePriorOwned(ownerUserId, slug, admin)
                             .then(Mono.defer(() -> {
                                 UserModule m = new UserModule();
                                 m.setOwnerUserId(ownerUserId);
@@ -178,9 +189,30 @@ public class BundleService {
                 : repo.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(slug, ownerUserId);
     }
 
-    private Mono<Void> supersedePrior(String slug) {
+    /**
+     * Supersede the slug's CURRENT active row on behalf of {@code ownerUserId},
+     * owner-scoped and fail-closed:
+     * <ul>
+     *   <li>no active row for the slug — nothing to supersede (a first publish);</li>
+     *   <li>active row owned by the caller (or the caller is {@code admin}) —
+     *       supersede it, then the new version is inserted;</li>
+     *   <li>active row owned by ANOTHER user and the caller is not admin —
+     *       error 409 BEFORE any write, so a cross-owner PUT can never displace
+     *       the victim's active card (their row is left untouched).</li>
+     * </ul>
+     * The conflict check uses the slug-only active finder and compares the row's
+     * owner against the JWT subject (the same owner == subject rule read/delete
+     * enforce); we do NOT rely on the owner-scoped finder alone, because a missing
+     * own-row would otherwise silently fall through to a first-publish and leave a
+     * rival owner's active row in place (two active rows for one slug).
+     */
+    private Mono<Void> supersedePriorOwned(String ownerUserId, String slug, boolean admin) {
         return repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug)
                 .flatMap(prior -> {
+                    if (!admin && !ownerUserId.equals(prior.getOwnerUserId())) {
+                        return Mono.<UserModule>error(new ResponseStatusException(
+                                CONFLICT, "slug already has an active bundle owned by another user"));
+                    }
                     prior.setSupersededAt(Instant.now());
                     return repo.save(prior);
                 })

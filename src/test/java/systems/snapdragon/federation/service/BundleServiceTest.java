@@ -209,4 +209,104 @@ class BundleServiceTest {
         verify(storage).deleteVersion(aliceRow.getVersionDir());
         assertThat(aliceRow.getSupersededAt()).isNotNull();
     }
+
+    // ---------- PUT: owner-scoped supersede (BFLA / cross-owner write) ----------
+    //
+    // Finding A01 / CWE-639: a PUT used the slug-only active finder to supersede,
+    // so any user could displace ANOTHER user's active bundle by PUTting to their
+    // slug. These prove the owner-scoped fail-closed fix.
+
+    /** A staging body the PUT pipeline can write + hash (one DataBuffer). */
+    private static reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer> body(String s) {
+        org.springframework.core.io.buffer.DataBufferFactory f =
+                new org.springframework.core.io.buffer.DefaultDataBufferFactory();
+        return reactor.core.publisher.Flux.just(f.wrap(s.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    void put_crossOwner_supersede_isDenied_andVictimRowUntouched() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // The slug's CURRENT active row belongs to alice; bob (non-admin) PUTs to it.
+        UserModule victim = activeRow(OWNER, "card.html");
+        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+                .thenReturn(Mono.just(victim));
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/newhash");
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", false, body("<h1>pwn</h1>")))
+                .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+                        .isEqualTo(409))
+                .verify();
+
+        // The victim's active row is NEVER superseded, and NO new (attacker) row is saved.
+        assertThat(victim.getSupersededAt()).isNull();
+        verify(repo, never()).save(any(UserModule.class));
+    }
+
+    @Test
+    void put_sameOwner_supersedesOwnActiveRow_andInsertsNewVersion() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // alice already has an active row for the slug; alice PUTs a new version.
+        UserModule own = activeRow(OWNER, "card.html");
+        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+                .thenReturn(Mono.just(own));
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/newhash");
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false, body("<h1>v2</h1>")))
+                .assertNext(saved -> {
+                    assertThat(saved.getOwnerUserId()).isEqualTo(OWNER);
+                    assertThat(saved.getVersionDir()).isEqualTo("file:/bundles/" + SLUG + "/newhash");
+                })
+                .verifyComplete();
+
+        // Own prior row superseded, then the new version inserted (two saves).
+        assertThat(own.getSupersededAt()).isNotNull();
+        verify(repo, org.mockito.Mockito.times(2)).save(any(UserModule.class));
+    }
+
+    @Test
+    void put_admin_supersedesAnotherOwnersActiveRow() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // alice's row is active; an ADMIN (bob) PUTs to the slug — allowed override.
+        UserModule aliceRow = activeRow(OWNER, "card.html");
+        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+                .thenReturn(Mono.just(aliceRow));
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/adminhash");
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true, body("<h1>admin</h1>")))
+                .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OTHER))
+                .verifyComplete();
+
+        assertThat(aliceRow.getSupersededAt()).isNotNull();
+    }
+
+    @Test
+    void put_firstPublish_noActiveRow_insertsWithoutSupersede() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // No active row for the slug — a first publish; nothing to supersede.
+        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+                .thenReturn(Mono.empty());
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/firsthash");
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false, body("<h1>first</h1>")))
+                .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OWNER))
+                .verifyComplete();
+
+        // Exactly one save (the insert) — no supersede save.
+        verify(repo, org.mockito.Mockito.times(1)).save(any(UserModule.class));
+    }
 }
