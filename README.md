@@ -20,9 +20,9 @@ backend service that:
 - gates a **username availability / confusable** check the registration mint
   paths consult.
 
-It is built by reusing two proven references — the snapdragon.games DB-backed
-federation engine and the productionised snapdragon-admin-bff-api conventions —
-not by inventing new patterns.
+It is built by reusing two proven references — a DB-backed federation engine and
+the productionised snapdragon-admin-bff-api conventions — not by inventing new
+patterns.
 
 ## Where it sits in the architecture
 
@@ -105,10 +105,10 @@ privileged surface in every brand.
 
 ## The manifest read path (the keystone)
 
-`ManifestService.render(authorities, scope)` is lifted from the games
-`FederationController.manifest()` (`findAllByEnabledTrue → DTO → {generatedAt,
-remotes}`) and extended with filters applied per request so the **same DB rows
-serve every audience**:
+`ManifestService.render(authorities, scope)` is lifted from the reference
+federation engine's `FederationController.manifest()` (`findAllByEnabledTrue → DTO
+→ {generatedAt, remotes}`) and extended with filters applied per request so the
+**same DB rows serve every audience**:
 
 1. **enabled** — DB-side; an `unpublish` override flips `enabled=false`.
 2. **circuit-state** — only `circuit_state='closed'` rows ship; a `circuit-break`
@@ -148,8 +148,8 @@ renders from Postgres.
 
 `GET /api/federation/capabilities` is the **public sibling** of the manifest. The
 manifest is `authenticated()` + visibility-filtered, so a logged-out host could
-never even learn that an internal-visibility optional service (forum / mastodon /
-matrix / games) exists — it cannot drive greying. The capabilities projection is
+never even learn that an internal-visibility optional service (e.g. forum /
+mastodon / matrix) exists — it cannot drive greying. The capabilities projection is
 `permitAll`, lists **every** registry row (via `findAll()`, not just the serveable
 ones), and returns a deliberately narrow, public-safe `CapabilityDto`
 (`slug + installed + mountAt + requiresRole` only — no `remoteEntryUrl`,
@@ -333,9 +333,9 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
 
 ## Schema (Liquibase — `src/main/resources/db/changelog`)
 
-- **`010` `federation_modules`** — the registry. Lifted from games
-  `db/changelog/018`, extended with `owner_user_id`, `content_hash`, `visibility`,
-  `circuit_state`.
+- **`010` `federation_modules`** — the registry. Lifted from the reference
+  federation engine's `db/changelog/018`, extended with `owner_user_id`,
+  `content_hash`, `visibility`, `circuit_state`.
 - **`011` `user_modules`** — per-user bundle uploads (locator + content_hash +
   manifest_json + visibility + superseded_at). `016` adds `entry_file`.
 - **`012` `moderation_requests`** — recommend / refer / decide workflow.
@@ -352,9 +352,10 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
 - **`020` `username_skeleton`** — confusable-skeleton cache (non-unique skeleton
   index + ICU version stamp).
 - **`022`–`025`** — register the optional-service modules (phpBB **forum**,
-  akkoma **mastodon**, tuwunel **matrix**, **games**) as federation modules
-  (`kind='remote-shell'`, idempotent slug-absent seed-guard so install-state can
-  appear / grey-out via the manifest + capabilities).
+  akkoma **mastodon**, tuwunel **matrix**, and the opt-in **games** service —
+  default-off, only present when the build is generated with `--enable-games`) as
+  federation modules (`kind='remote-shell'`, idempotent slug-absent seed-guard so
+  install-state can appear / grey-out via the manifest + capabilities).
 - **`026`** — multi-tenancy `domain` column + index on the three tenant-owned
   tables (see *Multi-tenancy*). ✅ merged to `main`.
 - **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
@@ -383,11 +384,11 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
 
 ### A note on the JSON columns (honest constraint)
 
-Spring Data R2DBC ships no JSONB codec, so — exactly as the games engine does —
-`metadata` / `manifest_json` are mapped to **String** entity fields. The changelog
-uses a `${json.type}` property: **`jsonb` on Postgres**, **`clob` on the H2
-slice-test DB** (r2dbc-h2 returns a real `jsonb` column as a `byte[]`, which would
-break the String mapping; `clob` reads back as String on both). Likewise
+Spring Data R2DBC ships no JSONB codec, so — exactly as the reference federation
+engine does — `metadata` / `manifest_json` are mapped to **String** entity fields.
+The changelog uses a `${json.type}` property: **`jsonb` on Postgres**, **`clob` on
+the H2 slice-test DB** (r2dbc-h2 returns a real `jsonb` column as a `byte[]`, which
+would break the String mapping; `clob` reads back as String on both). Likewise
 `${str.type}` is `text` on Postgres but `varchar(1024)` on H2 (H2 refuses to
 index/UNIQUE a `CLOB`). The same changelog therefore applies on real Postgres and
 on the H2 PG-compat test DB. To move `metadata` to true `jsonb` semantics in prod
@@ -421,16 +422,16 @@ later, wire a `byte[]`/`Json`→String R2DBC reading converter and
 
 ## Bundle storage
 
-Pluggable `BundleStorage` (lifted from games `UploadStorage`), selected by
-`app.bundles.storage`:
+Pluggable `BundleStorage` (lifted from the reference engine's `UploadStorage`),
+selected by `app.bundles.storage`:
 - **`filesystem`** (default) — fully functional; opaque locator
   `file:/…/<slug>/<content-hash>`, zip-slip-safe reads.
 - **`s3`** ✅ — **implemented** (no longer a stub). S3-compatible storage that
   works against AWS S3 in prod and **MinIO** in dev/CI (point
   `app.bundles.s3.endpoint` at the MinIO container). Bundle files land under
   `s3://<bucket>/<slug>/<contentHash>/`; locator `s3://<bucket>/<slug>/<hash>`.
-  Ported from games `S3UploadStorage`; routes all calls through an `S3Ops` facade
-  so it unit-tests cleanly. Select with `app.bundles.storage=s3` and set
+  Ported from the reference engine's `S3UploadStorage`; routes all calls through an
+  `S3Ops` facade so it unit-tests cleanly. Select with `app.bundles.storage=s3` and set
   `app.bundles.s3.bucket` / `.endpoint` / `.region`.
 
 **Owner-scoped writes (A01 / CWE-639, IDOR).** The bundle WRITE path is
@@ -499,9 +500,9 @@ Representative tests:
 Intentionally NOT implemented in the scaffold:
 
 - **Full upload pipeline.** `BundleService.put` stages + content-hashes + installs
-  a **single** entry file. The games-style multi-file **zip** pipeline (zip-slip
-  validation, `manifest.json` schema check, `register.sql` execution) is not
-  ported. Port from games `GameUploadService` when needed.
+  a **single** entry file. The reference engine's multi-file **zip** pipeline
+  (zip-slip validation, `manifest.json` schema check, `register.sql` execution) is
+  not ported. Port from the reference engine's upload service when needed.
 - ~~**S3 / MinIO storage** is a stub that throws 501.~~ **No longer deferred — ✅
   shipped on `main`.** `S3BundleStorage` is fully implemented (AWS S3 in prod,
   MinIO in dev/CI). See *Bundle storage*.
@@ -591,11 +592,11 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
 
 ## Conventions mirrored
 
-- **Engine** = `snapdragon.games/backend`: `federation_modules`
+- **Engine** = the reference DB-backed federation engine: `federation_modules`
   (`db/changelog/018`), `FederationController` (reactive `findAllByEnabledTrue →
   DTO`), `UploadStorage` (pluggable filesystem|S3, opaque locator) +
-  `AssetController` reactive serving + content-hash versioning + `game_access`
-  scope (`all|role|user`).
+  `AssetController` reactive serving + content-hash versioning + a scope triple
+  (`all|role|user`).
 - **Conventions** = `snapdragon-admin-bff-api`: reactive WebFlux security
   (profile-split filter chains), R2DBC + JDBC-only-for-Liquibase, `CassandraRouteMirror`
   best-effort mirror, springdoc, native hints, Dockerfile, `.gitlab-ci.yml`,
