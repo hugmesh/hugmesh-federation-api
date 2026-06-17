@@ -23,22 +23,14 @@ import java.util.UUID;
 
 /**
  * REUSABLE multi-issuer test fixture — the cornerstone of the copyable multi-issuer
- * security-slice / e2e pattern established by snapdragon-gateway PR #34
- * ({@code TestIssuer} + {@code SecuritySliceSupport}). COPIED VERBATIM (package
- * adjusted) from the canonical {@code systems.snapdragon.gateway.testsupport.TestIssuer}
- * so this BFF validates per-brand tokens exactly as the gateway does.
- *
- * <p>The federation-api multi-issuer slice (PR #25, open) introduced an identical
- * copy of this helper. This wave-2 test branch (cut from {@code main}, where that
- * helper does not yet live) re-introduces it under the SAME package + name so, once
- * PR #25 merges, the two are byte-identical and de-duplicate cleanly; until then
- * each branch carries its own copy and neither blocks the other. NO production code
- * is touched.
+ * security-slice pattern (see {@code docs/testing/MULTI-ISSUER-SLICE.md}). COPIED
+ * VERBATIM (package adjusted) from the canonical
+ * {@code systems.snapdragon.gateway.testsupport.TestIssuer}.
  *
  * <p>Each {@code TestIssuer} stands up a tiny in-process HTTP server (JDK
  * {@link HttpServer}, bound to {@code 127.0.0.1}) that serves exactly what Spring
- * Security's {@code ReactiveJwtDecoders.fromIssuerLocation(...)} needs to validate a
- * brand's tokens with NO real Casdoor and NO network egress:
+ * Security's {@code ReactiveJwtDecoders.fromIssuerLocation(...)} needs to validate
+ * a brand's tokens with NO real Casdoor and NO network egress:
  *
  * <ul>
  *   <li>{@code GET /.well-known/openid-configuration} — the OIDC discovery doc
@@ -50,10 +42,10 @@ import java.util.UUID;
  * (issuer=domain). {@link #mint(String, List)} mints an RSA-signed JWT whose
  * {@code iss} is this server's issuer URI — so a token minted by issuer A is
  * cryptographically valid ONLY against issuer A's manager, which is exactly the
- * cross-brand isolation the wave-2 tests assert.
+ * cross-brand isolation the slice asserts.
  *
  * <p>Deterministic: a fresh RSA keypair per instance, fixed loopback host, OS-picked
- * port. {@link AutoCloseable} so an {@code @AfterAll}/{@code @AfterEach} stops the
+ * port. {@link AutoCloseable} so a try-with-resources / {@code @AfterEach} stops the
  * server. NEVER touches the network beyond {@code 127.0.0.1}.
  */
 public final class TestIssuer implements AutoCloseable {
@@ -100,8 +92,8 @@ public final class TestIssuer implements AutoCloseable {
     /**
      * Mint an RSA-signed JWT whose {@code iss} is THIS issuer, carrying the Casdoor
      * {@code roles} claim shape ({@code [{"name":"admin"}, ...]}) the converter reads.
-     * exp is 5 min out; subject is the given {@code subject}. The token validates ONLY
-     * against this issuer's manager (cross-brand isolation).
+     * exp is 5 min out; subject is the given {@code subject}. The token validates
+     * ONLY against this issuer's manager (cross-brand isolation).
      */
     public String mint(String subject, List<String> roleNames) {
         List<Map<String, String>> roles = roleNames.stream()
