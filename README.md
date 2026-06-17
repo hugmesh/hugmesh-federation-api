@@ -56,6 +56,23 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 - GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`); no
   GitHub Actions.
 
+### Security CI (GitLab) ✅ shipped
+
+`.gitlab-ci.yml` runs the platform **continuous-OWASP pen-test** stages
+(`stages: [security, dast, pentest, build]`):
+
+- the `pentest:sca` / `pentest:dast` jobs `extends:` the **canonical, org-wide**
+  pen-test template `include`d from `snapdragon-generator`
+  (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`) so there is ONE source of
+  truth — **OWASP Dependency-Check SCA** + the authenticated **ZAP DAST** harness
+  (with the custom escalation/DoS probes) + **nuclei**. These REPLACE the earlier
+  inline `dependency-check` / `zap-api-scan` jobs (migrated into the template — no
+  duplicate scan path).
+- the stage is **advisory** (`allow_failure: true`) — it reports but never gates
+  the `build:image` job, and runs on the default branch + merge requests.
+- this is a **dev/CI-pipeline control**, NOT a deployed CronJob or a runtime/UI
+  trigger, consistent with the platform pen-test standard.
+
 ## Endpoints (the public surface)
 
 All paths are under `/api/federation`. Role gates are enforced both in
@@ -144,6 +161,14 @@ ones), and returns a deliberately narrow, public-safe `CapabilityDto`
 - A never-registered optional service is **absent** from the list. The host greys
   it out **by absence**.
 
+**Seeded-but-inert optional services.** Several modules are seeded deliberately
+hidden/disabled so they appear greyed/absent until a superadmin enables them
+per-domain: **owncast** and **tube** are seeded `enabled=false` +
+`visibility='internal'` (GPU-gated live-streaming / YouTube-archiver), and **wiki**
+is seeded `visibility='internal'` (inert until the wiki UI/BFF surfaces ship). The
+capabilities projection therefore reports `installed=false` (or omits them from the
+role-visible manifest) until they are turned on and the matching role is granted.
+
 GET-only and caller-independent (the same body for everyone), so it is safe with
 no JWT. The manifest / override read paths are untouched — this is purely additive.
 
@@ -156,8 +181,9 @@ The federation API owns the **resolve** step.
 wildcard DNS *.<domain>  ─►  backend ingress  ─►  fe-gateway
    (Host: alice.<domain>)                          │
    the fe-gateway Host=*.<domain> route is ORDERED AFTER the apex + the reserved
-   service hosts (id. api. matrix. mastodon. scale. headscale.), so the reserved
-   subdomains are matched first and never captured by the wildcard
+   service hosts (id. api. matrix. mastodon. forum. wiki. owncast. tube. scale.
+   headscale. www., … — the full set is ReservedNames.RESERVED_LABELS), so the
+   reserved subdomains are matched first and never captured by the wildcard
                                                     │
                               GET /api/federation/vanity  (Host: alice.<domain>)
                                                     ▼
@@ -190,8 +216,19 @@ internal row, and it is GET-only so it can never mutate.
 **Username extraction.** `GET /vanity/{username}` takes it explicitly; `GET
 /vanity` extracts the FIRST DNS LABEL of the `Host` header (`firstLabel`: strips
 `:port`, lower-cases, requires ≥3 labels so the apex returns no username). The
-controller also refuses reserved first-labels (`id api matrix mastodon scale
-headscale www`) defensively — the gateway route order already prevents those.
+controller then runs a **two-stage reserved-label defence** (`VanityController`,
+the gateway route order already prevents most of these):
+
+- **exact reserved label** — `ReservedNames.RESERVED_LABELS` (the canonical
+  source of truth, the UNION of the deployed gateway route prefixes + reserved
+  subdomains) hard-**404**s the label. The set is far broader than a handful of
+  hosts — it includes `id api matrix mastodon pleroma forum wiki owncast tube
+  scale headscale www admin apidocs mod user login oauth games play wasm` and the
+  defensive web names (`actuator metrics health root static assets …`).
+- **confusable-of-reserved** — `UsernameSkeletonService.isReservedSkeleton(label)`
+  hard-404s a label whose ICU4j look-alike **skeleton** matches a reserved label
+  (e.g. `4dmin`, `akk0ma`), via an O(1) precomputed reserved-skeleton membership
+  check (NO DB hit), so a confusable that slipped past the exact set still 404s.
 
 ## Account-states profile-ban (read/write path)
 
@@ -248,10 +285,10 @@ label), so the whole controller is gated to an internal service credential
 
 ## Multi-tenancy (domain scoping)
 
-> Status: **on `feat/domain-foundation`** (changeset `026` + the `DomainScope`
-> service-layer cut). The capability/vanity public projections and the
-> owner==JWT-subject bundle paths are untouched by it. Documented here because it
-> is the platform's multi-brand contract and the intended shape of `main`.
+> Status: **✅ shipped on `main`** (changeset `026` + the `DomainScope`
+> service-layer cut; merged via PR #14 `feat/domain-foundation`). The
+> capability/vanity public projections and the owner==JWT-subject bundle paths are
+> untouched by it. This is the platform's multi-brand contract, enforced in code.
 
 The platform is multi-brand / multi-tenant: one Casdoor per brand, so the token's
 cryptographically-validated **issuer** (`iss`) is the trustworthy tenant
@@ -318,8 +355,31 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   akkoma **mastodon**, tuwunel **matrix**, **games**) as federation modules
   (`kind='remote-shell'`, idempotent slug-absent seed-guard so install-state can
   appear / grey-out via the manifest + capabilities).
-- **`026`** *(feat/domain-foundation)* — multi-tenancy `domain` column + index on
-  the three tenant-owned tables (see *Multi-tenancy*).
+- **`026`** — multi-tenancy `domain` column + index on the three tenant-owned
+  tables (see *Multi-tenancy*). ✅ merged to `main`.
+- **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
+  optional-service module (`slug='wiki'`, `mountAt /wiki`, `requiresRole 'wiki'`,
+  **`visibility='internal'`** — seeded INERT/hidden until the
+  `snapdragon-wiki-ui` + `snapdragon-wiki-bff-api` surfaces ship).
+- **`029`** — **COMPLETE the `federation_modules` seed** so the dynamic manifest is
+  AUTHORITATIVE: seed the three static-manifest slugs that had no DB row — `mod`
+  (`visibility='internal'`, `requiresRole 'mod'`, `/mod`), `apidocs`
+  (`visibility='internal'`, `requiresRole 'admin'`, `/admin/docs`) and `user`
+  (`visibility='public'`, **no** `requiresRole`, `/user`). With
+  login/admin/matrix/mastodon already seeded, the authenticated `/manifest` is now
+  a **full superset of the host's static-union floor**.
+- **`030` / `031`** — reserve the `owncast` profile-slug, then register **Owncast**
+  (`slug='owncast'`, `mountAt /owncast`, `requiresRole 'owncast'`,
+  **`enabled=false` + `visibility='internal'`**) — seeded INERT and DISABLED;
+  GPU-gated, superadmin-enabled per-domain after verifying a GPU node.
+- **`032` / `033`** — reserve the `tube` profile-slug, then register **Tube**
+  (`slug='tube'`, `mountAt /tube`, `requiresRole 'tube'`, **`enabled=false` +
+  `visibility='internal'`**) — seeded INERT and DISABLED; GPU-gated, superadmin-
+  enabled per-domain (sibling of Owncast).
+- **`034`** — partial-UNIQUE index `ux_user_modules_active_owner` on
+  `(slug, owner_user_id)` over **active** (non-superseded) `user_modules` rows,
+  enforcing **one active bundle per (slug, owner)** at the DB layer (Postgres
+  partial-unique / H2-compat equivalent).
 
 ### A note on the JSON columns (honest constraint)
 
@@ -361,11 +421,25 @@ later, wire a `byte[]`/`Json`→String R2DBC reading converter and
 
 ## Bundle storage
 
-Pluggable `BundleStorage` (lifted from games `UploadStorage`):
+Pluggable `BundleStorage` (lifted from games `UploadStorage`), selected by
+`app.bundles.storage`:
 - **`filesystem`** (default) — fully functional; opaque locator
   `file:/…/<slug>/<content-hash>`, zip-slip-safe reads.
-- **`s3`** — a documented **stub** that throws 501 (see *Deferred*). Select with
-  `app.bundles.storage=s3`.
+- **`s3`** ✅ — **implemented** (no longer a stub). S3-compatible storage that
+  works against AWS S3 in prod and **MinIO** in dev/CI (point
+  `app.bundles.s3.endpoint` at the MinIO container). Bundle files land under
+  `s3://<bucket>/<slug>/<contentHash>/`; locator `s3://<bucket>/<slug>/<hash>`.
+  Ported from games `S3UploadStorage`; routes all calls through an `S3Ops` facade
+  so it unit-tests cleanly. Select with `app.bundles.storage=s3` and set
+  `app.bundles.s3.bucket` / `.endpoint` / `.region`.
+
+**Owner-scoped writes (A01 / CWE-639, IDOR).** The bundle WRITE path is
+owner==JWT-subject scoped: `PUT /bundles/{slug}` supersedes only the **caller's
+own** prior active version, so a caller can never supersede or overwrite another
+owner's bundle (a non-owner write leaves the victim's row untouched). Likewise
+`GET /bundles/slug/{slug}/body` (read-my-card-body) and `DELETE /bundles/{slug}`
+operate on the caller's own active row only — a non-owner gets `404`, never
+another user's bytes. `ROLE_ADMIN` may act regardless of owner.
 
 ## Manifest cache
 
@@ -412,6 +486,9 @@ Representative tests:
 | `SPRING_LIQUIBASE_URL` / `_USER` / `_PASSWORD` | …`/federation` | migration DB |
 | `APP_BUNDLES_STORAGE` | `filesystem` | `filesystem` \| `s3` |
 | `APP_BUNDLES_DIR` | `/var/snapdragon/federation/bundles` | filesystem root |
+| `APP_BUNDLES_S3_BUCKET` | `snapdragon-federation` | S3 bucket (when `storage=s3`) |
+| `APP_BUNDLES_S3_ENDPOINT` | (empty) | S3 endpoint override (point at MinIO in dev/CI) |
+| `APP_BUNDLES_S3_REGION` | `us-east-1` | S3 region |
 | `MANIFEST_CACHE_ENABLED` | `false` | enable the Cassandra cache |
 | `SSL_ENABLED` / `SSL_CLIENT_AUTH` | `false` / `none` | API↔API mTLS (in-cluster: `true` / `need`) |
 | `SSL_KEY_STORE` / `SSL_TRUST_STORE` (+ passwords) | `/stores/…p12` | PKCS12 identity + cluster-CA truststore |
@@ -425,9 +502,9 @@ Intentionally NOT implemented in the scaffold:
   a **single** entry file. The games-style multi-file **zip** pipeline (zip-slip
   validation, `manifest.json` schema check, `register.sql` execution) is not
   ported. Port from games `GameUploadService` when needed.
-- **S3 / MinIO storage** (`S3BundleStorage`) is a stub that throws 501. The
-  production-proven reference is games `S3UploadStorage`. The `filesystem`
-  strategy is fully functional today.
+- ~~**S3 / MinIO storage** is a stub that throws 501.~~ **No longer deferred — ✅
+  shipped on `main`.** `S3BundleStorage` is fully implemented (AWS S3 in prod,
+  MinIO in dev/CI). See *Bundle storage*.
 - **Auto-applying an approved `moderation_request` as a `federation_override`.**
   Kept as two auditable steps (decide, then apply); wire
   `ModerationService.decide(approve)` → `OverrideService.apply` when the policy is
@@ -480,6 +557,37 @@ Intentionally NOT implemented in the scaffold:
   `PUBLIC_PATHS` allowlist. `/api/federation/vanity/**` (and `/capabilities`) must
   be added there so the fe-gateway does not 401 the anonymous public read before it
   reaches federation — a one-line change in the `snapdragon-gateway` repo.
+
+## Roadmap
+
+> **State convention:** ✅ shipped (merged to `main`) · 🚧 in-flight (code on an
+> open branch/PR, not yet merged) · 🔭 planned (design only, no code). Nothing
+> below is shipped in this repo — do not treat it as implemented.
+
+Within this repo (detail in *Deferred / stubbed*):
+
+- 🔭 **Vanity PUBLISH path.** An owner-scoped self-publish-profile endpoint (e.g.
+  owner-gated `PUT /vanity/{username}`) that upserts a user's
+  `slug=profile-<username>` fragment row from their own bundle. The vanity
+  *resolve* is shipped; the cross-service *publish* trigger (user-bff
+  `ProfileService.save`) is not wired.
+- 🔭 **Per-brand manifest cache key** and a **true JSONB `metadata` column**
+  (`ALTER COLUMN … TYPE jsonb` + an R2DBC reading converter). Today only the
+  public-safe default-domain manifest view is cached; brand-specific / superadmin
+  renders always read Postgres.
+
+Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
+
+- 🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**` +
+  `/capabilities` — a one-line change in the `snapdragon-gateway` repo (see above).
+- 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
+  Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). If
+  fail-closed MFA gating is ever extended to federation routes it will be noted
+  here — it is **not** enforced on this service today.
+- 🚧 **Superadmin app-store TAILSCALE-VPN-ONLY federated remotes.** The in-flight
+  superadmin app-store will register tailnet-only federated remote modules in
+  *this* registry as a future module class (off the public UI, gateway role-blocked
+  + authguarded). Not yet a registered module kind here.
 
 ## Conventions mirrored
 

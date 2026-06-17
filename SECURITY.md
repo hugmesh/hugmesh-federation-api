@@ -80,3 +80,24 @@ SSL_TRUST_STORE_PASSWORD=<in-pod generated>
 The readiness/liveness probes must switch to HTTPS (`scheme: HTTPS`) once
 `SSL_ENABLED=true`, and the be-gateway must present its client cert AND call this
 API over `https://` for the route to keep working.
+
+## Continuous security testing (CI) ✅ shipped
+
+In addition to the two runtime auth layers above, this repo participates in the
+platform **continuous-OWASP pen-test standard** as a **CI-pipeline control** (a
+dev/CI stage — NOT a deployed CronJob and NOT a runtime/UI trigger).
+
+`.gitlab-ci.yml` runs `stages: [security, dast, pentest, build]`. The `pentest:*`
+jobs `extends:` the canonical, org-wide template `include`d from
+`snapdragon-generator` (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`), the
+single source of truth, so the full harness runs:
+
+- **OWASP Dependency-Check (SCA)** — flags known-vulnerable dependencies;
+- **ZAP API DAST** — the authenticated baseline scan with the custom
+  escalation / DoS probes;
+- **nuclei** — the org's grounded templates.
+
+The stage is **advisory** (`allow_failure: true`): it reports findings but never
+gates the `build:image` job, and runs on the default branch + merge requests.
+These jobs **replace** the earlier inline `dependency-check` / `zap-api-scan`
+jobs (migrated into the shared template — no duplicate scan path).
