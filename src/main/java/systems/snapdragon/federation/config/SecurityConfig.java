@@ -110,6 +110,32 @@ public class SecurityConfig {
     }
 
     /**
+     * Hardened reactive HTTP response headers (OWASP secure-headers / NIST 800-228 /
+     * ASVS V14.4) applied to EVERY {@link SecurityWebFilterChain} here. This service
+     * is a per-domain, pure-JSON OAuth2 <b>resource server</b> sitting BEHIND the
+     * shared snapdragon-gateway front door — NOT the TLS-terminating gateway — so it
+     * gets the API-defensive MINIMUM only:
+     * <ul>
+     *   <li>{@code Content-Security-Policy: default-src 'none'; frame-ancestors 'none'}
+     *       — a no-document CSP (this API never serves HTML); defence-in-depth.</li>
+     *   <li>Spring Security's reactive SECURE DEFAULTS are KEPT (not disabled):
+     *       {@code X-Content-Type-Options: nosniff}, {@code X-Frame-Options: DENY},
+     *       {@code Cache-Control: no-store}, {@code Referrer-Policy: no-referrer}.</li>
+     * </ul>
+     * Deliberately OMITTED on a BFF: {@code Strict-Transport-Security} (meaningless
+     * over the plaintext intra-mesh hop; emitted ONLY at the TLS front door) and
+     * {@code Permissions-Policy} (no browser document surface). Those belong on the
+     * snapdragon-gateway chain, not here. Additive only — no authz / issuer / CSRF
+     * posture is touched.
+     */
+    private static void applyHardenedHeaders(ServerHttpSecurity.HeaderSpec h) {
+        h.contentSecurityPolicy(csp -> csp.policyDirectives(
+                "default-src 'none'; frame-ancestors 'none'"));
+        // nosniff + X-Frame-Options DENY + Cache-Control + Referrer-Policy:no-referrer
+        // remain Spring Security reactive defaults — left implicit, never disabled.
+    }
+
+    /**
      * Shared route rules common to BOTH profiles. The ONLY per-profile difference is
      * how {@link #SPEC_PATHS} is gated, so every other route lives here to keep the
      * two chains in lockstep (mirrors admin-bff).
@@ -159,6 +185,7 @@ public class SecurityConfig {
     SecurityWebFilterChain devFilterChain(ServerHttpSecurity http) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .headers(SecurityConfig::applyHardenedHeaders)
                 .authorizeExchange(ex -> {
                     commonRoutes(ex);
                     ex.pathMatchers(SPEC_PATHS).permitAll();
@@ -179,6 +206,7 @@ public class SecurityConfig {
     SecurityWebFilterChain filterChain(ServerHttpSecurity http) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .headers(SecurityConfig::applyHardenedHeaders)
                 .authorizeExchange(ex -> {
                     commonRoutes(ex);
                     ex.pathMatchers(SPEC_PATHS).hasAnyRole("ADMIN", "SUPERADMIN");
