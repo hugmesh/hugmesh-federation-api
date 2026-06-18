@@ -1,0 +1,27 @@
+# snapdragon-deploy.yaml — per-repo deploy descriptor (Phase 6 catalog).
+#
+# Discovered by the catalog ApplicationSet (snapdragon-generator
+# specs/cluster/apps/13-service-catalog.yaml): its scmProvider gitea generator
+# scans the in-cluster Forgejo org for repos carrying THIS file + a `deploy/`
+# kustomize dir and generates one ArgoCD Application (source path: deploy/).
+#
+# DUAL-HOME / SHIPS DARK: the central manifest still lives at
+# snapdragon-generator specs/cluster/manifests/federation-api/ and remains the
+# authoritative source today. This file + deploy/ are a Forgejo-cutover step:
+# the live GitHub-rooted ArgoCD ignores it, and the (currently unseeded) Forgejo
+# catalog matches nothing, so it changes nothing running. deploy/ is a verbatim
+# copy of the central manifest — keep the two in sync until cutover.
+name: snapdragon-federation-api                  # Application name
+namespace: snapdragon-backend                    # target k8s namespace (existing tier ns)
+image: snapdragon-systems/snapdragon-federation-api # image repo (tag pinned in deploy/ kustomize)
+port: 8080
+replicas: 1
+# Gateway route the admin/BFF seeds into the routing DB (Phase 2 core). Federation
+# is ClusterIP-only and reached in-cluster via the be-gateway's /api/federation/**
+# route (the coarse authenticated floor); fine-grained authz is in federation's
+# own SecurityConfig (modules/overrides=ROLE_ADMIN, moderation=ROLE_MOD/ADMIN,
+# manifest GET + bundles=authenticated).
+route:
+  gateway: snapdragon-be-gateway
+  path: /api/federation/**
+  stripPrefix: 0

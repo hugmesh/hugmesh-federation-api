@@ -1,0 +1,206 @@
+# snapdragon-federation-api — the module-federation REGISTRY + manifest/bundles API
+# (reactive WebFlux + R2DBC + Liquibase). It owns the enabled-MFE registry
+# (federation_modules / user_modules / moderation_requests / federation_override),
+# renders the manifest the host's loadRemoteModule consumes, and stores the
+# uploaded fragment bundle bytes.
+#
+# It is UPSTREAM of two runtime clients (both already retry, so this is a soft
+# dependency, but it should reconcile first — see apps/29-federation-api.yaml):
+#   - admin-bff calls federation as a JWT-authenticated client; and
+#   - the snapdragon-remote-fragment sync sidecar polls
+#     http://snapdragon-federation-api.snapdragon-backend.svc.cluster.local:8080 for the
+#     manifest + bundles and serves them statically at /_fragments/**.
+#
+# Security model: federation is purely an OAuth2 RESOURCE SERVER. It VALIDATES the
+# cluster Casdoor JWTs presented by those clients (CASDOOR_ISSUER_URI, JWKS
+# auto-discovered) — it mints/holds NO outbound creds, so it needs NO Casdoor app
+# or client secret of its own. Fine-grained authz (modules/overrides=ROLE_ADMIN,
+# moderation=ROLE_MOD/ADMIN, manifest GET + bundles=authenticated) is enforced in
+# federation's own SecurityConfig; the be-gateway route is the coarse
+# authenticated floor (see manifests/route-access/schema.sql).
+#
+# Storage: bundles live on a RWO PVC (filesystem mode) => replicas: 1 + Recreate.
+# PRODUCTION: switch APP_BUNDLES_STORAGE=s3 (MinIO/S3 + the APP_BUNDLES_S3_* env)
+# and drop the PVC to run multi-replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snapdragon-federation-api
+  namespace: snapdragon-backend
+  labels: { app: snapdragon-federation-api, app.kubernetes.io/part-of: snapdragon.systems }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # single writer over the RWO bundles PVC
+  selector: { matchLabels: { app: snapdragon-federation-api } }
+  template:
+    metadata: { labels: { app: snapdragon-federation-api } }
+    spec:
+      nodeSelector: { snapdragon.systems/backend: "true" }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+        seLinuxOptions:
+          type: container_t
+          level: "s0:c24"
+      # ── API-to-API mTLS identity (build-keystore) ───────────────────────────
+      # Mirrors the snapdragon-gateway chart's build-keystore initContainer: turns
+      # the Vault-PKI-issued, ESO-synced TLS Secret (snapdragon-federation-api-mtls:
+      # tls.crt/tls.key/ca.crt — NEW, added in this PR's pki-externalsecrets.yaml +
+      # vault-pki role) into keystore.p12 (identity) + truststore.p12 (cluster CA)
+      # for the server.ssl.* config to REQUIRE a client cert chaining to the cluster
+      # CA. Store password generated in-pod, kept only in the tmpfs /stores emptyDir,
+      # emitted into application-tls.properties loaded via
+      # SPRING_CONFIG_ADDITIONAL_LOCATION — never in git / a Secret / the pod spec.
+      initContainers:
+        - name: build-keystore
+          image: snapdragon-systems/snapdragon-federation-api:dev
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              P="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
+              openssl pkcs12 -export -inkey /pki/tls.key -in /pki/tls.crt \
+                -certfile /pki/ca.crt -name snapdragon-federation-api \
+                -out /stores/keystore.p12 -passout "pass:${P}"
+              keytool -importcert -noprompt -alias snapdragon-cluster-ca \
+                -file /pki/ca.crt -keystore /stores/truststore.p12 \
+                -storetype PKCS12 -storepass "${P}"
+              umask 077
+              cat > /stores/application-tls.properties <<EOF
+              server.ssl.key-store-password=${P}
+              server.ssl.trust-store-password=${P}
+              EOF
+              echo "keystore + truststore + application-tls.properties built"
+          volumeMounts:
+            - { name: pki,    mountPath: /pki, readOnly: true }
+            - { name: stores, mountPath: /stores }
+      containers:
+        - name: snapdragon-federation-api
+          image: snapdragon-systems/snapdragon-federation-api:dev
+          ports: [{ name: http, containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            # ── API-to-API mTLS (server side) ─────────────────────────────────
+            # Require a client cert chaining to the cluster CA. Store passwords come
+            # from /stores/application-tls.properties (in-pod generated, loaded via
+            # SPRING_CONFIG_ADDITIONAL_LOCATION) so they never enter the pod spec.
+            # DEPLOY-ORDER: deploy with the gateway/BFF client-cert wave (see PR body).
+            - { name: SSL_ENABLED,          value: "true" }
+            - { name: SSL_CLIENT_AUTH,      value: "need" }
+            - { name: SSL_KEY_STORE,        value: "/stores/keystore.p12" }
+            - { name: SSL_KEY_STORE_TYPE,   value: "PKCS12" }
+            - { name: SSL_TRUST_STORE,      value: "/stores/truststore.p12" }
+            - { name: SSL_TRUST_STORE_TYPE, value: "PKCS12" }
+            - { name: SPRING_CONFIG_ADDITIONAL_LOCATION, value: "file:/stores/" }
+            # OAuth2 resource server: validate the cluster Casdoor JWTs presented
+            # by admin-bff + the remote-fragment sync sidecar. JWKS auto-discovered
+            # from the issuer well-known; no jwk-set-uri / client secret needed.
+            - name: CASDOOR_ISSUER_URI
+              value: "https://id.snapdragon.systems"
+            # Runtime reactive handle to federation's OWN Postgres (federation-db).
+            # NOT the dangling `snapdragon-pg` the app default points at.
+            # RUNTIME handle: log in as the dedicated NON-OWNER least-privilege role
+            # `federation_app` (DML only, no DDL), created by federation-db's
+            # initdb/10-roles.sh. Password from its OWN ESO Secret
+            # federation-db-app-auth (key password) — the SAME Secret the DB pod's
+            # FEDERATION_APP_PASSWORD mounts, so role + cred stay in sync.
+            - name: SPRING_R2DBC_URL
+              value: "r2dbc:postgresql://federation-db.snapdragon-backend.svc.cluster.local:5432/federation"
+            - name: SPRING_R2DBC_USERNAME
+              value: "federation_app"
+            - name: SPRING_R2DBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: federation-db-app-auth
+                  key: password
+            # JDBC handle used ONLY by Liquibase at startup. DDL needs the OWNER, so
+            # Liquibase keeps the owner role `federation` + the owner ESO Secret
+            # federation-db-auth (the SAME the DB pod's POSTGRES_PASSWORD mounts).
+            - name: SPRING_LIQUIBASE_URL
+              value: "jdbc:postgresql://federation-db.snapdragon-backend.svc.cluster.local:5432/federation"
+            - name: SPRING_LIQUIBASE_USER
+              value: "federation"
+            - name: SPRING_LIQUIBASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: federation-db-auth
+                  key: password
+            # Bundle storage: filesystem mode -> the PVC mounted below. The dir
+            # MUST equal the volumeMount path. PROD swap: APP_BUNDLES_STORAGE=s3.
+            - name: APP_BUNDLES_STORAGE
+              value: "filesystem"
+            - name: APP_BUNDLES_DIR
+              value: "/var/snapdragon/federation/bundles"
+            # Best-effort manifest write-through cache. Left DISABLED for first
+            # deploy (renders from Postgres; NoopManifestCache). To enable best-
+            # effort like admin-bff, flip MANIFEST_CACHE_ENABLED to "true" — any
+            # Cassandra failure is swallowed and never blocks startup (the
+            # Cassandra autoconfig is excluded in application.yml). The contact
+            # point matches admin-bff's CASSANDRA host.
+            - name: MANIFEST_CACHE_ENABLED
+              value: "false"
+            - name: MANIFEST_CACHE_CASSANDRA
+              value: "cassandra.snapdragon-pki.svc.cluster.local:9042"
+            - name: MANIFEST_CACHE_KEYSPACE
+              value: "snapdragon_federation"
+            - name: MANIFEST_CACHE_LOCAL_DC
+              value: "dc1"
+            # No SPRING_PROFILES_ACTIVE: the prod SecurityConfig chain
+            # (@Profile("!dev & !test")) is the default and gates the OpenAPI spec
+            # /swagger-ui to ROLE_ADMIN. Setting dev/test would make the spec
+            # public, so it is deliberately UNSET. federation has no
+            # kafka/clickhouse deps, so admin-bff's extra profiles do not apply.
+          # HTTPS exec probe: client-auth=need rejects a cert-less kubelet httpGet,
+          # so curl PRESENTS this pod's client cert and validates the server cert
+          # against the cluster CA (--resolve maps the SAN to loopback). See
+          # admin-bff-api for the rationale.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
+                  --resolve snapdragon-federation-api:8080:127.0.0.1
+                  https://snapdragon-federation-api:8080/actuator/health/readiness
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
+                  --resolve snapdragon-federation-api:8080:127.0.0.1
+                  https://snapdragon-federation-api:8080/actuator/health/liveness
+            initialDelaySeconds: 45
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 768Mi }
+          volumeMounts:
+            - { name: tmp,     mountPath: /tmp }
+            - { name: bundles, mountPath: /var/snapdragon/federation/bundles }
+            - { name: stores,  mountPath: /stores, readOnly: true }
+            - { name: pki,     mountPath: /pki,    readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: bundles
+          persistentVolumeClaim: { claimName: federation-bundles }
+        # Vault-PKI-issued mTLS material, synced by ESO (kubernetes.io/tls).
+        - name: pki
+          secret:
+            secretName: snapdragon-federation-api-mtls
+        # tmpfs for the assembled PKCS12 stores + the in-pod SSL properties.
+        - name: stores
+          emptyDir:
+            medium: Memory

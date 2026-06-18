@@ -1,0 +1,20 @@
+# Bundle storage for snapdragon-federation-api's filesystem BundleStorage
+# (app.bundles.storage=filesystem, app.bundles.dir=/var/snapdragon/federation/bundles).
+# FilesystemBundleStorage writes content-addressed bundle bytes here
+# (<dir>/<slug>/<contentHash>/...). The pod runs readOnlyRootFilesystem: true, so
+# this MUST be a real writable volume, not the root fs.
+#
+# RWO => the federation Deployment is single-replica with strategy Recreate (one
+# writer over the volume). The remote-fragment fleet is the SCALABLE serving layer,
+# so single-replica federation is fine for dev. PRODUCTION: switch
+# app.bundles.storage=s3 (MinIO/S3) and drop this PVC to go multi-replica.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: federation-bundles
+  namespace: snapdragon-backend
+  labels: { app: snapdragon-federation-api }
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: snapdragon-local
+  resources: { requests: { storage: 5Gi } }

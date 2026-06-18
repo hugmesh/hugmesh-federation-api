@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: snapdragon-backend
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+# First-party images pull from the in-cluster GitLab container registry
+# (registry.snapdragon.systems = the GitLab chart's hosts.domain default; project
+# path = <group>/<repo>). The federation CI (snapdragon-federation-api/.gitlab-ci.yml)
+# pushes $CI_REGISTRY_IMAGE:<branch> + :<sha>; $CI_REGISTRY_IMAGE =
+# registry.snapdragon.systems/snapdragon/snapdragon-federation-api. We track the moving
+# :main here for dev. Pulls need the gitlab-registry imagePullSecret (ESO-
+# materialized; the snapdragon-backend ExternalSecret already exists).
+images:
+  - { name: snapdragon-systems/snapdragon-federation-api, newName: registry.snapdragon.systems/snapdragon/snapdragon-federation-api, newTag: main }
+patches:
+  - target: { kind: Deployment }
+    patch: |
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: gitlab-registry
