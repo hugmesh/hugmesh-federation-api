@@ -73,7 +73,7 @@ class MultiIssuerSecuritySliceTest extends SecuritySliceSupport {
         // as TenancyResourceServerConfig contributes it. No back-compat jwk-set-uri,
         // so each brand decoder discovers from its own issuer (the in-process server).
         // federation-api's ctor is (registry, backCompatIssuer, backCompatJwkSetUri).
-        TenancyResourceServerConfig tenancy = new TenancyResourceServerConfig(registry, "", "");
+        TenancyResourceServerConfig tenancy = new TenancyResourceServerConfig(registry, "", "", false, 600_000L);
         ReactiveAuthenticationManagerResolver<ServerWebExchange> resolver =
                 tenancy.tenantAuthManagerResolver();
 

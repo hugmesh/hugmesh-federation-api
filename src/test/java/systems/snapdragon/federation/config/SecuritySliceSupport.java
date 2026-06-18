@@ -60,7 +60,9 @@ abstract class SecuritySliceSupport {
             ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>> tenantResolver,
             Object... controllers) {
 
-        SecurityConfig config = new SecurityConfig(registry, tenantResolver);
+        // MFA floor ships DARK (enabled=false) — these route-gate slices assert the
+        // legacy, byte-identical behaviour; the dark default emits no MFA_SATISFIED.
+        SecurityConfig config = new SecurityConfig(registry, tenantResolver, false, 600_000L);
         // The PROD filter chain (spec paths -> ADMIN/SUPERADMIN). Every route rule the
         // slice exercises is shared with the dev/test chain, so the prod chain is the
         // stricter, representative one to assert against.

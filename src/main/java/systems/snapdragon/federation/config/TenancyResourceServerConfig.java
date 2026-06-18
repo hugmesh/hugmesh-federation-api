@@ -75,13 +75,26 @@ public class TenancyResourceServerConfig {
      *  is issuer-uri (OIDC discovery), so this is normally empty. */
     private final String backCompatJwkSetUri;
 
+    /** D8 MFA floor — ships DARK. SAME {@code app.mfa.enabled} (default
+     *  {@code false}) / {@code app.mfa.freshness-window} (default 10m) the
+     *  single-issuer {@link SecurityConfig} reads, threaded into the SAME
+     *  {@link CasdoorAuthorities.MfaConfig} so the multi-issuer path derives the
+     *  {@code MFA_SATISFIED} marker BYTE-IDENTICALLY to the single-issuer path. */
+    private final boolean mfaEnabled;
+
+    private final long mfaFreshnessWindow;
+
     public TenancyResourceServerConfig(
             DomainRegistry domainRegistry,
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri:}") String backCompatIssuer,
-            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri:}") String backCompatJwkSetUri) {
+            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri:}") String backCompatJwkSetUri,
+            @Value("${app.mfa.enabled:false}") boolean mfaEnabled,
+            @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindow) {
         this.domainRegistry = domainRegistry;
         this.backCompatIssuer = trimSlash(backCompatIssuer);
         this.backCompatJwkSetUri = backCompatJwkSetUri == null ? "" : backCompatJwkSetUri.trim();
+        this.mfaEnabled = mfaEnabled;
+        this.mfaFreshnessWindow = mfaFreshnessWindow;
     }
 
     private static String trimSlash(String s) {
@@ -145,6 +158,7 @@ public class TenancyResourceServerConfig {
      *  shared {@link CasdoorAuthorities}), with the issuer-derived {@code DOMAIN_<x>}
      *  added. */
     private Converter<Jwt, Flux<GrantedAuthority>> authoritiesConverter() {
-        return CasdoorAuthorities.converter(domainRegistry);
+        return CasdoorAuthorities.converter(
+                domainRegistry, new CasdoorAuthorities.MfaConfig(mfaEnabled, mfaFreshnessWindow));
     }
 }

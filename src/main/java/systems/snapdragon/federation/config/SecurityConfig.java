@@ -1,6 +1,7 @@
 package systems.snapdragon.federation.config;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -85,11 +86,27 @@ public class SecurityConfig {
     private final ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>>
             tenantAuthManagerResolver;
 
+    /** D8 MFA floor — ships DARK. {@code app.mfa.enabled} (default {@code false}):
+     *  when off the converter emits the byte-identical legacy authority set and the
+     *  {@code MFA_SATISFIED} marker is NEVER produced. Threaded into the SAME
+     *  {@link CasdoorAuthorities.MfaConfig} the multi-issuer path uses so both
+     *  derive the marker identically. */
+    private final boolean mfaEnabled;
+
+    /** D8 MFA freshness window in millis ({@code app.mfa.freshness-window}, default
+     *  10m): a {@code mfa_satisfied_at} stamp is fresh iff {@code 0 <= now - ts <=}
+     *  this. */
+    private final long mfaFreshnessWindow;
+
     public SecurityConfig(DomainRegistry domainRegistry,
                           ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>>
-                                  tenantAuthManagerResolver) {
+                                  tenantAuthManagerResolver,
+                          @Value("${app.mfa.enabled:false}") boolean mfaEnabled,
+                          @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindow) {
         this.domainRegistry = domainRegistry;
         this.tenantAuthManagerResolver = tenantAuthManagerResolver;
+        this.mfaEnabled = mfaEnabled;
+        this.mfaFreshnessWindow = mfaFreshnessWindow;
     }
 
     /**
@@ -204,6 +221,7 @@ public class SecurityConfig {
      * multi-issuer path ({@link TenancyResourceServerConfig}) stay byte-identical.
      */
     private Converter<Jwt, Flux<GrantedAuthority>> casdoorAuthoritiesConverter() {
-        return CasdoorAuthorities.converter(domainRegistry);
+        return CasdoorAuthorities.converter(
+                domainRegistry, new CasdoorAuthorities.MfaConfig(mfaEnabled, mfaFreshnessWindow));
     }
 }
