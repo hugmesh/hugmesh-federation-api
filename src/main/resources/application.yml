@@ -65,6 +65,31 @@ app:
       contact-point: "${MANIFEST_CACHE_CASSANDRA:cassandra.snapdragon-pki.svc.cluster.local:9042}"
       keyspace: "${MANIFEST_CACHE_KEYSPACE:snapdragon_federation}"
       local-dc: "${MANIFEST_CACHE_LOCAL_DC:dc1}"
+      # ── Ships-dark CQL auth (HELD: default OFF until the Cassandra cluster is
+      # secured). When auth.enabled=true the CqlSession dials with
+      # .withAuthCredentials(username, password). The password is sourced ONLY from
+      # MANIFEST_CACHE_CASSANDRA_PASSWORD wired to a K8s/ESO Secret (secretKeyRef in
+      # deploy/deployment.yaml) — empty-defaulted here so it is NEVER committed.
+      # Leaving auth.enabled false (the default) means the credentials are never
+      # read and the session builds exactly as before.
+      auth:
+        enabled: "${MANIFEST_CACHE_CASSANDRA_AUTH_ENABLED:false}"
+        username: "${MANIFEST_CACHE_CASSANDRA_USERNAME:}"
+        password: "${MANIFEST_CACHE_CASSANDRA_PASSWORD:}"
+      # ── Ships-dark CQL TLS (HELD: default OFF until the Cassandra cluster is
+      # secured + presents a server cert chaining to the truststore). When
+      # ssl.enabled=true the CqlSession dials with .withSslContext(...) built from a
+      # PKCS12 truststore (and optional keystore for client mTLS). The store paths
+      # point at the in-pod /stores tmpfs assembled by the build-keystore
+      # initContainer; the store PASSWORDS are read from the in-pod
+      # application-cassandra-tls.properties (loaded via SPRING_CONFIG_ADDITIONAL_LOCATION)
+      # so they NEVER touch git, a Secret, or the pod spec. Empty-defaulted here.
+      ssl:
+        enabled: "${MANIFEST_CACHE_CASSANDRA_SSL_ENABLED:false}"
+        truststore: "${MANIFEST_CACHE_CASSANDRA_SSL_TRUSTSTORE:/stores/cassandra-truststore.p12}"
+        truststore-password: "${MANIFEST_CACHE_CASSANDRA_SSL_TRUSTSTORE_PASSWORD:}"
+        keystore: "${MANIFEST_CACHE_CASSANDRA_SSL_KEYSTORE:}"
+        keystore-password: "${MANIFEST_CACHE_CASSANDRA_SSL_KEYSTORE_PASSWORD:}"
 
 # SpringDoc OpenAPI. Spec at /v3/api-docs is the source the platform
 # ng-openapi-gen typed clients + docs pipeline consume. Spec + UI are gated by

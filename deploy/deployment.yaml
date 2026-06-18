@@ -152,6 +152,38 @@ spec:
               value: "snapdragon_federation"
             - name: MANIFEST_CACHE_LOCAL_DC
               value: "dc1"
+            # ── Ships-dark CQL auth + TLS (HELD: default OFF) ──────────────────
+            # DO NOT enable until the Cassandra cluster is secured (CQL auth turned
+            # on + a server cert chaining to the truststore below). Today the
+            # contact point above is plaintext + anonymous; flipping these on
+            # before the cluster is hardened would only make the (already best-
+            # effort, failure-swallowing) cache fail-and-degrade, never break boot.
+            #
+            # ENABLE STEPS when the cluster is ready (with MANIFEST_CACHE_ENABLED=true):
+            #   1. MANIFEST_CACHE_CASSANDRA_AUTH_ENABLED=true, set the username, and
+            #      source MANIFEST_CACHE_CASSANDRA_PASSWORD from the ESO-materialized
+            #      Secret (uncomment the valueFrom block below) — never inline it.
+            #   2. MANIFEST_CACHE_CASSANDRA_SSL_ENABLED=true and extend the
+            #      build-keystore initContainer above to also assemble
+            #      /stores/cassandra-truststore.p12 from the Cassandra CA, emitting
+            #      its password into /stores/application-cassandra-tls.properties
+            #      (already loaded via SPRING_CONFIG_ADDITIONAL_LOCATION=file:/stores/) —
+            #      the store password stays in the tmpfs, never in env/git/a Secret.
+            - name: MANIFEST_CACHE_CASSANDRA_AUTH_ENABLED
+              value: "false"
+            - name: MANIFEST_CACHE_CASSANDRA_USERNAME
+              value: ""
+            # Password is NEVER inlined. When auth is enabled, source it from the
+            # ESO-materialized Cassandra app Secret via secretKeyRef (uncomment):
+            # - name: MANIFEST_CACHE_CASSANDRA_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: cassandra-app-auth
+            #       key: password
+            - name: MANIFEST_CACHE_CASSANDRA_SSL_ENABLED
+              value: "false"
+            - name: MANIFEST_CACHE_CASSANDRA_SSL_TRUSTSTORE
+              value: "/stores/cassandra-truststore.p12"
             # No SPRING_PROFILES_ACTIVE: the prod SecurityConfig chain
             # (@Profile("!dev & !test")) is the default and gates the OpenAPI spec
             # /swagger-ui to ROLE_ADMIN. Setting dev/test would make the spec
