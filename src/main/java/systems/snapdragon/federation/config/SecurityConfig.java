@@ -56,7 +56,9 @@ import systems.snapdragon.federation.security.DomainRegistry;
  *   <li>moderation ({@code /api/federation/moderation/**}) = ROLE_MOD/ADMIN/SUPERADMIN
  *       (method-security narrows decide to ROLE_ADMIN/SUPERADMIN);</li>
  *   <li>bundles ({@code /api/federation/bundles/**}) = authenticated
- *       (owner-or-admin enforced in the service: owner = JWT subject — UNWEAKENED);</li>
+ *       (owner-or-admin enforced in the service: owner = JWT subject — UNWEAKENED;
+ *       the metadata reads are additionally DOMAIN-scoped + projected to a public-safe
+ *       view, while the content-hash byte FETCH stays any-authenticated by design);</li>
  *   <li>springdoc spec/UI = permitAll under dev/test, ROLE_ADMIN/SUPERADMIN in prod.</li>
  * </ul>
  */

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        MULTI-TENANCY DOMAIN SCOPING for user_modules (cross-tenant disclosure fix).
+
+        Changeset 026 added a `domain` column to federation_modules / federation_override
+        / moderation_requests but DELIBERATELY OMITTED user_modules, treating it as
+        owner-scoped only (keyed on owner_user_id). That left the bundle METADATA reads
+        — GET /api/federation/bundles/slug/{slug} and GET /api/federation/bundles/{hash}
+        — with NO tenant predicate: a brand-X user could enumerate ANOTHER brand's
+        bundle metadata (ownerUserId, versionDir, manifestJson, visibility) and pivot a
+        content hash into bundle bytes (cross-tenant metadata IDOR).
+
+        This adds the SAME backward-compatible domain column to user_modules so those
+        reads can be DOMAIN-pinned (per-domain caller sees only their brand's bundles;
+        SUPERADMIN un-pinned) IN ADDITION to the existing owner cut — mirroring the
+        ModuleRegistryService / OverrideService per-domain query cut.
+
+        BACKWARD-COMPATIBLE (identical to 026): the column DEFAULTS to 'default' and is
+        NOT NULL, so every PRE-EXISTING user_modules row backfills to domain='default',
+        and a single-issuer cluster (every token => DOMAIN_default) keeps matching them.
+        The domain is the publishing principal's issuer-derived DOMAIN_<x> at WRITE time
+        (stamped in BundleService.put from the authenticated DomainScope) — NEVER a
+        user-settable claim.
+
+        NOTE: the content-hash FETCH path (GET /bundles/{hash}/files/{*path}, the
+        remote-fragment SYNC read) stays any-authenticated / un-scoped by design (a
+        content hash is a capability; the bytes are identical to whoever holds it) and
+        is unchanged — only the METADATA reads gain the domain cut.
+    -->
+
+    <changeSet id="035-1-user-modules-domain" author="federation">
+        <addColumn tableName="user_modules">
+            <column name="domain" type="${str.type}" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <createIndex tableName="user_modules" indexName="idx_user_modules_domain">
+            <column name="domain"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

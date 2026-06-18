@@ -102,6 +102,17 @@
               seed-guard. REGISTERED INERT and DISABLED — GPU-gated; superadmin
               enables per-domain; hidden from non-role callers until enabled and
               ROLE_TUBE is granted).
+        034 — user_modules: one ACTIVE bundle per (slug, owner) — the DB-level
+              backstop for the owner-scoped PUT (split pg partial-unique / h2
+              generated-key index).
+        035 — multi-tenancy domain scoping for user_modules (the column 026 omitted):
+              add a NOT-NULL domain column (DEFAULT 'default') + index so the bundle
+              METADATA reads (/bundles/slug/{slug}, /bundles/{hash}) can be domain-pinned
+              (per-domain caller sees only their brand's bundles; SUPERADMIN un-pinned)
+              on top of the owner cut — closing the cross-tenant metadata IDOR. The
+              content-hash FETCH (/bundles/{hash}/files/{*path}) stays un-scoped by
+              design (capability-by-hash). 'default' default keeps pre-existing rows +
+              single-issuer clusters unchanged.
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -143,4 +154,5 @@
     <include file="db/changelog/032-reserved-profile-slug-tube.xml"/>
     <include file="db/changelog/033-register-tube-module.xml"/>
     <include file="db/changelog/034-user-modules-active-owner-unique.xml"/>
+    <include file="db/changelog/035-user-modules-domain.xml"/>
 </databaseChangeLog>

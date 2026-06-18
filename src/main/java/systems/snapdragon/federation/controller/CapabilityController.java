@@ -2,11 +2,15 @@ package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import systems.snapdragon.federation.model.CapabilityDto;
+import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.service.CapabilityService;
 
 /**
@@ -24,9 +28,12 @@ import systems.snapdragon.federation.service.CapabilityService;
  * NARROW, public-safe projection (slug + installed + mountAt + requiresRole only —
  * no internal locator/detail).
  *
- * <p>GET-only so it can never mutate, and caller-independent (the same body for
- * everyone), so it is safe to serve with no JWT. The manifest / override read paths
- * are untouched: this is purely additive.
+ * <p>GET-only so it can never mutate. It is DOMAIN-scoped (and excludes per-user
+ * {@code profile-<username>} vanity fragments): an anonymous caller resolves to the
+ * {@code "default"} domain, an authenticated per-domain caller sees only their own
+ * brand's services, and SUPERADMIN sees all — so this {@code permitAll} endpoint
+ * cannot be a cross-brand registry / username enumeration oracle. The manifest /
+ * override read paths are untouched: this is purely additive.
  */
 @Tag(name = "Capabilities",
         description = "PUBLIC install-state projection (slug + installed + mountAt + requiresRole). "
@@ -36,9 +43,11 @@ import systems.snapdragon.federation.service.CapabilityService;
 public class CapabilityController {
 
     private final CapabilityService capabilities;
+    private final DomainRegistry domains;
 
-    public CapabilityController(CapabilityService capabilities) {
+    public CapabilityController(CapabilityService capabilities, DomainRegistry domains) {
         this.capabilities = capabilities;
+        this.domains = domains;
     }
 
     @Operation(
@@ -55,7 +64,14 @@ public class CapabilityController {
             services.
             """)
     @GetMapping
-    public Flux<CapabilityDto> capabilities() {
-        return capabilities.capabilities();
+    public Flux<CapabilityDto> capabilities(@AuthenticationPrincipal Jwt jwt) {
+        // DOMAIN-scoped even though this is permitAll: an ANONYMOUS caller (jwt==null)
+        // resolves to the "default" domain (single-issuer / logged-out behaviour); an
+        // authenticated per-domain caller sees ONLY their own brand's registered
+        // services; SUPERADMIN (cross-domain infra role) sees every brand's. The domain
+        // is derived from the cryptographically-validated issuer (never a spoofable
+        // claim) and fragment slugs are excluded in the query — so this public endpoint
+        // can never become a cross-brand registry / username enumeration oracle.
+        return capabilities.capabilities(DomainScope.resolve(jwt, domains));
     }
 }

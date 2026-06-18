@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.UserModule;
+import systems.snapdragon.federation.security.DomainRegistry;
 import systems.snapdragon.federation.service.BundleService;
 
 import java.nio.charset.StandardCharsets;
@@ -45,6 +46,16 @@ class BundleControllerTest {
                 .build();
     }
 
+    /** Build a controller with a {@link DomainRegistry} that maps any issuer to the
+     *  {@code "default"} domain — these tests assert the owner/admin forwarding, not
+     *  the (separately-tested) per-domain cut; the read endpoints still resolve a
+     *  DomainScope, but a default-domain scope keeps the existing assertions intact. */
+    private static BundleController controller(BundleService svc) {
+        DomainRegistry domains = mock(DomainRegistry.class);
+        when(domains.domainOf(org.mockito.ArgumentMatchers.any())).thenReturn("default");
+        return new BundleController(svc, domains);
+    }
+
     /** A security context whose authentication carries the given authorities. */
     private static SecurityContext ctx(String subject, String... roles) {
         var authorities = java.util.Arrays.stream(roles).map(SimpleGrantedAuthority::new).toList();
@@ -61,7 +72,7 @@ class BundleControllerTest {
         BundleService svc = mock(BundleService.class);
         Resource bytes = new ByteArrayResource("<h1>hi</h1>".getBytes(StandardCharsets.UTF_8));
         when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false))).thenReturn(Mono.just(bytes));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.readBody(jwtFor("alice"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -80,7 +91,7 @@ class BundleControllerTest {
         BundleService svc = mock(BundleService.class);
         Resource bytes = new ByteArrayResource("x".getBytes(StandardCharsets.UTF_8));
         when(svc.readOwnBody(eq("root"), eq(SLUG), eq(true))).thenReturn(Mono.just(bytes));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.readBody(jwtFor("root"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -96,7 +107,7 @@ class BundleControllerTest {
         BundleService svc = mock(BundleService.class);
         when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false)))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no body")));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.readBody(jwtFor("alice"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -112,7 +123,7 @@ class BundleControllerTest {
     void delete_forwardsSubjectAsOwner_nonAdmin() {
         BundleService svc = mock(BundleService.class);
         when(svc.deleteForOwner(eq("alice"), eq(SLUG), eq(false))).thenReturn(Mono.empty());
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.delete(jwtFor("alice"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -126,7 +137,7 @@ class BundleControllerTest {
     void delete_adminFlag_isResolvedFromSecurityContext() {
         BundleService svc = mock(BundleService.class);
         when(svc.deleteForOwner(eq("root"), eq(SLUG), eq(true))).thenReturn(Mono.empty());
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.delete(jwtFor("root"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -141,7 +152,7 @@ class BundleControllerTest {
         BundleService svc = mock(BundleService.class);
         when(svc.deleteForOwner(eq("bob"), eq(SLUG), eq(false)))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no bundle for slug")));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.delete(jwtFor("bob"), SLUG)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
@@ -160,9 +171,11 @@ class BundleControllerTest {
         saved.setOwnerUserId("alice");
         // non-admin caller -> admin=false forwarded; subject forwarded as owner.
         when(svc.put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
-                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                eq(false),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.put(jwtFor("alice"), SLUG, "card.html", "internal", "{}",
                         reactor.core.publisher.Flux.empty())
@@ -172,7 +185,9 @@ class BundleControllerTest {
                 .verifyComplete();
 
         verify(svc).put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
-                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
+                eq(false),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
     @Test
@@ -182,9 +197,11 @@ class BundleControllerTest {
         saved.setOwnerUserId("root");
         when(svc.put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
-                eq(true), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                eq(true),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.put(jwtFor("root"), SLUG, null, null, null,
                         reactor.core.publisher.Flux.empty())
@@ -195,7 +212,9 @@ class BundleControllerTest {
 
         verify(svc).put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
-                eq(true), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
+                eq(true),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
     @Test
@@ -203,9 +222,11 @@ class BundleControllerTest {
         BundleService svc = mock(BundleService.class);
         when(svc.put(eq("bob"), eq(SLUG), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                eq(false), org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
+                eq(false),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "another owner")));
-        BundleController c = new BundleController(svc);
+        BundleController c = controller(svc);
 
         StepVerifier.create(c.put(jwtFor("bob"), SLUG, "card.html", "internal", "{}",
                         reactor.core.publisher.Flux.empty())

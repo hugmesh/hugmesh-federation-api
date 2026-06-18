@@ -34,6 +34,17 @@ public class UserModule {
     private String manifestJson;
     /** {@code 'public' | 'internal'} */
     private String visibility;
+    /**
+     * The brand/domain this bundle belongs to (multi-tenancy, changeset 035 — the
+     * column 026 omitted for user_modules). Stamped at write time from the publishing
+     * principal's issuer-derived {@code DOMAIN_<x>} (NEVER a user-settable claim); the
+     * bundle METADATA reads ({@code /bundles/slug/{slug}}, {@code /bundles/{hash}}) are
+     * pinned to it so a per-domain caller never sees another brand's bundle metadata
+     * (SUPERADMIN sees all). DEFAULTs to {@code "default"} so pre-existing rows +
+     * single-issuer clusters are unchanged. NOT settable by the API client — the
+     * service overwrites it from the authenticated principal on PUT.
+     */
+    private String domain = "default";
     private Instant createdAt;
     private Instant supersededAt;
 
@@ -45,6 +56,7 @@ public class UserModule {
     public String getContentHash() { return contentHash; }
     public String getManifestJson() { return manifestJson; }
     public String getVisibility() { return visibility; }
+    public String getDomain() { return domain; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getSupersededAt() { return supersededAt; }
 
@@ -56,6 +68,7 @@ public class UserModule {
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     public void setManifestJson(String manifestJson) { this.manifestJson = manifestJson; }
     public void setVisibility(String visibility) { this.visibility = visibility; }
+    public void setDomain(String domain) { this.domain = domain; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public void setSupersededAt(Instant supersededAt) { this.supersededAt = supersededAt; }
 }

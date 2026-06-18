@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.repository.UserModuleRepository;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.storage.BundleStorage;
 
 import java.nio.charset.StandardCharsets;
@@ -235,7 +236,8 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", false, body("<h1>pwn</h1>")))
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", false,
+                        DomainScope.of("default"), body("<h1>pwn</h1>")))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(409))
                 .verify();
@@ -258,7 +260,8 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false, body("<h1>v2</h1>")))
+        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false,
+                        DomainScope.of("default"), body("<h1>v2</h1>")))
                 .assertNext(saved -> {
                     assertThat(saved.getOwnerUserId()).isEqualTo(OWNER);
                     assertThat(saved.getVersionDir()).isEqualTo("file:/bundles/" + SLUG + "/newhash");
@@ -283,7 +286,8 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true, body("<h1>admin</h1>")))
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true,
+                        DomainScope.of("default"), body("<h1>admin</h1>")))
                 .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OTHER))
                 .verifyComplete();
 
@@ -302,7 +306,8 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false, body("<h1>first</h1>")))
+        StepVerifier.create(svc.put(OWNER, SLUG, "card.html", "internal", "{}", false,
+                        DomainScope.of("default"), body("<h1>first</h1>")))
                 .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OWNER))
                 .verifyComplete();
 

@@ -9,7 +9,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 import systems.snapdragon.federation.model.UserModule;
+import systems.snapdragon.federation.model.UserModuleView;
 import systems.snapdragon.federation.repository.UserModuleRepository;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.storage.BundleStorage;
 
 import java.io.IOException;
@@ -48,13 +50,69 @@ public class BundleService {
         return repo.findByOwnerUserIdOrderByCreatedAtDesc(ownerUserId);
     }
 
-    public Flux<UserModule> listForSlug(String slug) {
-        return repo.findBySlugOrderByCreatedAtDesc(slug);
+    /**
+     * List a slug's bundle versions — DOMAIN-scoped + OWNER-scoped, projected to the
+     * public-safe {@link UserModuleView} (no {@code versionDir} / {@code ownerUserId}).
+     * Three tiers (mirrors ModuleRegistryService / readOwnBody):
+     *
+     * <ul>
+     *   <li>SUPERADMIN — un-pinned, every brand, every owner.</li>
+     *   <li>per-domain ADMIN — pinned to their brand, any owner in it.</li>
+     *   <li>per-domain NON-admin — pinned to their brand AND their ownership, so a
+     *       caller never enumerates another tenant's (or a same-brand peer's) bundle
+     *       metadata.</li>
+     * </ul>
+     *
+     * The previous {@code permitAll}-ish (.authenticated()-only, no cut) finder
+     * returned the FULL entity for ANY caller — a cross-tenant metadata IDOR. The cut
+     * is enforced in the QUERY, not in spoofable code.
+     */
+    public Flux<UserModuleView> listForSlug(String slug, DomainScope scope, String ownerUserId, boolean admin) {
+        Flux<UserModule> rows;
+        if (scope != null && scope.isSuperadmin()) {
+            rows = repo.findBySlugOrderByCreatedAtDesc(slug);
+        } else if (admin) {
+            rows = repo.findBySlugAndDomainOrderByCreatedAtDesc(slug, domainOf(scope));
+        } else {
+            rows = repo.findBySlugAndDomainAndOwnerUserIdOrderByCreatedAtDesc(slug, domainOf(scope), ownerUserId);
+        }
+        return rows.map(UserModuleView::from);
     }
 
-    public Mono<UserModule> byContentHash(String contentHash) {
-        return repo.findByContentHash(contentHash)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no bundle: " + contentHash)));
+    /**
+     * Resolve a bundle by content-hash — DOMAIN-scoped + OWNER-scoped, projected to the
+     * public-safe {@link UserModuleView}. Same three tiers as {@link #listForSlug}. A
+     * hash that belongs to another brand (or, for a non-admin, another owner) resolves
+     * EMPTY -> 404, closing the cross-tenant metadata IDOR + the content-hash -> bytes
+     * pivot. (The remote-fragment SYNC byte FETCH stays un-scoped — see {@link #fetch}.)
+     */
+    public Mono<UserModuleView> byContentHash(String contentHash, DomainScope scope,
+                                              String ownerUserId, boolean admin) {
+        Mono<UserModule> row;
+        if (scope != null && scope.isSuperadmin()) {
+            row = repo.findByContentHash(contentHash);
+        } else if (admin) {
+            row = repo.findByContentHashAndDomain(contentHash, domainOf(scope));
+        } else {
+            row = repo.findByContentHashAndDomainAndOwnerUserId(contentHash, domainOf(scope), ownerUserId);
+        }
+        return row
+                .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no bundle: " + contentHash)))
+                .map(UserModuleView::from);
+    }
+
+    /** The domain to pin a metadata read to: the caller's domain, or {@code "default"}
+     *  when no scope is supplied. Never null for a per-domain scope (failed resolve =>
+     *  NO_DOMAIN, matches nothing). */
+    private static String domainOf(DomainScope scope) {
+        return scope == null ? DomainScope.of("default").domain() : scope.domain();
+    }
+
+    /** The domain to STAMP on a written bundle row: the principal's domain, or
+     *  {@code "default"} for a SUPERADMIN / scope-less write. NEVER taken from a
+     *  request param (mirrors ModuleRegistryService.domainForWrite). */
+    private static String domainForWrite(DomainScope scope) {
+        return (scope != null && scope.isSuperadmin()) ? DomainScope.of("default").domain() : domainOf(scope);
     }
 
     /**
@@ -76,7 +134,8 @@ public class BundleService {
      * the slug's active row regardless of owner (the admin-override flow).
      */
     public Mono<UserModule> put(String ownerUserId, String slug, String entryFile,
-                                String visibility, String manifestJson, boolean admin, Flux<DataBuffer> body) {
+                                String visibility, String manifestJson, boolean admin,
+                                DomainScope scope, Flux<DataBuffer> body) {
         if (slug == null || slug.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "slug required"));
         }
@@ -110,6 +169,12 @@ public class BundleService {
                                 m.setContentHash(hash);
                                 m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
                                 m.setVisibility(visibility == null ? "internal" : visibility);
+                                // DOMAIN stamp (changeset 035): the bundle's brand, taken
+                                // from the authenticated principal's scope — NEVER from a
+                                // request param — so the metadata reads can pin to it. A
+                                // SUPERADMIN publish lands in 'default' (no domain in scope),
+                                // mirroring ModuleRegistryService.domainForWrite.
+                                m.setDomain(domainForWrite(scope));
                                 m.setCreatedAt(Instant.now());
                                 return repo.save(m);
                             }));

@@ -50,6 +50,29 @@ public interface FederationModuleRepository extends ReactiveCrudRepository<Feder
      *  (all domains). */
     Flux<FederationModule> findByDomain(String domain);
 
+    /**
+     * The PUBLIC capability-projection read path's finder: every registry row in the
+     * caller's {@code domain} EXCEPT a given {@code kind} (the
+     * {@code 'fragment'}-excluding cut). The capability list greys-out OPTIONAL
+     * platform services (forum / mastodon / matrix / games — {@code remote-shell}
+     * kind) and must NEVER surface per-user {@code profile-<username>} vanity
+     * fragments ({@code kind='fragment'}) — those would be a username enumeration
+     * oracle the vanity / username surfaces lock down. Pinning to {@code domain} also
+     * stops a brand-X anonymous caller from learning brand-Y's registered services.
+     * Mirrors {@link ModuleRegistryService}'s per-domain cut; SUPERADMIN uses
+     * {@link #findByKindNot(String)} (un-pinned, all brands, still fragment-excluded).
+     */
+    Flux<FederationModule> findByDomainAndKindNot(String domain, String kind);
+
+    /**
+     * SUPERADMIN tier of the capability projection: every registry row across ALL
+     * brands EXCEPT a given {@code kind} (the {@code 'fragment'}-excluding cut). No
+     * domain predicate (the cross-domain infra role sees every brand), but profile
+     * fragments are STILL excluded so the public-safe shape never carries a
+     * {@code profile-<username>} slug regardless of caller.
+     */
+    Flux<FederationModule> findByKindNot(String kind);
+
     Flux<FederationModule> findByOwnerUserId(String ownerUserId);
 
     /**

@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.UserModule;
+import systems.snapdragon.federation.model.UserModuleView;
+import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.federation.security.DomainScope;
 import systems.snapdragon.federation.service.BundleService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -32,9 +35,14 @@ import java.util.Map;
  *       files (sync-and-serve-static).</li>
  * </ul>
  *
- * <p>Write is owner-or-admin (the owner is the JWT subject); fetch is
- * authenticated (the remote-fragment pods present a service token). Content-type
- * is resolved from the extension, like the games AssetController media-type table.
+ * <p>Write is owner-or-admin (the owner is the JWT subject). The METADATA reads
+ * (LIST-by-slug + by-content-hash) are DOMAIN-scoped + OWNER-scoped and return a
+ * public-safe view ({@code UserModuleView}, no {@code versionDir}/{@code ownerUserId})
+ * — a per-domain caller never sees another brand's (or a non-admin, another owner's)
+ * bundle metadata; SUPERADMIN sees all. The content-hash byte FETCH stays
+ * any-authenticated (the remote-fragment pods present a service token; a content hash
+ * is a capability and the bytes are identical to whoever holds it). Content-type is
+ * resolved from the extension, like the games AssetController media-type table.
  */
 @Tag(name = "Bundles", description = "Per-user federated-module bundle storage + content-hash sync.")
 @RestController
@@ -43,9 +51,11 @@ import java.util.Map;
 public class BundleController {
 
     private final BundleService bundles;
+    private final DomainRegistry domains;
 
-    public BundleController(BundleService bundles) {
+    public BundleController(BundleService bundles, DomainRegistry domains) {
         this.bundles = bundles;
+        this.domains = domains;
     }
 
     private static final Map<String, MediaType> MEDIA_TYPES = Map.ofEntries(
@@ -66,19 +76,42 @@ public class BundleController {
         return bundles.listForOwner(jwt.getSubject());
     }
 
-    @Operation(summary = "List bundle versions for a slug.")
+    @Operation(
+        summary = "List bundle versions for a slug (DOMAIN + owner scoped; public-safe view).",
+        description = """
+            Returns the public-safe view (slug, contentHash, entryFile, manifestJson,
+            visibility, timestamps — NO versionDir/ownerUserId) of the slug's bundle
+            versions the caller may see: a per-domain NON-admin sees ONLY their OWN
+            bundles in their brand; a per-domain ADMIN sees their brand's; SUPERADMIN
+            sees all. A slug in another brand returns EMPTY — never cross-tenant
+            metadata.
+            """)
     @GetMapping("/slug/{slug}")
-    public Flux<UserModule> bySlug(
+    public Flux<UserModuleView> bySlug(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
-        return bundles.listForSlug(slug);
+        DomainScope scope = DomainScope.resolve(jwt, domains);
+        return adminMono().flatMapMany(admin ->
+                bundles.listForSlug(slug, scope, jwt.getSubject(), admin));
     }
 
-    @Operation(summary = "Bundle metadata by content-hash.")
+    @Operation(
+        summary = "Bundle metadata by content-hash (DOMAIN + owner scoped; public-safe view).",
+        description = """
+            Returns the public-safe view (NO versionDir/ownerUserId) of the bundle for a
+            content hash the caller may resolve: a per-domain NON-admin only resolves a
+            hash for a bundle they OWN in their brand; a per-domain ADMIN, their brand's;
+            SUPERADMIN, any. A hash in another brand (or, for a non-admin, another owner)
+            is 404 — closing the cross-tenant metadata IDOR + content-hash->bytes pivot.
+            """)
     @GetMapping("/{contentHash}")
-    public Mono<UserModule> byHash(
+    public Mono<UserModuleView> byHash(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.CONTENT_HASH,
                     message = "contentHash must be 64 lower-hex chars") String contentHash) {
-        return bundles.byContentHash(contentHash);
+        DomainScope scope = DomainScope.resolve(jwt, domains);
+        return adminMono().flatMap(admin ->
+                bundles.byContentHash(contentHash, scope, jwt.getSubject(), admin));
     }
 
     @Operation(
@@ -103,9 +136,10 @@ public class BundleController {
                                         message = "visibility must be public|internal") String visibility,
                                 @RequestParam(value = "manifest", required = false) String manifestJson,
                                 @RequestBody Flux<DataBuffer> body) {
+        DomainScope scope = DomainScope.resolve(jwt, domains);
         return adminMono()
                 .flatMap(admin -> bundles.put(jwt.getSubject(), slug, entryFile,
-                        visibility, manifestJson, admin, body));
+                        visibility, manifestJson, admin, scope, body));
     }
 
     @Operation(

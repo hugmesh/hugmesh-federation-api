@@ -40,7 +40,11 @@ class CapabilityServiceTest {
 
     private static FederationModuleRepository repoOf(FederationModule... rows) {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAll()).thenReturn(Flux.just(rows));
+        // The PUBLIC projection now uses the DOMAIN-pinned, fragment-excluding finder
+        // (cross-tenant disclosure fix) — NOT the inherited unscoped findAll(). These
+        // rows have no explicit domain set (entity default "default"), so a default-
+        // domain caller sees them; the projection-shape assertions are unchanged.
+        when(repo.findByDomainAndKindNot("default", "fragment")).thenReturn(Flux.just(rows));
         return repo;
     }
 
@@ -109,7 +113,7 @@ class CapabilityServiceTest {
     @Test
     void emptyRegistry_yieldsEmptyList_noError() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
-        when(repo.findAll()).thenReturn(Flux.empty());
+        when(repo.findByDomainAndKindNot("default", "fragment")).thenReturn(Flux.empty());
 
         StepVerifier.create(new CapabilityService(repo).capabilities())
                 .verifyComplete();
