@@ -27,6 +27,18 @@ import systems.snapdragon.federation.model.UsernameSkeleton;
  */
 public interface UsernameSkeletonRepository extends ReactiveCrudRepository<UsernameSkeleton, String> {
 
+    /**
+     * Bounded bucket-scan SQL backing {@link #findBySkeletonFirstBucket}. Held as a
+     * {@code static final String} constant per the data-access standard (no inline
+     * {@code @Query} literals): derivation cannot express the parameterized
+     * {@code LIMIT :limit}, so an explicit {@code @Query} is required — but the SQL
+     * text is named here rather than inlined on the method annotation. Behaviour is
+     * unchanged: same projection, same {@code skeleton_first = :first} predicate,
+     * same {@code LIMIT :limit}.
+     */
+    String FIND_BY_SKELETON_FIRST_BUCKET =
+            "SELECT * FROM username_skeleton WHERE skeleton_first = :first LIMIT :limit";
+
     /** (a) EXACT skeleton match — homoglyph/leet collision, indexed equality. */
     Flux<UsernameSkeleton> findBySkeleton(String skeleton);
 
@@ -39,6 +51,6 @@ public interface UsernameSkeletonRepository extends ReactiveCrudRepository<Usern
      * starts with the given char, capped at {@code limit}. Bucketed + LIMITed so the
      * sweep cost never scales with the whole namespace.
      */
-    @Query("SELECT * FROM username_skeleton WHERE skeleton_first = :first LIMIT :limit")
+    @Query(FIND_BY_SKELETON_FIRST_BUCKET)
     Flux<UsernameSkeleton> findBySkeletonFirstBucket(@Param("first") String first, @Param("limit") int limit);
 }
