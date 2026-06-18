@@ -585,8 +585,8 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
   Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). If
   fail-closed MFA gating is ever extended to federation routes it will be noted
   here — it is **not** enforced on this service today.
-- 🚧 **Superadmin app-store TAILSCALE-VPN-ONLY federated remotes.** The in-flight
-  superadmin app-store will register tailnet-only federated remote modules in
+- 🚧 **Superadmin Service Catalog TAILSCALE-VPN-ONLY federated remotes.** The in-flight
+  superadmin Service Catalog will register tailnet-only federated remote modules in
   *this* registry as a future module class (off the public UI, gateway role-blocked
   + authguarded). Not yet a registered module kind here.
 

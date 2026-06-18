@@ -61,8 +61,8 @@ public final class ReservedNames {
     public static final Set<String> RESERVED_LABELS = Set.of(
             // --- fe-gateway route prefixes (snapdragon.systems front door) ---
             "admin", "apidocs", "be", "bff", "_fragments", "login", "mod", "user",
-            // superadmin: the TAILNET superadmin App-Store console is served at
-            // /superadmin/appstore/** on the superadmin-gateway — a dedicated
+            // superadmin: the TAILNET superadmin Service Catalog console is served at
+            // /superadmin/service-catalog/** on the superadmin-gateway — a dedicated
             // first-segment route prefix (canonical reserved-prefixes.yaml).
             "superadmin",
             // --- be-gateway route prefixes / publicly-routable homeserver surfaces ---
