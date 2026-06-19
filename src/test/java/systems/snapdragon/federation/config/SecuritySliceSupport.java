@@ -71,7 +71,36 @@ abstract class SecuritySliceSupport {
 
         return WebTestClient.bindToController(controllers)
                 .webFilter(securityFilter)
+                // FLAKE FIX (rank 17a): the multi-issuer path's FIRST touch of a given
+                // brand lazily builds that brand's decoder via
+                // ReactiveJwtDecoders.fromIssuerLocation(iss) — a SYNCHRONOUS OIDC
+                // discovery (two sequential HTTP round-trips to the in-process
+                // TestIssuer, whose JDK HttpServer runs on a single synchronous
+                // executor). On a many-core dev box that cold first-touch is ~300ms;
+                // on a 1-2 core CI runner (cold JVM + cold Netty WebClient bootstrap +
+                // JUnit's NON-deterministic method ordering deciding which test eats the
+                // cold start) it can exceed WebTestClient's DEFAULT 5s blocking-read
+                // budget (DefaultWebTestClient: responseTimeout defaults to
+                // Duration.ofSeconds(5)) — surfacing as the reported "~5s reactive
+                // blocking-read timeout" flake (~2/3 of clean CI runs). Pinning an
+                // EXPLICIT, generous budget makes the slice deterministic WITHOUT
+                // touching any assertion: a tampered/unknown/cross-brand token still
+                // runs the REAL decoder and still fail-closes 401; we only stop a slow
+                // first-touch from being misread as a failure. Override via
+                // -Dfederation.slice.responseTimeoutSeconds=<n> if a runner needs more.
+                .configureClient()
+                .responseTimeout(sliceResponseTimeout())
                 .build();
+    }
+
+    /** The slice's WebTestClient blocking-read budget. Generous by default (30s) so a
+     *  cold first-touch OIDC discovery on a constrained CI runner never trips the 5s
+     *  default; overridable via {@code federation.slice.responseTimeoutSeconds}. This
+     *  is purely a TEST-harness wait ceiling — it weakens NO security assertion. */
+    private static java.time.Duration sliceResponseTimeout() {
+        long secs = Long.getLong("federation.slice.responseTimeoutSeconds", 30L);
+        if (secs < 5L) secs = 5L; // never go below the framework default
+        return java.time.Duration.ofSeconds(secs);
     }
 
     /** An {@link ObjectProvider} that yields the given value from

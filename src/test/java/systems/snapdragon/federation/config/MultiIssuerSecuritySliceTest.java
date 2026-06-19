@@ -171,12 +171,34 @@ class MultiIssuerSecuritySliceTest extends SecuritySliceSupport {
     void crossUser_tamperedSignature_is401() {
         // A brand-X token whose signature is corrupted fails brand-X's manager
         // validation -> 401 (not silently accepted). Same fail-closed posture.
+        //
+        // STRENGTHENED (rank 17a): assert the 401 AND that the body carries NO
+        // authenticated identity — the controller echoes the principal's authorities,
+        // so on a genuine fail-closed the body must NOT contain any brand/role
+        // authority. We assert against the body as a (possibly empty) String — on a
+        // 401 the /whoami controller never runs, so the body is empty and trivially
+        // contains no authority; were validation ever to fail-OPEN, the echoed
+        // DOMAIN_brandx / ROLE_ADMIN would make this fail loudly. This makes the
+        // boundary strictly stronger AND keeps the test self-defending: the historical
+        // flake manifested ONLY as a WebTestClient blocking-read TIMEOUT (an
+        // IllegalStateException) on a cold first-touch OIDC discovery — never as a
+        // wrong status or a leaked authority — so a tampered token can never be
+        // silently green. The deterministic budget that prevents that timeout lives in
+        // SecuritySliceSupport.
         String token = brandX.mint("user-x", List.of("admin"));
         String tampered = token.substring(0, token.length() - 4) + "AAAA";
-        client.get().uri("/whoami")
+        String body = client.get().uri("/whoami")
                 .header("Authorization", "Bearer " + tampered)
                 .exchange()
-                .expectStatus().isUnauthorized();
+                .expectStatus().isUnauthorized()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        assertThat(body == null ? "" : body)
+                .as("a tampered-signature brand-X token must NEVER authenticate "
+                        + "— no brand authority may leak past the failed validation")
+                .doesNotContain("DOMAIN_brandx")
+                .doesNotContain("ROLE_ADMIN");
     }
 
     @Test

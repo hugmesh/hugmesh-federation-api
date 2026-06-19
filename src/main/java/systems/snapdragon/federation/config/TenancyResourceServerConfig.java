@@ -120,7 +120,64 @@ public class TenancyResourceServerConfig {
 
         JwtIssuerReactiveAuthenticationManagerResolver delegate =
                 new JwtIssuerReactiveAuthenticationManagerResolver(byIssuerResolver);
+
+        // OPT-IN, off-request-path decoder warmup — ships DARK (default off).
+        // WHY: managerForIssuer(iss) -> decoderForIssuer(iss) ->
+        // ReactiveJwtDecoders.fromIssuerLocation(iss) performs SYNCHRONOUS OIDC
+        // discovery (blocking HTTP round-trips) at decoder-CONSTRUCTION time. On the
+        // lazy path that construction is deferred to the FIRST request to touch a given
+        // issuer (inside computeIfAbsent above), so that one request pays a cold-start
+        // latency spike — the same spike that made the multi-issuer security slice
+        // flaky against WebTestClient's 5s blocking-read budget, and that in PROD makes
+        // the first authenticated request per brand slow after a restart. When enabled,
+        // we pre-build every trusted issuer's manager ONCE on a daemon thread (never on
+        // the event loop, never per request), so requests always hit the warm cache.
+        //
+        // SAFE / INERT BY DEFAULT: gated on app.tenancy.warmup-issuers (default false).
+        // Best-effort — a discovery failure here is swallowed (logged at debug) and the
+        // lazy path still rebuilds on first request, so a transient Casdoor outage at
+        // boot can never fail-open or crash startup. Reading the flag via a property
+        // lookup (not a new ctor arg) keeps the bean/ctor signature unchanged.
+        warmIssuersIfEnabled(byIssuer);
+
         return delegate::resolve;
+    }
+
+    /** Best-effort, opt-in pre-build of every trusted issuer's manager OFF the request
+     *  path. No-op unless {@code app.tenancy.warmup-issuers} (sys-prop or env
+     *  {@code APP_TENANCY_WARMUP_ISSUERS}) is truthy — so the default is byte-for-byte
+     *  the existing lazy path. Failures are swallowed: warmup is an optimization, never
+     *  a correctness or availability dependency. */
+    private void warmIssuersIfEnabled(Map<String, ReactiveAuthenticationManager> byIssuer) {
+        if (!warmupEnabled()) {
+            return; // DARK default — unchanged lazy behaviour
+        }
+        java.util.Set<String> issuers = domainRegistry.trustedIssuers();
+        if (issuers.isEmpty()) {
+            return;
+        }
+        Thread warmer = new Thread(() -> {
+            for (String iss : issuers) {
+                try {
+                    byIssuer.computeIfAbsent(iss, this::managerForIssuer);
+                } catch (RuntimeException ignored) {
+                    // Discovery unreachable at boot — leave it for the lazy path to
+                    // rebuild on first request. Never fail startup over a warmup miss.
+                }
+            }
+        }, "tenancy-issuer-warmup");
+        warmer.setDaemon(true);
+        warmer.start();
+    }
+
+    /** Truthy iff the opt-in warmup flag is set (sys-prop {@code app.tenancy.warmup-issuers}
+     *  or env {@code APP_TENANCY_WARMUP_ISSUERS}). Default false. */
+    private static boolean warmupEnabled() {
+        String v = System.getProperty("app.tenancy.warmup-issuers");
+        if (v == null || v.isBlank()) {
+            v = System.getenv("APP_TENANCY_WARMUP_ISSUERS");
+        }
+        return v != null && ("true".equalsIgnoreCase(v.trim()) || "1".equals(v.trim()));
     }
 
     /** Build the per-issuer manager wired to the SAME Casdoor authorities converter
