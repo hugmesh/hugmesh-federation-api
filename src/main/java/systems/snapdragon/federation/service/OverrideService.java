@@ -342,11 +342,46 @@ public class OverrideService {
      */
     @CircuitBreaker(name = CB)
     public Mono<Long> clearScopeBySource(String source) {
+        // Back-compat overload: the internal suspension-lift caller (admin-bff / mod-bff)
+        // clears by source across EVERY brand. This is the SUPERADMIN-equivalent (no
+        // domain predicate) and is NOT reachable from the per-domain admin endpoint —
+        // the controller always threads a resolved DomainScope (see the scoped overload).
+        return clearScopeBySource(source, DomainScope.superadmin());
+    }
+
+    /**
+     * DOMAIN-scoped variant of {@link #clearScopeBySource(String)}: clear (rearm)
+     * the active scope override(s) created by a specific {@code source}, filtered to
+     * the caller's brand so a per-domain admin can NEVER rearm another brand's
+     * suspension row by guessing its source tag.
+     *
+     * <p>SECURITY (cross-tenant): the prior endpoint attempt called the un-scoped
+     * {@link #clearScopeBySource(String)} directly, so a domain-A admin who knew /
+     * guessed a domain-B {@code reason} (e.g. {@code 'access_suspension:<id>'}) could
+     * clear domain-B's row — a cross-tenant authz gap. This overload mirrors
+     * {@link #clearScope(String, String, DomainScope)}: the matched active rows are
+     * filtered to {@code domainScope.domain()} (a row in another brand is skipped,
+     * never saved/stamped), and SUPERADMIN ({@link DomainScope#isSuperadmin()}) sees
+     * all. The cache is invalidated only after the (scoped) save stream completes so
+     * the rearmed owner's modules return on the next render.
+     *
+     * <p>A pre-026 row with a NULL domain is treated as {@code "default"} (see
+     * {@link #matchesDomain}) so a default-domain admin can still rearm legacy rows
+     * (single-issuer back-compat).
+     *
+     * @param source      the SOURCE tag whose rows to clear, e.g. {@code 'access_suspension:<id>'}
+     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all)
+     */
+    @CircuitBreaker(name = CB)
+    public Mono<Long> clearScopeBySource(String source, DomainScope domainScope) {
         if (source == null || source.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "source is required"));
         }
         Instant now = Instant.now();
         return overrides.findByReasonAndClearedAtIsNull(source.trim())
+                // CROSS-TENANT CUT: a per-domain admin clears ONLY their own brand's
+                // rows; SUPERADMIN clears matching rows in every brand.
+                .filter(o -> domainScope.isSuperadmin() || matchesDomain(o, domainScope.domain()))
                 .flatMap(o -> {
                     o.setClearedAt(now);
                     return overrides.save(o);

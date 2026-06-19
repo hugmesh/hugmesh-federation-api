@@ -412,6 +412,76 @@ class CrossDomainWriteIsolationTest {
                 .expectBody(Long.class).isEqualTo(1L);
     }
 
+    // ─────────────────── Override POST /overrides/clear-source ───────────────────
+    // The suspension-clear (rebuild pt.1) path: rearm the active scope override(s)
+    // a given SOURCE tag wrote. The prior endpoint attempt was closed for a
+    // cross-tenant gap (it called the un-scoped clearScopeBySource), so these prove
+    // the domain cut end-to-end through the real chain + service + DB.
+
+    private static final String SUSPENSION_SOURCE = "access_suspension:42";
+
+    @Test
+    void clearSource_brandXAdmin_cannotClearBrandYSuspension_0_andRowStaysActive() {
+        // Seed an ACTIVE source-tagged scope=user ban in brand-Y.
+        overrides.save(activeUserBan("brandy", "bob", SUSPENSION_SOURCE)).block();
+
+        // CROSS-USER DENY: brand-X admin clears by the (guessed) brand-Y source. The
+        // matched stream is filtered to brand-X, so the brand-Y row is NOT cleared
+        // (count 0) and stays ACTIVE — the cross-tenant gap that closed the prior PR.
+        post("/api/federation/overrides/clear-source", adminX())
+                .bodyValue("""
+                        {"source":"%s"}
+                        """.formatted(SUSPENSION_SOURCE))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Long.class).isEqualTo(0L);
+
+        // MUTATION-RESISTANT: the brand-Y suspension row is still active (never cleared).
+        List<FederationOverride> active = overrides
+                .findByReasonAndClearedAtIsNull(SUSPENSION_SOURCE).collectList().block();
+        assertThat(active)
+                .as("a cross-domain clear-source must leave the victim brand's suspension active")
+                .hasSize(1);
+        assertThat(active.get(0).getDomain()).isEqualTo("brandy");
+        assertThat(active.get(0).getClearedAt()).isNull();
+    }
+
+    @Test
+    void clearSource_brandYAdmin_canClearOwnSuspension_1_andRowCleared() {
+        // USER-SITUATIONAL ALLOW: brand-Y admin clears its OWN brand's suspension.
+        overrides.save(activeUserBan("brandy", "bob", SUSPENSION_SOURCE)).block();
+
+        post("/api/federation/overrides/clear-source", adminY())
+                .bodyValue("""
+                        {"source":"%s"}
+                        """.formatted(SUSPENSION_SOURCE))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Long.class).isEqualTo(1L);
+
+        assertThat(overrides.findByReasonAndClearedAtIsNull(SUSPENSION_SOURCE).collectList().block())
+                .as("the brand-Y admin cleared its own brand's suspension")
+                .isEmpty();
+    }
+
+    @Test
+    void clearSource_superadmin_canClearBrandYSuspension_1_andRowCleared() {
+        overrides.save(activeUserBan("brandy", "bob", SUSPENSION_SOURCE)).block();
+
+        // SUPERADMIN cross-domain ALLOW: clears the brand-Y suspension (count 1).
+        post("/api/federation/overrides/clear-source", superadmin())
+                .bodyValue("""
+                        {"source":"%s"}
+                        """.formatted(SUSPENSION_SOURCE))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Long.class).isEqualTo(1L);
+
+        assertThat(overrides.findByReasonAndClearedAtIsNull(SUSPENSION_SOURCE).collectList().block())
+                .as("superadmin cleared the brand-Y suspension, no active source rows remain")
+                .isEmpty();
+    }
+
     // ───────────────────────── fixtures ─────────────────────────
 
     private static FederationModule module(String slug, String domain, String circuit, boolean enabled) {
@@ -434,6 +504,21 @@ class CrossDomainWriteIsolationTest {
         o.setTarget(null);              // scope=all carries a NULL target
         o.setAction("circuit-break");
         o.setSetBy("seed");
+        o.setDomain(domain);
+        o.setTs(Instant.now());
+        // clearedAt stays NULL => ACTIVE
+        return o;
+    }
+
+    /** An ACTIVE scope=user ban row tagged with a SOURCE (the access-suspension
+     *  write), used by the clear-source cross-tenant tests. */
+    private static FederationOverride activeUserBan(String domain, String owner, String source) {
+        FederationOverride o = new FederationOverride();
+        o.setScope("user");
+        o.setTarget(owner);
+        o.setAction("unpublish");
+        o.setSetBy("seed");
+        o.setReason(source);
         o.setDomain(domain);
         o.setTs(Instant.now());
         // clearedAt stays NULL => ACTIVE

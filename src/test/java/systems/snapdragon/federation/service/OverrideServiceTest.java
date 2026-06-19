@@ -299,4 +299,98 @@ class OverrideServiceTest {
                 mock(FederationOverrideRepository.class), mock(FederationModuleRepository.class));
         StepVerifier.create(svc.clearScopeBySource("  ")).expectError().verify();
     }
+
+    // ── Domain-scoped clear-by-source (cross-tenant authz) ───────────────────────
+
+    private static FederationOverride suspensionRow(String owner, String domain, String reason) {
+        FederationOverride o = new FederationOverride();
+        o.setScope("user");
+        o.setTarget(owner);
+        o.setAction("unpublish");
+        o.setReason(reason);
+        o.setDomain(domain);
+        return o;
+    }
+
+    @Test
+    void clearScopeBySource_sameDomainAdmin_clearsOwnBrandRow() {
+        FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
+        ManifestCache cache = noopCache();
+        FederationOverride mine = suspensionRow("alice", "brand-a", "access_suspension:42");
+        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:42"))
+                .thenReturn(Flux.just(mine));
+        ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
+        when(overrides.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
+
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.of("brand-a")))
+                .expectNext(1L)
+                .verifyComplete();
+
+        assertThat(saved.getValue().getClearedAt()).isNotNull(); // rearmed
+        verify(cache).invalidate();
+    }
+
+    @Test
+    void clearScopeBySource_crossDomainAdmin_scopedOut_neverCleared() {
+        // A brand-A admin tries to clear a row that belongs to brand-B (e.g. by
+        // guessing the source tag). The matched row is filtered out by domain, so it
+        // is NEVER saved/stamped -> stays ACTIVE (the prior attempt's cross-tenant gap).
+        FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
+        ManifestCache cache = noopCache();
+        FederationOverride otherBrand = suspensionRow("bob", "brand-b", "access_suspension:42");
+        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:42"))
+                .thenReturn(Flux.just(otherBrand));
+
+        OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
+
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.of("brand-a")))
+                .expectNext(0L) // nothing of brand-A's to clear
+                .verifyComplete();
+
+        // The brand-B row is never stamped -> the suspension stays in force.
+        verify(overrides, never()).save(any());
+        assertThat(otherBrand.getClearedAt()).isNull();
+    }
+
+    @Test
+    void clearScopeBySource_superadmin_clearsCrossDomain() {
+        FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
+        ManifestCache cache = noopCache();
+        FederationOverride brandA = suspensionRow("alice", "brand-a", "access_suspension:42");
+        FederationOverride brandB = suspensionRow("bob", "brand-b", "access_suspension:42");
+        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:42"))
+                .thenReturn(Flux.just(brandA, brandB));
+        when(overrides.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
+
+        // SUPERADMIN has no domain predicate -> clears matching rows in EVERY brand.
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.superadmin()))
+                .expectNext(2L)
+                .verifyComplete();
+
+        assertThat(brandA.getClearedAt()).isNotNull();
+        assertThat(brandB.getClearedAt()).isNotNull();
+    }
+
+    @Test
+    void clearScopeBySource_backCompatOverload_clearsAcrossBrands() {
+        // The no-DomainScope overload (internal suspension-lift caller) delegates to
+        // the SUPERADMIN scope, so it still clears across brands — unchanged behavior.
+        FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
+        ManifestCache cache = noopCache();
+        FederationOverride brandA = suspensionRow("alice", "brand-a", "access_suspension:7");
+        FederationOverride brandB = suspensionRow("bob", "brand-b", "access_suspension:7");
+        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:7"))
+                .thenReturn(Flux.just(brandA, brandB));
+        when(overrides.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
+
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:7"))
+                .expectNext(2L)
+                .verifyComplete();
+    }
 }
