@@ -104,13 +104,30 @@ public final class TestIssuer implements AutoCloseable {
 
     /** Mint with an arbitrary claim map (iss/iat/exp/sub are still stamped here). */
     public String mintWithClaims(String subject, Map<String, Object> claims) {
+        return mintWithExpiry(subject, claims, 300);
+    }
+
+    /**
+     * ADDITIVE (negative-test support): mint a token whose {@code exp} is
+     * {@code expirySeconds} relative to NOW — a NEGATIVE value yields a token that is
+     * already EXPIRED (and whose {@code iat} is back-dated to keep iat &lt; exp), so
+     * the resource-server's JWT timestamp validator rejects it. Everything else is
+     * identical to {@link #mintWithClaims}: correctly RS256-signed by THIS issuer's
+     * live key and carrying THIS issuer's {@code iss}, so the ONLY reason it fails is
+     * the expiry — proving the timestamp gate, not signature/issuer.
+     */
+    public String mintWithExpiry(String subject, Map<String, Object> claims, long expirySeconds) {
         try {
             Instant now = Instant.now();
+            Instant exp = now.plusSeconds(expirySeconds);
+            // For an already-expired token keep iat strictly before exp (a back-dated
+            // credential) so the only failing constraint is the expiry, not iat-in-future.
+            Instant iat = expirySeconds < 0 ? exp.minusSeconds(60) : now;
             JWTClaimsSet.Builder cb = new JWTClaimsSet.Builder()
                     .issuer(issuerUri)
                     .subject(subject)
-                    .issueTime(Date.from(now))
-                    .expirationTime(Date.from(now.plusSeconds(300)));
+                    .issueTime(Date.from(iat))
+                    .expirationTime(Date.from(exp));
             claims.forEach(cb::claim);
             SignedJWT jwt = new SignedJWT(
                     new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(rsaKey.getKeyID()).build(),
@@ -119,6 +136,63 @@ public final class TestIssuer implements AutoCloseable {
             return jwt.serialize();
         } catch (JOSEException e) {
             throw new IllegalStateException("failed to mint test JWT", e);
+        }
+    }
+
+    /**
+     * ADDITIVE (negative-test support): mint a token with the Casdoor {@code roles}
+     * shape but ALREADY EXPIRED ({@code exp} in the past). The token is otherwise
+     * pristine — correctly signed by this issuer's CURRENT key, carrying this issuer's
+     * trusted {@code iss}. It is the canonical "stale credential" deny-leg: a caller
+     * who WAS authorized presents a credential that has lapsed.
+     */
+    public String mintExpired(String subject, List<String> roleNames) {
+        List<Map<String, String>> roles = roleNames.stream()
+                .map(r -> Map.of("name", r))
+                .toList();
+        return mintWithExpiry(subject, Map.of("roles", roles, "name", subject), -300);
+    }
+
+    /**
+     * ADDITIVE (negative-test support): mint a token that is STRUCTURALLY VALID and
+     * carries THIS issuer's trusted {@code iss} and an unexpired {@code exp}, but is
+     * signed by a FRESH keypair that this issuer's JWKS endpoint NEVER advertises. It
+     * models a server-side credential REVOCATION / key de-provisioning (rotation): the
+     * token looks legitimate in every observable way EXCEPT that its signature can no
+     * longer be verified against the issuer's live JWKS — so the resource-server's
+     * Nimbus signature step rejects it. Unlike a live key-rotation (which races the
+     * decoder's JWK cache and is non-deterministic in-process), this is DETERMINISTIC:
+     * the signing key with this {@code kid} is never served, so the lookup misses on
+     * EVERY fetch, fresh or cached.
+     *
+     * <p>The header carries a NOVEL {@code kid} so a kid-aware decoder selects no key
+     * (re-fetch still misses); even a kid-blind decoder that tries every published key
+     * fails because none of them is the orphan signer.
+     */
+    public String mintRevoked(String subject, List<String> roleNames) {
+        try {
+            RSAKey orphanKey = new RSAKeyGenerator(2048)
+                    .keyID(UUID.randomUUID().toString())   // a kid the JWKS never serves
+                    .generate();
+            List<Map<String, String>> roles = roleNames.stream()
+                    .map(r -> Map.of("name", r))
+                    .toList();
+            Instant now = Instant.now();
+            JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+                    .issuer(issuerUri)                       // trusted iss
+                    .subject(subject)
+                    .issueTime(Date.from(now))
+                    .expirationTime(Date.from(now.plusSeconds(300)))   // unexpired
+                    .claim("roles", roles)
+                    .claim("name", subject)
+                    .build();
+            SignedJWT jwt = new SignedJWT(
+                    new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(orphanKey.getKeyID()).build(),
+                    claimsSet);
+            jwt.sign(new RSASSASigner(orphanKey));           // signed by the orphan key
+            return jwt.serialize();
+        } catch (JOSEException e) {
+            throw new IllegalStateException("failed to mint revoked test JWT", e);
         }
     }
 
