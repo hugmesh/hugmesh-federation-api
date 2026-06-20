@@ -4,7 +4,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -12,6 +12,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.repository.ModerationRequestRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.time.Instant;
@@ -31,7 +32,7 @@ import java.util.List;
  * proxy needs a real application context. We supply exactly that here.
  *
  * <p>Two real per-brand {@link TestIssuer} servers ({@code brandx}, {@code brandy})
- * give the {@link systems.snapdragon.federation.security.DomainRegistry} two trusted
+ * give the {@link systems.snapdragon.commons.security.DomainRegistry} two trusted
  * issuers, so {@code isMultiIssuer()} holds and {@code SecurityConfig} swaps onto the
  * per-issuer resolver. A brand-X token validates ONLY against brand-X's manager and
  * resolves (via the cryptographically-validated {@code iss}) to {@code DOMAIN_brandx}
@@ -56,7 +57,7 @@ import java.util.List;
 @SpringBootTest
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-class ModerationDecideEscalationTest {
+class ModerationDecideEscalationTest extends PostgresTestSupport {
 
     // Two trusted brands + one untrusted rogue, started ONCE for the context.
     private static final TestIssuer BRANDX = new TestIssuer();
@@ -78,12 +79,8 @@ class ModerationDecideEscalationTest {
         // once it swaps onto the multi-issuer resolver.
         reg.add("app.tenancy.issuers",
                 () -> BRANDX.issuerUri() + "=brandx," + BRANDY.issuerUri() + "=brandy");
-        // This is a distinct @SpringBootTest context (its own H2 mem DB) so its
-        // Liquibase run never collides with the other slice contexts' shared store.
-        reg.add("spring.r2dbc.url", () ->
-                "r2dbc:h2:mem:///fed_decide_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=");
-        reg.add("spring.liquibase.url", () ->
-                "jdbc:h2:mem:fed_decide_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE");
+        // DB wiring (r2dbc + liquibase) comes from PostgresTestSupport's @ServiceConnection
+        // container; this @SpringBootTest context gets its own isolated PG.
     }
 
     @AfterAll

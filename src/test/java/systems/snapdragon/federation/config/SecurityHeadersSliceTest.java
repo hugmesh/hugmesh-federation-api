@@ -9,7 +9,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.commons.config.TenancyResourceServerConfig;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.config.TenancyResolvers;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.util.List;
@@ -59,7 +61,7 @@ class SecurityHeadersSliceTest extends SecuritySliceSupport {
         TenancyResourceServerConfig tenancy =
                 new TenancyResourceServerConfig(registry, "", "", false, 600_000L);
         ReactiveAuthenticationManagerResolver<ServerWebExchange> resolver =
-                tenancy.tenantAuthManagerResolver();
+                TenancyResolvers.tenantResolver(tenancy);
         client = sliceClient(registry, provider(resolver), new ProbeController());
     }
 

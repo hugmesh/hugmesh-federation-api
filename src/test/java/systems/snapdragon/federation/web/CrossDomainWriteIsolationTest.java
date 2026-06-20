@@ -5,7 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -15,6 +15,7 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.time.Instant;
@@ -68,7 +69,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 // resolver bean, which is @ConditionalOnExpression on app.tenancy.issuers carrying
 // '='. We supply that (and the real per-brand issuers) via @DynamicPropertySource
 // below, so the PROD resource-server multi-issuer path is exercised end to end.
-class CrossDomainWriteIsolationTest {
+class CrossDomainWriteIsolationTest extends PostgresTestSupport {
 
     private static TestIssuer brandX;
     private static TestIssuer brandY;
@@ -92,19 +93,11 @@ class CrossDomainWriteIsolationTest {
         // brandY -> DOMAIN_brandy.
         r.add("app.tenancy.issuers",
                 () -> brandX.issuerUri() + "=brandx," + brandY.issuerUri() + "=brandy");
-        // A dedicated H2 store for this class (own Liquibase-applied schema). We run
-        // WITHOUT the test profile (so the PROD filter chain is under test), so
-        // application.yml's prod username/password (snapdragon) would otherwise be
-        // appended on top of the URL's USER=sa => H2 "Duplicate property USER"; pin
-        // both R2DBC handles to sa/empty so they match the URL and share the store.
-        r.add("spring.r2dbc.url", () ->
-                "r2dbc:h2:mem:///fed_xdomain_w2c;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.r2dbc.username", () -> "sa");
-        r.add("spring.r2dbc.password", () -> "");
-        r.add("spring.liquibase.url", () ->
-                "jdbc:h2:mem:fed_xdomain_w2c;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.liquibase.user", () -> "sa");
-        r.add("spring.liquibase.password", () -> "");
+        // A dedicated PG container for this class (own Liquibase-applied schema) comes
+        // from PostgresTestSupport's @ServiceConnection — the H2 url/user/password lines
+        // were dropped. We run WITHOUT the test profile (the PROD filter chain is under
+        // test); @ServiceConnection supplies r2dbc + liquibase connection details over
+        // application.yml's prod creds, so no manual sa/empty pinning is needed.
         // Cassandra OFF -> the noop manifest cache wins (no external infra).
         r.add("app.manifest-cache.cassandra.enabled", () -> "false");
         r.add("app.bundles.storage", () -> "filesystem");
@@ -147,7 +140,7 @@ class CrossDomainWriteIsolationTest {
     private static String adminX() { return brandX.mint("admin-x", List.of("admin")); }
     private static String adminY() { return brandY.mint("admin-y", List.of("admin")); }
     // SUPERADMIN minted by brand-X's issuer: the issuer pins DOMAIN_brandx, but the
-    // superadmin role makes the DomainScope cross-domain (no predicate), so it reaches
+    // superadmin role makes the PrincipalDomain cross-domain (no predicate), so it reaches
     // brand-Y rows. (Which brand minted it is irrelevant for the cross-domain reach.)
     private static String superadmin() { return brandX.mint("root", List.of("superadmin")); }
 

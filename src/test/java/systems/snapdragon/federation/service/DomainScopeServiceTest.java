@@ -13,7 +13,7 @@ import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
 import systems.snapdragon.federation.repository.ModerationRequestRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -46,9 +46,9 @@ import static org.mockito.Mockito.when;
  */
 class DomainScopeServiceTest {
 
-    private static final DomainScope BRANDX = DomainScope.of("brandx");
-    private static final DomainScope BRANDY = DomainScope.of("brandy");
-    private static final DomainScope SUPER = DomainScope.superadmin();
+    private static final PrincipalDomain BRANDX = PrincipalDomain.forDomain("brandx");
+    private static final PrincipalDomain BRANDY = PrincipalDomain.forDomain("brandy");
+    private static final PrincipalDomain SUPER = PrincipalDomain.superadminFor(null);
 
     private static FederationModule module(String slug, String domain) {
         FederationModule m = new FederationModule();

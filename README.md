@@ -41,11 +41,14 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 
 ## Stack
 
-- Spring Boot **3.5.5**, Java **21**, reactive **WebFlux** (no blocking).
+- Spring Boot **4.0.2** / Spring Cloud **2025.1** (Spring Framework 7 / Spring
+  Security 7 / Jackson 3), Java **21**, reactive **WebFlux** (no blocking).
 - **R2DBC** (r2dbc-postgresql) for ALL runtime reads/writes. JDBC is used **only**
   by Liquibase for schema migrations.
-- **Casdoor** JWT OAuth2 resource-server; the authority converter +
-  `DomainRegistry` + `Roles` helpers are the canonical gateway code (verbatim).
+- **Casdoor** JWT OAuth2 resource-server; the authority converter (`CasdoorAuthorities`),
+  the issuer→domain `DomainRegistry`, the `Roles`/`PrincipalDomain` helpers and the
+  config-gated multi-issuer `TenancyResourceServerConfig` now come from the shared
+  **`systems.snapdragon:snapdragon-commons`** library (see *Shared commons library*).
 - **springdoc-openapi-starter-webflux-ui** — spec at `/v3/api-docs`, UI at
   `/swagger-ui.html` (profile-split gating, see *Security*).
 - **Resilience4j** circuit breakers on the direct-write profile-ban path.
@@ -55,6 +58,69 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 - Optional **server-side mTLS** (TLSv1.3, client-cert-required) for API↔API calls.
 - GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`); no
   GitHub Actions.
+
+## Shared commons library (`snapdragon-parent` + `snapdragon-commons`)
+
+This service is the **first adopter** of the org's shared Maven artifacts. Two
+de-duplication moves:
+
+1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.0.0` (itself a child of
+   `spring-boot-starter-parent:4.0.2`, so the whole Spring Boot dependency/plugin
+   management is inherited transitively). The parent consolidates the reactive-BFF
+   `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
+   R2DBC + Liquibase + JDBC, springdoc, the full test stack) and the
+   `dependencyManagement` for `snapdragon-commons`, the AWS SDK BOM, resilience4j and
+   springdoc. Only the **federation-specific** deps stay in this POM: `icu4j`,
+   `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
+   (now-version-managed) resilience4j artifacts.
+
+2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:1.0.0`.
+   The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
+   `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
+   replaced by:
+   - `commons.security.Roles` — note its `Set<String>`/names overloads are
+     `isSuperadminNames(...)` / `domainOfNames(...)` (the `isSuperadmin` /
+     `domainOf` names take `Collection<? extends GrantedAuthority>`).
+   - `commons.security.DomainRegistry` (same `knownDomains`/`isKnownDomain`/
+     `trustedIssuers`/`isMultiIssuer` API).
+   - `commons.security.PrincipalDomain` — the canonical replacement for the old
+     instance-based `DomainScope`: `of(String)` → `forDomain(String)`,
+     `superadmin()` → `superadminFor(String)`, the instance `isSuperadmin()` →
+     `superadmin()`; `resolve(jwt,reg)` / `NO_DOMAIN` / `domain()` kept.
+   - `commons.security.CasdoorAuthorities` (now `public`, methods `public static`;
+     `MfaConfig` is a `public record`).
+   - `commons.config.TenancyResourceServerConfig`.
+
+   **Stays per-repo:** this repo's `config.SecurityConfig` (route matchers +
+   CSRF/cookie/header policy) and the test `config.SecuritySliceSupport`.
+
+   **Two consumer-wiring steps** (the canonical recipe for the fan-out):
+   - `config.CommonsSecurityConfig` `@Import`s the commons `DomainRegistry` +
+     `TenancyResourceServerConfig` beans, because the `@SpringBootApplication`
+     component-scan over `systems.snapdragon.federation` does **not** cover the
+     `systems.snapdragon.commons.*` packages. (`@Import` preserves
+     `TenancyResourceServerConfig`'s `@ConditionalOnExpression` gate.)
+   - `CapabilityController` maps an **anonymous** (`jwt == null`) public read to the
+     explicit `"default"` domain, because `PrincipalDomain.resolve(null, reg)`
+     deliberately fails closed to the `NO_DOMAIN` sentinel (a commons hardening over
+     the old `DomainScope.resolve(null)` → `"default"` fall-through).
+
+### Resolving the private `snapdragon-commons` artifact
+
+`snapdragon-commons` is **not** on Maven Central — it lives in the org GitLab Maven
+Package Registry. Two resolution paths, **no secrets in git**:
+
+- **Local dev:** `snapdragon-parent` + `snapdragon-commons` are `mvn install`ed into
+  `~/.m2`, so a plain `./mvnw test` resolves them locally and never touches the
+  remote (this is how the build was verified green).
+- **CI / Docker:** the committed [`settings.xml`](settings.xml) declares the
+  `gitlab-maven` group registry, authenticated by the GitLab `CI_JOB_TOKEN`
+  (`${env.CI_JOB_TOKEN}` — injected by GitLab, never committed). The
+  [`Dockerfile`](Dockerfile) multi-stage build runs
+  `./mvnw -s settings.xml package` with the token mounted as a **BuildKit secret**
+  (`--mount=type=secret`, so it never lands in an image layer); `.gitlab-ci.yml`
+  passes `--secret id=ci_job_token,env=CI_JOB_TOKEN` plus the `CI_API_V4_URL` /
+  `GITLAB_GROUP_ID` build-args.
 
 ### Security CI (GitLab) ✅ shipped
 

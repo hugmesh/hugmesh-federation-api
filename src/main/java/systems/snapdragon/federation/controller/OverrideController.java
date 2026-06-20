@@ -15,8 +15,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.OverrideService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -78,7 +78,7 @@ public class OverrideController {
     @Operation(summary = "List applied overrides in the caller's domain (SUPERADMIN: all).")
     @GetMapping
     public Flux<FederationOverride> list(@AuthenticationPrincipal Jwt jwt) {
-        return overrides.list(DomainScope.resolve(jwt, domains));
+        return overrides.list(PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(
@@ -91,7 +91,7 @@ public class OverrideController {
     @PostMapping
     public Mono<FederationOverride> apply(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ApplyRequest req) {
         return overrides.apply(req.moduleSlug(), req.scope(), req.scopeValue(), req.action(),
-                jwt.getSubject(), DomainScope.resolve(jwt, domains));
+                jwt.getSubject(), PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Re-arm a circuit-broken / unpublished module (admin recovery; scoped to caller's domain).")
@@ -99,7 +99,7 @@ public class OverrideController {
     public Mono<FederationModule> rearm(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid moduleSlug") String moduleSlug) {
-        return overrides.rearm(moduleSlug, DomainScope.resolve(jwt, domains));
+        return overrides.rearm(moduleSlug, PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(
@@ -113,7 +113,7 @@ public class OverrideController {
             """)
     @PostMapping("/clear")
     public Mono<Long> clearScope(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ClearScopeRequest req) {
-        return overrides.clearScope(req.scope(), req.target(), DomainScope.resolve(jwt, domains));
+        return overrides.clearScope(req.scope(), req.target(), PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(
@@ -131,6 +131,6 @@ public class OverrideController {
             """)
     @PostMapping("/clear-source")
     public Mono<Long> clearSource(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ClearSourceRequest req) {
-        return overrides.clearScopeBySource(req.source(), DomainScope.resolve(jwt, domains));
+        return overrides.clearScopeBySource(req.source(), PrincipalDomain.resolve(jwt, domains));
     }
 }

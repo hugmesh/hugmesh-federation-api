@@ -2,12 +2,12 @@ package systems.snapdragon.federation.controller;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.snapdragon.federation.model.CapabilityDto;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 
 import java.util.List;
 
@@ -34,14 +34,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-// Own H2 mem DB (a distinct @SpringBootTest context) so its Liquibase run does not
-// collide with the other full-context tests' shared store. Mirrors
-// ValidationEndpointTest's isolation note.
-@TestPropertySource(properties = {
-        "spring.r2dbc.url=r2dbc:h2:mem:///fed_capabilities_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=",
-        "spring.liquibase.url=jdbc:h2:mem:fed_capabilities_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-})
-class CapabilityEndpointTest {
+// Own Postgres container (a distinct @SpringBootTest context) via PostgresTestSupport
+// so its Liquibase run is isolated from the other full-context tests.
+class CapabilityEndpointTest extends PostgresTestSupport {
 
     @Autowired WebTestClient web;
 

@@ -11,8 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationManifestDto;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.ManifestService;
 
 import java.util.Set;
@@ -59,7 +59,7 @@ public class FederationController {
         // The domain is derived from the cryptographically-validated issuer (via the
         // registry), never a spoofable claim — fail-closed to a no-match domain when
         // the issuer is unknown in multi-brand mode.
-        return manifest.render(authoritiesOf(auth), DomainScope.resolve(jwt, domains));
+        return manifest.render(authoritiesOf(auth), PrincipalDomain.resolve(jwt, domains));
     }
 
     static Set<String> authoritiesOf(Authentication auth) {

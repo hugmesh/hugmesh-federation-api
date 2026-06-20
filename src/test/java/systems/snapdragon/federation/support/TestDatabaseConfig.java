@@ -35,8 +35,15 @@ public class TestDatabaseConfig {
 
     private final String dbName = "federation_test_" + DB_SEQ.incrementAndGet();
 
+    // CASE_INSENSITIVE_IDENTIFIERS=TRUE: under H2 (2.3.x on the Boot-4 test classpath)
+    // Spring Data R2DBC's generated SQL references columns upper-cased and quoted (e.g.
+    // "federation_modules"."ID" / "SLUG"), which no longer match the lower-cased physical
+    // columns that DATABASE_TO_LOWER=TRUE produces from the Liquibase DDL. Enabling
+    // case-insensitive identifier resolution makes the generated R2DBC SQL resolve
+    // against the lower-cased schema (the behaviour the suite relied on before the bump).
     private static final String H2_OPTS =
-            ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE";
+            ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION"
+            + ";DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE";
 
     /** The r2dbc-h2 driver sends no username by default; pin sa/empty on both
      *  handles so they share the store (admin-bff lesson). */

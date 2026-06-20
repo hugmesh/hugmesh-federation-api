@@ -1,13 +1,13 @@
 package systems.snapdragon.federation.web;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
@@ -17,6 +17,7 @@ import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.service.ModerationService;
 import systems.snapdragon.federation.service.ModuleRegistryService;
 import systems.snapdragon.federation.service.OverrideService;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt;
+import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.springSecurity;
 
 /**
  * END-TO-END validation coverage over the HTTP layer (the only layer where jakarta
@@ -39,23 +41,26 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * VALIDATION outcome, not an auth 401/403.
  */
 @SpringBootTest
-@AutoConfigureWebTestClient
 @ActiveProfiles("test")
-// This is a SECOND @SpringBootTest context (it adds @MockitoBean services), so it
-// gets its OWN H2 mem DB rather than sharing application-test.yml's `fed_ctx` —
-// otherwise the two contexts' Liquibase runs collide on the shared store
-// ("DATABASECHANGELOG already exists") and rows leak across the slice tests.
-@TestPropertySource(properties = {
-        "spring.r2dbc.url=r2dbc:h2:mem:///fed_validation_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=",
-        "spring.liquibase.url=jdbc:h2:mem:fed_validation_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-})
-class ValidationEndpointTest {
+// A distinct @SpringBootTest context (it adds @MockitoBean services), so it gets its
+// OWN Postgres container via PostgresTestSupport — fully isolated Liquibase run.
+class ValidationEndpointTest extends PostgresTestSupport {
 
-    @Autowired WebTestClient web;
+    // Spring Security 7: the mockJwt() reactive mutator only injects the SecurityContext
+    // when the springSecurity() configurer's MutatorFilter is in the chain. An
+    // @AutoConfigureWebTestClient-autowired client lacks it (mutator dropped -> 401), so
+    // build the client from the ApplicationContext with .apply(springSecurity()).
+    @Autowired ApplicationContext context;
+    WebTestClient web;
 
     @MockitoBean ModuleRegistryService registry;
     @MockitoBean ModerationService moderation;
     @MockitoBean OverrideService overrides;
+
+    @BeforeEach
+    void setUpClient() {
+        web = WebTestClient.bindToApplicationContext(context).apply(springSecurity()).build();
+    }
 
     private WebTestClient admin() {
         return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")));

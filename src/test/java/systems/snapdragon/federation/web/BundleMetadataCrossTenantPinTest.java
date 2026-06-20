@@ -5,13 +5,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.repository.UserModuleRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.nio.charset.StandardCharsets;
@@ -49,7 +50,7 @@ import java.util.List;
  */
 @SpringBootTest
 @AutoConfigureWebTestClient
-class BundleMetadataCrossTenantPinTest {
+class BundleMetadataCrossTenantPinTest extends PostgresTestSupport {
 
     private static TestIssuer brandX;
     private static TestIssuer brandY;
@@ -72,14 +73,8 @@ class BundleMetadataCrossTenantPinTest {
     static void props(DynamicPropertyRegistry r) {
         r.add("app.tenancy.issuers",
                 () -> brandX.issuerUri() + "=brandx," + brandY.issuerUri() + "=brandy");
-        r.add("spring.r2dbc.url", () ->
-                "r2dbc:h2:mem:///fed_bundlemeta_pin;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.r2dbc.username", () -> "sa");
-        r.add("spring.r2dbc.password", () -> "");
-        r.add("spring.liquibase.url", () ->
-                "jdbc:h2:mem:fed_bundlemeta_pin;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.liquibase.user", () -> "sa");
-        r.add("spring.liquibase.password", () -> "");
+        // DB wiring (r2dbc + liquibase, this class's own isolated PG) comes from
+        // PostgresTestSupport's @ServiceConnection container — H2 url/user/password dropped.
         r.add("app.manifest-cache.cassandra.enabled", () -> "false");
         r.add("app.bundles.storage", () -> "filesystem");
         r.add("app.bundles.dir", () -> bundlesDir.toString());

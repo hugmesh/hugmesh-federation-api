@@ -8,7 +8,7 @@ import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.model.UserModuleView;
 import systems.snapdragon.federation.repository.UserModuleRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.storage.BundleStorage;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
  * </ul>
  *
  * <p>FAIL-FIRST: against the unfixed service these tests do not even compile (the
- * methods took no DomainScope/owner/admin and returned UserModule); behaviourally,
+ * methods took no PrincipalDomain/owner/admin and returned UserModule); behaviourally,
  * the verify(never()) on the unscoped finders + the no-versionDir/ownerUserId guard
  * are exactly what the leak violated.
  */
@@ -70,7 +70,7 @@ class BundleMetadataDomainScopeTest {
                 .thenReturn(Flux.just(row("alice", "brandx")));
         BundleService svc = new BundleService(repo, storage);
 
-        UserModuleView view = svc.listForSlug(SLUG, DomainScope.of("brandx"), "alice", false)
+        UserModuleView view = svc.listForSlug(SLUG, PrincipalDomain.forDomain("brandx"), "alice", false)
                 .blockFirst();
 
         assertThat(view).isNotNull();
@@ -89,7 +89,7 @@ class BundleMetadataDomainScopeTest {
                 .thenReturn(Flux.just(row("someone-else", "brandx")));
         BundleService svc = new BundleService(repo, mock(BundleStorage.class));
 
-        svc.listForSlug(SLUG, DomainScope.of("brandx"), "admin-sub", true).collectList().block();
+        svc.listForSlug(SLUG, PrincipalDomain.forDomain("brandx"), "admin-sub", true).collectList().block();
 
         verify(repo).findBySlugAndDomainOrderByCreatedAtDesc(SLUG, "brandx");
         verify(repo, never()).findBySlugOrderByCreatedAtDesc(ArgumentMatchers.any());
@@ -105,7 +105,7 @@ class BundleMetadataDomainScopeTest {
                 .thenReturn(Flux.just(row("anyone", "brandy")));
         BundleService svc = new BundleService(repo, mock(BundleStorage.class));
 
-        svc.listForSlug(SLUG, DomainScope.superadmin(), "root", true).collectList().block();
+        svc.listForSlug(SLUG, PrincipalDomain.superadminFor(null), "root", true).collectList().block();
 
         verify(repo).findBySlugOrderByCreatedAtDesc(SLUG);
         verify(repo, never()).findBySlugAndDomainOrderByCreatedAtDesc(ArgumentMatchers.any(), ArgumentMatchers.any());
@@ -120,7 +120,7 @@ class BundleMetadataDomainScopeTest {
                 .thenReturn(Mono.just(row("alice", "brandx")));
         BundleService svc = new BundleService(repo, mock(BundleStorage.class));
 
-        UserModuleView view = svc.byContentHash(HASH, DomainScope.of("brandx"), "alice", false).block();
+        UserModuleView view = svc.byContentHash(HASH, PrincipalDomain.forDomain("brandx"), "alice", false).block();
 
         assertThat(view).isNotNull();
         assertThat(view.contentHash()).isEqualTo(HASH);
@@ -138,7 +138,7 @@ class BundleMetadataDomainScopeTest {
                 .thenReturn(Mono.empty());
         BundleService svc = new BundleService(repo, mock(BundleStorage.class));
 
-        StepVerifier.create(svc.byContentHash(HASH, DomainScope.of("brandx"), "alice", false))
+        StepVerifier.create(svc.byContentHash(HASH, PrincipalDomain.forDomain("brandx"), "alice", false))
                 .expectErrorSatisfies(e -> assertThat(
                         ((org.springframework.web.server.ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(404))
@@ -152,7 +152,7 @@ class BundleMetadataDomainScopeTest {
         when(repo.findByContentHash(HASH)).thenReturn(Mono.just(row("anyone", "brandy")));
         BundleService svc = new BundleService(repo, mock(BundleStorage.class));
 
-        UserModuleView view = svc.byContentHash(HASH, DomainScope.superadmin(), "root", true).block();
+        UserModuleView view = svc.byContentHash(HASH, PrincipalDomain.superadminFor(null), "root", true).block();
 
         assertThat(view).isNotNull();
         verify(repo).findByContentHash(HASH);

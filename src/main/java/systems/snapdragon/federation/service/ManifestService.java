@@ -12,8 +12,8 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
-import systems.snapdragon.federation.security.DomainScope;
-import systems.snapdragon.federation.security.Roles;
+import systems.snapdragon.commons.security.PrincipalDomain;
+import systems.snapdragon.commons.security.Roles;
 
 import java.time.Instant;
 import java.util.List;
@@ -86,9 +86,9 @@ public class ManifestService {
      * infra control plane sees every remote even via this overload.
      */
     public Mono<FederationManifestDto> render(Set<String> authorities) {
-        DomainScope scope = (authorities != null && Roles.isSuperadmin(authorities))
-                ? DomainScope.superadmin()
-                : DomainScope.of("default");
+        PrincipalDomain scope = (authorities != null && Roles.isSuperadminNames(authorities))
+                ? PrincipalDomain.superadminFor(null)
+                : PrincipalDomain.forDomain("default");
         return render(authorities, scope);
     }
 
@@ -101,7 +101,7 @@ public class ManifestService {
      *       finders are pinned to {@code scope.domain()}, so a brand-X principal's
      *       manifest lists ONLY brand-X remotes and a brand-X scope=all kill never
      *       blanks brand-Y. This is the per-domain CUT, enforced in the QUERY.</li>
-     *   <li><b>SUPERADMIN</b> ({@code scope.isSuperadmin()}) — the un-pinned finders
+     *   <li><b>SUPERADMIN</b> ({@code scope.superadmin()}) — the un-pinned finders
      *       run, so the cross-domain infra role sees EVERY brand's remotes in one
      *       manifest (the control-plane tier). No domain predicate.</li>
      * </ul>
@@ -113,12 +113,12 @@ public class ManifestService {
      * render (see below) so it never leaks internal rows NOR another brand's remotes
      * to an anonymous poller.
      */
-    public Mono<FederationManifestDto> render(Set<String> authorities, DomainScope scope) {
+    public Mono<FederationManifestDto> render(Set<String> authorities, PrincipalDomain scope) {
         boolean canSeeInternal = authorities != null
                 && (authorities.contains("ROLE_ADMIN") || authorities.contains("ROLE_INTERNAL")
-                    || Roles.isSuperadmin(authorities));
-        boolean superadmin = scope != null && scope.isSuperadmin();
-        String domain = scope == null ? DomainScope.of("default").domain() : scope.domain();
+                    || Roles.isSuperadminNames(authorities));
+        boolean superadmin = scope != null && scope.superadmin();
+        String domain = scope == null ? PrincipalDomain.forDomain("default").domain() : scope.domain();
 
         // Active scope-override set + module stream — pinned to the caller's domain
         // unless SUPERADMIN (un-pinned, all brands). Loaded ONCE per render.
@@ -147,7 +147,7 @@ public class ManifestService {
                             // public view is cached, never a brand-specific or
                             // cross-domain one.)
                             if (!canSeeInternal && !superadmin
-                                    && DomainScope.of("default").domain().equals(domain)) {
+                                    && PrincipalDomain.forDomain("default").domain().equals(domain)) {
                                 return cache.put(manifest).thenReturn(manifest);
                             }
                             return Mono.just(manifest);

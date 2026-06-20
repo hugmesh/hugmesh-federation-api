@@ -3,14 +3,14 @@ package systems.snapdragon.federation.web;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.snapdragon.federation.model.CapabilityDto;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 
 import java.util.List;
 
@@ -29,17 +29,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * both appear in the anonymous body — turning the public endpoint into a cross-brand
  * registry + username enumeration oracle. The DENY assertions below catch exactly that.
  *
- * <p>Isolation note mirrors {@link CapabilityEndpointTest}: own H2 mem DB so its
- * Liquibase run + seeded rows do not collide with other full-context tests.
+ * <p>Isolation note mirrors {@link CapabilityEndpointTest}: own Postgres container
+ * (PostgresTestSupport) so its Liquibase run + seeded rows do not collide with the
+ * other full-context tests.
  */
 @SpringBootTest
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-@TestPropertySource(properties = {
-        "spring.r2dbc.url=r2dbc:h2:mem:///fed_capabilities_xtenant;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=",
-        "spring.liquibase.url=jdbc:h2:mem:fed_capabilities_xtenant;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-})
-class CapabilityCrossTenantIsolationTest {
+class CapabilityCrossTenantIsolationTest extends PostgresTestSupport {
 
     @Autowired WebTestClient web;
     @Autowired FederationModuleRepository modules;

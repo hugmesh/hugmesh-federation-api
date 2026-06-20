@@ -9,7 +9,7 @@ import systems.snapdragon.federation.model.FederationManifestDto;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.util.Set;
 
@@ -70,7 +70,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
         FederationManifestDto manifest =
-                svc.render(Set.of("ROLE_USER"), DomainScope.of("brandx")).block();
+                svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("brandx")).block();
 
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactly("x-login");
@@ -91,7 +91,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
         FederationManifestDto manifest =
-                svc.render(Set.of("ROLE_SUPERADMIN"), DomainScope.superadmin()).block();
+                svc.render(Set.of("ROLE_SUPERADMIN"), PrincipalDomain.superadminFor(null)).block();
 
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactlyInAnyOrder("x-login", "y-login");
@@ -111,7 +111,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
         FederationManifestDto manifest =
-                svc.render(Set.of("ROLE_SUPERADMIN"), DomainScope.superadmin()).block();
+                svc.render(Set.of("ROLE_SUPERADMIN"), PrincipalDomain.superadminFor(null)).block();
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactly("admin");
     }
@@ -129,7 +129,7 @@ class ManifestDomainCutTest {
         ManifestCache cache = noopCache();
 
         ManifestService svc = new ManifestService(repo, ovr, cache);
-        svc.render(Set.of("ROLE_USER"), DomainScope.of("brandx")).block();
+        svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("brandx")).block();
         verify(cache, never()).put(any());
     }
 
@@ -145,7 +145,7 @@ class ManifestDomainCutTest {
         ManifestCache cache = noopCache();
 
         ManifestService svc = new ManifestService(repo, ovr, cache);
-        svc.render(Set.of("ROLE_USER"), DomainScope.of("default")).block();
+        svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("default")).block();
         verify(cache).put(any());
     }
 
@@ -163,7 +163,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
         FederationManifestDto manifest =
-                svc.render(Set.of("ROLE_USER"), DomainScope.of("brandx")).block();
+                svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("brandx")).block();
 
         // own brand's PUBLIC row only — the internal row needs ADMIN/INTERNAL.
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
@@ -183,7 +183,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
         FederationManifestDto manifest =
-                svc.render(Set.of("ROLE_USER", "ROLE_ADMIN"), DomainScope.of("brandx")).block();
+                svc.render(Set.of("ROLE_USER", "ROLE_ADMIN"), PrincipalDomain.forDomain("brandx")).block();
         assertThat(manifest.remotes()).extracting(FederationManifestDto.FederationRemoteDto::slug)
                 .containsExactlyInAnyOrder("x-login", "x-admin");
     }
@@ -199,19 +199,19 @@ class ManifestDomainCutTest {
         // The sentinel pins both finders; with no rows tagged " no-domain" they return
         // empty (here stubbed empty to model the real no-match query).
         when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(
-                eq("closed"), eq(DomainScope.NO_DOMAIN)))
+                eq("closed"), eq(PrincipalDomain.NO_DOMAIN)))
                 .thenReturn(Flux.empty());
-        when(ovr.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq(DomainScope.NO_DOMAIN)))
+        when(ovr.findByScopeInAndClearedAtIsNullAndDomain(anyCollection(), eq(PrincipalDomain.NO_DOMAIN)))
                 .thenReturn(Flux.empty());
 
         ManifestService svc = new ManifestService(repo, ovr, noopCache());
-        DomainScope failClosed = DomainScope.of(null); // collapses to NO_DOMAIN
+        PrincipalDomain failClosed = PrincipalDomain.forDomain(null); // collapses to NO_DOMAIN
         FederationManifestDto manifest = svc.render(Set.of("ROLE_USER"), failClosed).block();
 
         assertThat(manifest.remotes()).isEmpty();
         // The query was pinned to the sentinel, NOT run un-pinned (all-brands).
         verify(repo).findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc(
-                "closed", DomainScope.NO_DOMAIN);
+                "closed", PrincipalDomain.NO_DOMAIN);
         verify(repo, never()).findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc(any());
     }
 

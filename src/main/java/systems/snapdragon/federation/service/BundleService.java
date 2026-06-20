@@ -11,7 +11,7 @@ import reactor.core.scheduler.Schedulers;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.model.UserModuleView;
 import systems.snapdragon.federation.repository.UserModuleRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.storage.BundleStorage;
 
 import java.io.IOException;
@@ -67,9 +67,9 @@ public class BundleService {
      * returned the FULL entity for ANY caller — a cross-tenant metadata IDOR. The cut
      * is enforced in the QUERY, not in spoofable code.
      */
-    public Flux<UserModuleView> listForSlug(String slug, DomainScope scope, String ownerUserId, boolean admin) {
+    public Flux<UserModuleView> listForSlug(String slug, PrincipalDomain scope, String ownerUserId, boolean admin) {
         Flux<UserModule> rows;
-        if (scope != null && scope.isSuperadmin()) {
+        if (scope != null && scope.superadmin()) {
             rows = repo.findBySlugOrderByCreatedAtDesc(slug);
         } else if (admin) {
             rows = repo.findBySlugAndDomainOrderByCreatedAtDesc(slug, domainOf(scope));
@@ -86,10 +86,10 @@ public class BundleService {
      * EMPTY -> 404, closing the cross-tenant metadata IDOR + the content-hash -> bytes
      * pivot. (The remote-fragment SYNC byte FETCH stays un-scoped — see {@link #fetch}.)
      */
-    public Mono<UserModuleView> byContentHash(String contentHash, DomainScope scope,
+    public Mono<UserModuleView> byContentHash(String contentHash, PrincipalDomain scope,
                                               String ownerUserId, boolean admin) {
         Mono<UserModule> row;
-        if (scope != null && scope.isSuperadmin()) {
+        if (scope != null && scope.superadmin()) {
             row = repo.findByContentHash(contentHash);
         } else if (admin) {
             row = repo.findByContentHashAndDomain(contentHash, domainOf(scope));
@@ -104,15 +104,15 @@ public class BundleService {
     /** The domain to pin a metadata read to: the caller's domain, or {@code "default"}
      *  when no scope is supplied. Never null for a per-domain scope (failed resolve =>
      *  NO_DOMAIN, matches nothing). */
-    private static String domainOf(DomainScope scope) {
-        return scope == null ? DomainScope.of("default").domain() : scope.domain();
+    private static String domainOf(PrincipalDomain scope) {
+        return scope == null ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
     /** The domain to STAMP on a written bundle row: the principal's domain, or
      *  {@code "default"} for a SUPERADMIN / scope-less write. NEVER taken from a
      *  request param (mirrors ModuleRegistryService.domainForWrite). */
-    private static String domainForWrite(DomainScope scope) {
-        return (scope != null && scope.isSuperadmin()) ? DomainScope.of("default").domain() : domainOf(scope);
+    private static String domainForWrite(PrincipalDomain scope) {
+        return (scope != null && scope.superadmin()) ? PrincipalDomain.forDomain("default").domain() : domainOf(scope);
     }
 
     /**
@@ -135,7 +135,7 @@ public class BundleService {
      */
     public Mono<UserModule> put(String ownerUserId, String slug, String entryFile,
                                 String visibility, String manifestJson, boolean admin,
-                                DomainScope scope, Flux<DataBuffer> body) {
+                                PrincipalDomain scope, Flux<DataBuffer> body) {
         if (slug == null || slug.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "slug required"));
         }

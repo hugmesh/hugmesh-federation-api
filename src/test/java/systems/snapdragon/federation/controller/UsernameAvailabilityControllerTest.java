@@ -1,16 +1,17 @@
 package systems.snapdragon.federation.controller;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.UsernameAvailabilityDto;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.service.UsernameAvailabilityService;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -20,6 +21,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt;
+import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.springSecurity;
 
 /**
  * SECURITY / gating coverage for the username availability endpoint over the real
@@ -45,22 +47,28 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * </ul>
  */
 @SpringBootTest
-@AutoConfigureWebTestClient
 @ActiveProfiles("test")
-// A distinct @SpringBootTest context (adds @MockitoBean) -> give it its OWN H2 mem
-// DB so its Liquibase run never collides with the shared slice store.
-@TestPropertySource(properties = {
-        "spring.r2dbc.url=r2dbc:h2:mem:///fed_username_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=",
-        "spring.liquibase.url=jdbc:h2:mem:fed_username_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-})
-class UsernameAvailabilityControllerTest {
+// A distinct @SpringBootTest context (adds @MockitoBean) -> PostgresTestSupport gives
+// it its OWN Postgres container so its Liquibase run is isolated from the others.
+class UsernameAvailabilityControllerTest extends PostgresTestSupport {
 
     private static final String AVAIL = "/api/federation/username/charlie/availability";
     private static final String CONFUSABLES = "/api/federation/username/charlie/confusables";
 
-    @Autowired WebTestClient web;
+    // Spring Security 7: mockJwt()'s SecurityContext is only honoured when the
+    // springSecurity() configurer's MutatorFilter is in the chain; an
+    // @AutoConfigureWebTestClient-autowired client lacks it (mutator dropped -> 401).
+    // Build from the ApplicationContext with .apply(springSecurity()). The anonymous
+    // legs (no mutator) still resolve to 401 exactly as before.
+    @Autowired ApplicationContext context;
+    WebTestClient web;
 
     @MockitoBean UsernameAvailabilityService availability;
+
+    @BeforeEach
+    void setUpClient() {
+        web = WebTestClient.bindToApplicationContext(context).apply(springSecurity()).build();
+    }
 
     private WebTestClient as(String role) {
         return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_" + role)));

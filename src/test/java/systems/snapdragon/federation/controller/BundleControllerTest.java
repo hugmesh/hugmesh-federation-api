@@ -13,7 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.snapdragon.federation.model.UserModule;
-import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.commons.security.DomainRegistry;
 import systems.snapdragon.federation.service.BundleService;
 
 import java.nio.charset.StandardCharsets;
@@ -49,7 +49,7 @@ class BundleControllerTest {
     /** Build a controller with a {@link DomainRegistry} that maps any issuer to the
      *  {@code "default"} domain — these tests assert the owner/admin forwarding, not
      *  the (separately-tested) per-domain cut; the read endpoints still resolve a
-     *  DomainScope, but a default-domain scope keeps the existing assertions intact. */
+     *  PrincipalDomain, but a default-domain scope keeps the existing assertions intact. */
     private static BundleController controller(BundleService svc) {
         DomainRegistry domains = mock(DomainRegistry.class);
         when(domains.domainOf(org.mockito.ArgumentMatchers.any())).thenReturn("default");
@@ -172,7 +172,7 @@ class BundleControllerTest {
         // non-admin caller -> admin=false forwarded; subject forwarded as owner.
         when(svc.put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
         BundleController c = controller(svc);
@@ -186,7 +186,7 @@ class BundleControllerTest {
 
         verify(svc).put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
@@ -198,7 +198,7 @@ class BundleControllerTest {
         when(svc.put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 eq(true),
-                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
         BundleController c = controller(svc);
@@ -213,7 +213,7 @@ class BundleControllerTest {
         verify(svc).put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 eq(true),
-                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
@@ -223,7 +223,7 @@ class BundleControllerTest {
         when(svc.put(eq("bob"), eq(SLUG), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.snapdragon.federation.security.DomainScope>any(),
+                org.mockito.ArgumentMatchers.<systems.snapdragon.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "another owner")));
         BundleController c = controller(svc);

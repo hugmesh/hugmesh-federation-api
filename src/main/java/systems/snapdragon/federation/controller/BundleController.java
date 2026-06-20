@@ -16,8 +16,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.UserModule;
 import systems.snapdragon.federation.model.UserModuleView;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.BundleService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -90,7 +90,7 @@ public class BundleController {
     public Flux<UserModuleView> bySlug(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
-        DomainScope scope = DomainScope.resolve(jwt, domains);
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         return adminMono().flatMapMany(admin ->
                 bundles.listForSlug(slug, scope, jwt.getSubject(), admin));
     }
@@ -109,7 +109,7 @@ public class BundleController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.CONTENT_HASH,
                     message = "contentHash must be 64 lower-hex chars") String contentHash) {
-        DomainScope scope = DomainScope.resolve(jwt, domains);
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         return adminMono().flatMap(admin ->
                 bundles.byContentHash(contentHash, scope, jwt.getSubject(), admin));
     }
@@ -136,7 +136,7 @@ public class BundleController {
                                         message = "visibility must be public|internal") String visibility,
                                 @RequestParam(value = "manifest", required = false) String manifestJson,
                                 @RequestBody Flux<DataBuffer> body) {
-        DomainScope scope = DomainScope.resolve(jwt, domains);
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         return adminMono()
                 .flatMap(admin -> bundles.put(jwt.getSubject(), slug, entryFile,
                         visibility, manifestJson, admin, scope, body));

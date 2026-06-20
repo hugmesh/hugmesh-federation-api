@@ -3,28 +3,32 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+
+  <!-- The org metapom (2.0.0 / Boot-4 line) — consolidates the Spring Boot 4.0.2 /
+       Spring Cloud 2025.1 / Java 21 reactive BFF baseline (WebFlux + Casdoor OAuth2
+       resource server + R2DBC/Liquibase + SpringDoc), the shared <dependencies>,
+       dependencyManagement (snapdragon-commons 2.0.0, Spring Cloud BOM, AWS SDK BOM,
+       resilience4j-spring-boot4, springdoc 3.x), pluginManagement (compiler / surefire
+       bytebuddy flag / spring-boot / native) and the GitLab Maven publishing wiring.
+       snapdragon-parent is itself a child of spring-boot-starter-parent:4.0.2, so the
+       Spring Boot dependency + plugin management is inherited TRANSITIVELY. -->
   <parent>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-parent</artifactId>
-    <!-- 3.5.5 matches snapdragon-admin-bff-api (proven WebFlux + Casdoor reactive
-         JWT resource server + GraalVM native on Java 21). The dynamic
-         federation registry shares that BFF's reactive baseline. -->
-    <version>3.5.5</version>
+    <groupId>systems.snapdragon</groupId>
+    <artifactId>snapdragon-parent</artifactId>
+    <version>2.0.0</version>
     <relativePath/>
   </parent>
-  <groupId>systems.snapdragon</groupId>
+
   <artifactId>federation</artifactId>
   <version>0.1.0</version>
   <name>snapdragon-federation-api</name>
   <description>Snapdragon dynamic federation registry + manifest API (DB-hosted federated modules)</description>
 
   <properties>
-    <java.version>21</java.version>
-    <!-- AWS SDK v2 BOM — pinned. The synchronous S3Client is used (not the async
-         client) because the async SDK pulls in Netty NIO, which conflicts with
-         Reactor Netty already on the classpath. Calls are wrapped in
-         Mono.fromCallable + subscribeOn(boundedElastic()) at the service layer. -->
-    <aws.sdk.version>2.28.3</aws.sdk.version>
+    <!-- java.version (21), encoding, the snapdragon-commons version, the AWS SDK
+         BOM version, the resilience4j version and the springdoc version are all
+         inherited from snapdragon-parent. ONLY the federation-specific pins stay. -->
+
     <!-- ICU4J is PINNED (exact version). The Unicode confusable SKELETON is a
          RECOMPUTABLE CACHE, never a unique DB identity, BECAUSE the skeleton
          transform is NOT stable across ICU releases (ICU4J SpoofChecker javadoc:
@@ -34,61 +38,70 @@
          username_skeleton.skeleton_icu_version so a drift is detectable. -->
     <icu4j.version>77.1</icu4j.version>
     <commons-text.version>1.13.1</commons-text.version>
+    <!-- The Testcontainers BOM, the r2dbc-h2 1.0.0.RELEASE / H2 2.3.232 pins, and the
+         testcontainers test deps are now ALL provided by snapdragon-parent:2.0.0
+         (its dependencyManagement imports the TC BOM + pins H2; its shared
+         <dependencies> declare spring-boot-testcontainers / postgresql / junit-jupiter
+         / r2dbc). The federation-spike-local dependencyManagement block and the
+         testcontainers.version property were therefore deleted — they are inherited. -->
   </properties>
 
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>software.amazon.awssdk</groupId>
-        <artifactId>bom</artifactId>
-        <version>${aws.sdk.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
-
   <dependencies>
-    <!-- Reactive web (WebFlux) — the whole service is non-blocking. -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webflux</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-oauth2-resource-server</artifactId></dependency>
-
-    <!-- jakarta Bean Validation (Hibernate Validator) — @Valid on request bodies,
-         @NotBlank/@Pattern/@Size on DTO fields, and @Validated path/param checks on
-         the controllers. The reactive ValidationWebExchangeAdvice maps a
-         WebExchangeBindException / ConstraintViolationException to a clean 400 with
-         field errors instead of a 500 or a raw DB-constraint error. -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
-
-    <!-- SpringDoc — OpenAPI 3 spec at /v3/api-docs + Swagger UI. WEBFLUX
-         variant to match the reactive stack (the servlet starter would drag in
-         spring-webmvc and break the WebFlux app). 2.7.0 = the same pin
-         admin-bff + the games BFF use against the Spring Boot 3.5.x baseline. -->
+    <!-- The shared, canonical Snapdragon security/tenancy/config/web building blocks
+         (Casdoor JWT authorities, issuer->domain DomainRegistry, Roles + PrincipalDomain
+         helpers, the config-gated multi-issuer TenancyResourceServerConfig, the BFF
+         ApiException). Version is MANAGED by snapdragon-parent's dependencyManagement,
+         so NO <version> here. This replaces federation's deleted local copies of
+         security.{Roles,DomainRegistry,DomainScope} + config.{CasdoorAuthorities,
+         TenancyResourceServerConfig}. -->
     <dependency>
-      <groupId>org.springdoc</groupId>
-      <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
-      <version>2.7.0</version>
+      <groupId>systems.snapdragon</groupId>
+      <artifactId>snapdragon-commons</artifactId>
     </dependency>
 
-    <!-- Resilience4j circuit breaker — wraps the DIRECT-repo override apply/clear
-         on the access-suspension profile-ban write path (account-states
-         foundation). The breaker fails FAST when the override store is unhealthy;
-         the durable federation_override row is the source of truth, so the vanity
-         read path + manifest converge once the row lands (no need to block the
-         caller behind a flaky write). 2.2.0 = the pin snapdragon-actions uses on
-         the Spring Boot 3.5.x baseline; resilience4j-reactor adds the
-         CircuitBreakerOperator support for Mono/Flux return types. -->
+    <!-- snapdragon-commons TESTS jar — ships the shared full-context test base
+         systems.snapdragon.commons.testsupport.PostgresTestSupport (singleton Postgres
+         container, a fresh Liquibase-migrated database per @SpringBootTest class, r2dbc +
+         jdbc wired at the same DB, json.type=text default). This replaces federation's
+         deleted local copy of PostgresTestSupport. classifier=tests, type=test-jar,
+         test scope. The version is set EXPLICITLY to ${snapdragon-commons.version}
+         (the parent-inherited property, 2.0.0): snapdragon-parent's dependencyManagement
+         manages the MAIN snapdragon-commons jar but not the test-jar classifier variant,
+         so Maven cannot infer a version for it. -->
+    <dependency>
+      <groupId>systems.snapdragon</groupId>
+      <artifactId>snapdragon-commons</artifactId>
+      <version>${snapdragon-commons.version}</version>
+      <classifier>tests</classifier>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- spring-boot-liquibase (the Boot-4 LiquibaseAutoConfiguration module, split out of
+         the autoconfigure umbrella) is now in snapdragon-parent's shared <dependencies>
+         (runtime scope, next to liquibase-core), so the local declaration was deleted. -->
+
+    <!-- ============================================================================
+         The core reactive BFF stack (webflux / actuator / security /
+         oauth2-resource-server / validation), the data-access stack (data-r2dbc /
+         r2dbc-postgresql / liquibase-core / spring-jdbc / postgresql), springdoc, and
+         the whole test stack (spring-boot-starter-test / reactor-test /
+         spring-security-test / r2dbc-h2 / h2) are INHERITED from snapdragon-parent's
+         common <dependencies>. They were removed here to de-duplicate. ONLY the
+         repo-specific dependencies below remain.
+         ============================================================================ -->
+
+    <!-- Resilience4j circuit breaker — wraps the DIRECT-repo override apply/clear on
+         the access-suspension profile-ban write path. Boot-4 starter line
+         (resilience4j-spring-boot4); version MANAGED by snapdragon-parent (2.4.0) so
+         no <version> here. -->
     <dependency>
       <groupId>io.github.resilience4j</groupId>
-      <artifactId>resilience4j-spring-boot3</artifactId>
-      <version>2.2.0</version>
+      <artifactId>resilience4j-spring-boot4</artifactId>
     </dependency>
     <dependency>
       <groupId>io.github.resilience4j</groupId>
       <artifactId>resilience4j-reactor</artifactId>
-      <version>2.2.0</version>
     </dependency>
 
     <!-- ICU4J — the Unicode SpoofChecker (CONFUSABLE | RESTRICTION_LEVEL) +
@@ -96,7 +109,7 @@
          confusable fold (homoglyph + mixed-script + bidi). PINNED via
          ${icu4j.version} (see the properties comment): the skeleton is a
          recomputable cache, NOT a unique DB identity, precisely because the fold
-         can shift between ICU releases. -->
+         can shift between ICU releases. Repo-specific — stays here. -->
     <dependency>
       <groupId>com.ibm.icu</groupId>
       <artifactId>icu4j</artifactId>
@@ -104,54 +117,41 @@
     </dependency>
 
     <!-- commons-text — Damerau-Levenshtein typo-squat distance (the length-scaled
-         edit-distance tier vs the reserved-skeleton set). PINNED. -->
+         edit-distance tier vs the reserved-skeleton set). PINNED. Repo-specific. -->
     <dependency>
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-text</artifactId>
       <version>${commons-text.version}</version>
     </dependency>
 
-    <!-- Reactive data access: R2DBC for ALL runtime reads/writes (federation
-         modules, user modules, moderation, overrides). -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-r2dbc</artifactId></dependency>
-    <dependency><groupId>org.postgresql</groupId><artifactId>r2dbc-postgresql</artifactId><scope>runtime</scope></dependency>
-
-    <!-- Liquibase owns schema migrations. Liquibase has no R2DBC runner, so a
-         plain JDBC datasource (org.postgresql) is kept ONLY for Liquibase;
-         every runtime data access goes through R2DBC. -->
-    <dependency><groupId>org.liquibase</groupId><artifactId>liquibase-core</artifactId></dependency>
-    <dependency><groupId>org.springframework</groupId><artifactId>spring-jdbc</artifactId></dependency>
-    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
-
-    <!-- Cassandra-reactive = best-effort write-through cache for the manifest
-         read path (mirrors admin-bff's CassandraRouteMirror gateway-mirror
-         pattern). The data-cassandra-reactive starter is on the classpath, but
-         its auto-config is EXCLUDED in application.yml so a missing / unreachable
-         Cassandra never blocks startup — the cache builds its own CqlSession
-         lazily + gated and degrades to Postgres on any failure. -->
+    <!-- Cassandra-reactive = best-effort write-through cache for the manifest read
+         path. The starter is on the classpath, but its auto-config is EXCLUDED in
+         application.yml so a missing / unreachable Cassandra never blocks startup.
+         Repo-specific — stays here. -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-cassandra-reactive</artifactId></dependency>
 
-    <!-- AWS SDK v2 S3 (synchronous client) — used by S3BundleStorage.
-         Version managed by the aws.sdk BOM above. Only on the classpath when
-         app.bundles.storage=s3; the filesystem strategy (the default) never
-         touches this. -->
+    <!-- AWS SDK v2 S3 (synchronous client) — used by S3BundleStorage. Version
+         managed by the aws.sdk BOM imported in snapdragon-parent's
+         dependencyManagement. Repo-specific — stays here. -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>s3</artifactId>
     </dependency>
 
-    <!-- test -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
-    <dependency><groupId>io.projectreactor</groupId><artifactId>reactor-test</artifactId><scope>test</scope></dependency>
-    <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
-    <!-- R2DBC H2 (runtime data access in @DataR2dbcTest) + JDBC H2 (Liquibase
-         applies the real changelog over the same in-mem DB for the slice
-         tests). PostgreSQL-compat mode is set on the URL. -->
-    <dependency><groupId>io.r2dbc</groupId><artifactId>r2dbc-h2</artifactId><scope>test</scope></dependency>
-    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
+    <!-- ========================================================================
+         Testcontainers (test scope) — spring-boot-testcontainers + the postgresql /
+         junit-jupiter / r2dbc container modules are now in snapdragon-parent's shared
+         test <dependencies>, so the local declarations were deleted. The FULL-CONTEXT
+         (@SpringBootTest) suites run against a REAL Postgres via the shared
+         commons.testsupport.PostgresTestSupport base (above).
+         ======================================================================== -->
   </dependencies>
 
   <build><plugins>
+    <!-- The spring-boot, native and surefire (bytebuddy-experimental argLine)
+         plugins are configured in snapdragon-parent's pluginManagement; declaring
+         them here (no config) binds the managed config. The native plugin is bound
+         so `./mvnw -Pnative native:compile` works; spring-boot repackages the app. -->
     <plugin>
       <groupId>org.graalvm.buildtools</groupId>
       <artifactId>native-maven-plugin</artifactId>
@@ -160,24 +160,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-maven-plugin</artifactId>
     </plugin>
-    <!-- Byte Buddy (via Mockito) only officially supports up to JDK 23; this
-         flag lets it run on newer JDKs (the build host runs Temurin 25). A
-         no-op on JDK <=23, so it is safe for the Java 21 target too. Copied
-         verbatim from admin-bff. -->
-    <plugin>
-      <groupId>org.apache.maven.plugins</groupId>
-      <artifactId>maven-surefire-plugin</artifactId>
-      <configuration>
-        <argLine>-Dnet.bytebuddy.experimental=true</argLine>
-      </configuration>
-    </plugin>
   </plugins></build>
 
   <profiles>
-    <!-- Native build: `./mvnw -Pnative native:compile` produces a GraalVM
-         binary. The parent's `native` profile (process-aot + reachability
-         metadata) does the heavy lifting; this thin local profile mirrors
-         admin-bff/gateway so the same `-Pnative` invocation works. -->
+    <!-- Native build: `./mvnw -Pnative native:compile` produces a GraalVM binary.
+         The parent's native plugin management does the heavy lifting; this thin
+         local profile mirrors admin-bff/gateway so the same `-Pnative` invocation
+         works. -->
     <profile>
       <id>native</id>
       <build>

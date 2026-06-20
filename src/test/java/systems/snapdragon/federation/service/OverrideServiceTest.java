@@ -10,7 +10,7 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -54,7 +54,7 @@ class OverrideServiceTest {
     }
 
     /** The per-domain caller scope these tests act under (default brand). */
-    private static final DomainScope DEFAULT = DomainScope.of("default");
+    private static final PrincipalDomain DEFAULT = PrincipalDomain.forDomain("default");
 
     @Test
     void apply_circuitBreak_mutatesModule_andRecordsActiveScopeRow() {
@@ -324,7 +324,7 @@ class OverrideServiceTest {
 
         OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
 
-        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.of("brand-a")))
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", PrincipalDomain.forDomain("brand-a")))
                 .expectNext(1L)
                 .verifyComplete();
 
@@ -345,7 +345,7 @@ class OverrideServiceTest {
 
         OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
 
-        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.of("brand-a")))
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", PrincipalDomain.forDomain("brand-a")))
                 .expectNext(0L) // nothing of brand-A's to clear
                 .verifyComplete();
 
@@ -367,7 +367,7 @@ class OverrideServiceTest {
         OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
 
         // SUPERADMIN has no domain predicate -> clears matching rows in EVERY brand.
-        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", DomainScope.superadmin()))
+        StepVerifier.create(svc.clearScopeBySource("access_suspension:42", PrincipalDomain.superadminFor(null)))
                 .expectNext(2L)
                 .verifyComplete();
 
@@ -377,7 +377,7 @@ class OverrideServiceTest {
 
     @Test
     void clearScopeBySource_backCompatOverload_clearsAcrossBrands() {
-        // The no-DomainScope overload (internal suspension-lift caller) delegates to
+        // The no-PrincipalDomain overload (internal suspension-lift caller) delegates to
         // the SUPERADMIN scope, so it still clears across brands — unchanged behavior.
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         ManifestCache cache = noopCache();

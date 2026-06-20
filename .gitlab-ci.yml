@@ -14,8 +14,54 @@ include:
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
 # `pentest` stage added; the original `security` / `dast` stages are kept so any
-# pipeline references to them (and the migrated jobs) remain valid.
-stages: [security, dast, pentest, build]
+# pipeline references to them (and the migrated jobs) remain valid. `test` runs the
+# JUnit suite (incl. the Testcontainers-Postgres full-context tests) before the image
+# build (which still builds with -DskipTests).
+stages: [security, dast, pentest, test, build]
+
+# -----------------------------------------------------------------------------
+# Maven test stage. The full-context (@SpringBootTest) tests run against a REAL
+# Postgres via Testcontainers (spring-boot-testcontainers / a Postgres container),
+# so the job needs a Docker daemon — attached here as a docker:dind service.
+#
+#   * DOCKER_HOST / DOCKER_TLS_CERTDIR / DOCKER_CERT_PATH / DOCKER_TLS_VERIFY:
+#     reach the dind service over its default TLS socket.
+#   * TESTCONTAINERS_HOST_OVERRIDE=docker: the address spawned containers (and the
+#     Liquibase/r2dbc clients) reach the dind host on.
+#   * TESTCONTAINERS_RYUK_DISABLED=true: dind is torn down with the job, so the Ryuk
+#     reaper is redundant and is unreliable in nested-docker CI (and on the dev box's
+#     nvidia-default-runtime daemon, where it was observed to misbehave).
+#   * MAVEN_OPTS=-Dapi.version=1.43: docker-java's strategy ping defaults to Docker
+#     API 1.32, which a modern daemon (min API 1.40) rejects — pin it >= 1.40.
+#
+# settings.xml resolves the PRIVATE snapdragon-commons/snapdragon-parent from the
+# group Maven registry using the CI_JOB_TOKEN + CI_API_V4_URL + GITLAB_GROUP_ID env
+# vars GitLab injects (no secrets in git).
+# -----------------------------------------------------------------------------
+test:mvn:
+  stage: test
+  tags: [snapdragon-x86, privileged]
+  image: maven:3.9-eclipse-temurin-25
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
+    TESTCONTAINERS_HOST_OVERRIDE: "docker"
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+    MAVEN_OPTS: "-Dapi.version=1.43"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - ./mvnw -B -s settings.xml test
+  artifacts:
+    when: always
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
 
 build:image:
   stage: build
@@ -23,12 +69,26 @@ build:image:
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+  variables:
+    # BuildKit is required for the Dockerfile's `--mount=type=secret` private-dep
+    # resolution (snapdragon-commons from the GitLab Maven registry).
+    DOCKER_BUILDKIT: "1"
   script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     # Immutable tag = release tag or git SHA; plus a moving branch tag the deploy/
     # kustomize can track for dev.
     - export TAG="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
-    - docker build --pull -t "$CI_REGISTRY_IMAGE:$TAG" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG" .
+    # CI_JOB_TOKEN is passed as a BuildKit SECRET (never persisted in a layer); the
+    # GitLab registry coordinates go in as build-args so the committed settings.xml
+    # can resolve the PRIVATE snapdragon-commons artifact during `./mvnw package`
+    # inside the build stage. GITLAB_GROUP_ID must be set to the Snapdragon-Systems
+    # group id (a CI/CD or group variable).
+    - |
+      docker build --pull \
+        --secret id=ci_job_token,env=CI_JOB_TOKEN \
+        --build-arg CI_API_V4_URL="$CI_API_V4_URL" \
+        --build-arg GITLAB_GROUP_ID="$GITLAB_GROUP_ID" \
+        -t "$CI_REGISTRY_IMAGE:$TAG" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG" .
     - docker push "$CI_REGISTRY_IMAGE:$TAG"
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
 

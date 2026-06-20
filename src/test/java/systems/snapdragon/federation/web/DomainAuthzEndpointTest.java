@@ -1,12 +1,12 @@
 package systems.snapdragon.federation.web;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
@@ -16,10 +16,12 @@ import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.service.ModerationService;
 import systems.snapdragon.federation.service.ModuleRegistryService;
 import systems.snapdragon.federation.service.OverrideService;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt;
+import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.springSecurity;
 
 /**
  * HTTP-layer ROLE authorization for the domain-scoping foundation, delineated:
@@ -37,19 +39,26 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * service behaviour. Mirrors {@code ValidationEndpointTest}'s context wiring.
  */
 @SpringBootTest
-@AutoConfigureWebTestClient
 @ActiveProfiles("test")
-@TestPropertySource(properties = {
-        "spring.r2dbc.url=r2dbc:h2:mem:///fed_authz_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=",
-        "spring.liquibase.url=jdbc:h2:mem:fed_authz_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-})
-class DomainAuthzEndpointTest {
+class DomainAuthzEndpointTest extends PostgresTestSupport {
 
-    @Autowired WebTestClient web;
+    // Spring Security 7: the mockJwt()/mockOpaqueToken() reactive mutators stash the
+    // SecurityContext in an exchange attribute that is ONLY picked up by the MutatorFilter
+    // the springSecurity() configurer installs. A WebTestClient autowired via
+    // @AutoConfigureWebTestClient does NOT have that configurer, so the mutator's auth is
+    // silently dropped and every request runs anonymous -> 401. Build the client from the
+    // ApplicationContext with .apply(springSecurity()) so the mutator is honoured.
+    @Autowired ApplicationContext context;
+    WebTestClient web;
 
     @MockitoBean ModuleRegistryService registry;
     @MockitoBean ModerationService moderation;
     @MockitoBean OverrideService overrides;
+
+    @BeforeEach
+    void setUpClient() {
+        web = WebTestClient.bindToApplicationContext(context).apply(springSecurity()).build();
+    }
 
     private WebTestClient as(String role) {
         return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_" + role)));

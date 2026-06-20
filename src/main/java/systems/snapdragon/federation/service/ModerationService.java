@@ -6,7 +6,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.ModerationRequest;
 import systems.snapdragon.federation.repository.ModerationRequestRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 
@@ -39,15 +39,15 @@ public class ModerationService {
 
     /** DOMAIN-scoped workflow list. A per-domain mod/admin sees ONLY their own
      *  brand's requests; SUPERADMIN sees every request across all brands. */
-    public Flux<ModerationRequest> list(DomainScope scope) {
-        return scope.isSuperadmin()
+    public Flux<ModerationRequest> list(PrincipalDomain scope) {
+        return scope.superadmin()
                 ? repo.findAllByOrderByTsDesc()
                 : repo.findByDomainOrderByTsDesc(scope.domain());
     }
 
     /** DOMAIN-scoped workflow list filtered by status. */
-    public Flux<ModerationRequest> listByStatus(String status, DomainScope scope) {
-        return scope.isSuperadmin()
+    public Flux<ModerationRequest> listByStatus(String status, PrincipalDomain scope) {
+        return scope.superadmin()
                 ? repo.findByStatusOrderByTsDesc(status)
                 : repo.findByStatusAndDomainOrderByTsDesc(status, scope.domain());
     }
@@ -59,7 +59,7 @@ public class ModerationService {
      * (no domain in scope) lands in {@code "default"}.
      */
     public Mono<ModerationRequest> submit(String requester, String kind, String target, String reason,
-                                          DomainScope scope) {
+                                          PrincipalDomain scope) {
         if (!isKind(kind)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST,
                     "kind must be instance-block | user-removal"));
@@ -80,7 +80,7 @@ public class ModerationService {
      * to the caller's domain so a per-domain mod can NEVER refer another brand's
      * request (a cross-domain id -> 404). SUPERADMIN refers any request.
      */
-    public Mono<ModerationRequest> refer(Long id, String modReferrer, DomainScope scope) {
+    public Mono<ModerationRequest> refer(Long id, String modReferrer, PrincipalDomain scope) {
         return load(id, scope)
                 .flatMap(r -> {
                     r.setStatus("referred");
@@ -96,7 +96,7 @@ public class ModerationService {
      * another brand's request (cross-domain id -> 404). SUPERADMIN decides any
      * request.
      */
-    public Mono<ModerationRequest> decide(Long id, boolean approve, String adminDecider, DomainScope scope) {
+    public Mono<ModerationRequest> decide(Long id, boolean approve, String adminDecider, PrincipalDomain scope) {
         return load(id, scope)
                 .flatMap(r -> {
                     r.setStatus(approve ? "approved" : "denied");
@@ -109,8 +109,8 @@ public class ModerationService {
     /** Load a request by id, domain-pinned for a per-domain principal (SUPERADMIN:
      *  any). 404 when absent OR when it belongs to another brand (the cross-domain
      *  finder returns empty). */
-    private Mono<ModerationRequest> load(Long id, DomainScope scope) {
-        Mono<ModerationRequest> found = scope.isSuperadmin()
+    private Mono<ModerationRequest> load(Long id, PrincipalDomain scope) {
+        Mono<ModerationRequest> found = scope.superadmin()
                 ? repo.findById(id)
                 : repo.findByIdAndDomain(id, scope.domain());
         return found.switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no request: " + id)));
@@ -118,8 +118,8 @@ public class ModerationService {
 
     /** The domain to stamp on a written request: the requester's domain, or
      *  {@code "default"} for a SUPERADMIN submit (no domain in scope). */
-    private static String domainForWrite(DomainScope scope) {
-        return scope.isSuperadmin() ? DomainScope.of("default").domain() : scope.domain();
+    private static String domainForWrite(PrincipalDomain scope) {
+        return scope.superadmin() ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
     private static boolean isKind(String k) {

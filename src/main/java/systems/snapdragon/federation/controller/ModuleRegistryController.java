@@ -13,8 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.ModuleRegistryService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -42,7 +42,7 @@ public class ModuleRegistryController {
     @Operation(summary = "List registered modules in the caller's domain (SUPERADMIN: all).")
     @GetMapping
     public Flux<FederationModule> list(@AuthenticationPrincipal Jwt jwt) {
-        return registry.list(DomainScope.resolve(jwt, domains));
+        return registry.list(PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Get one module by slug (scoped to the caller's domain; SUPERADMIN: any).")
@@ -50,7 +50,7 @@ public class ModuleRegistryController {
     public Mono<FederationModule> get(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
-        return registry.get(slug, DomainScope.resolve(jwt, domains));
+        return registry.get(slug, PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Register a new module (stamped with the caller's domain).")
@@ -59,7 +59,7 @@ public class ModuleRegistryController {
     public Mono<FederationModule> create(
             @AuthenticationPrincipal Jwt jwt,
             @Validated(FederationModule.OnCreate.class) @RequestBody FederationModule module) {
-        return registry.create(module, DomainScope.resolve(jwt, domains));
+        return registry.create(module, PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Update a module by slug (partial; scoped to the caller's domain; SUPERADMIN: any).")
@@ -68,7 +68,7 @@ public class ModuleRegistryController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug,
             @Valid @RequestBody FederationModule patch) {
-        return registry.update(slug, patch, DomainScope.resolve(jwt, domains));
+        return registry.update(slug, patch, PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Delete a module by slug (scoped to the caller's domain; SUPERADMIN: any).")
@@ -77,6 +77,6 @@ public class ModuleRegistryController {
     public Mono<Void> delete(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG, message = "invalid slug") String slug) {
-        return registry.delete(slug, DomainScope.resolve(jwt, domains));
+        return registry.delete(slug, PrincipalDomain.resolve(jwt, domains));
     }
 }

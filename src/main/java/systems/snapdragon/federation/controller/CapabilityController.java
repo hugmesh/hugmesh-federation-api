@@ -9,8 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import systems.snapdragon.federation.model.CapabilityDto;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.CapabilityService;
 
 /**
@@ -72,6 +72,17 @@ public class CapabilityController {
         // is derived from the cryptographically-validated issuer (never a spoofable
         // claim) and fragment slugs are excluded in the query — so this public endpoint
         // can never become a cross-brand registry / username enumeration oracle.
-        return capabilities.capabilities(DomainScope.resolve(jwt, domains));
+        // ANONYMOUS (jwt==null) -> the public "default" domain list (logged-out /
+        // single-issuer behaviour). NOTE: commons PrincipalDomain.resolve(null, reg)
+        // deliberately FAILS CLOSED to the NO_DOMAIN sentinel (a null principal proves
+        // no tenant), so for this permitAll public read we map a null jwt to the
+        // explicit default-domain scope to PRESERVE the pre-commons behaviour
+        // (federation's old DomainScope.resolve(null) fell through to "default"). An
+        // AUTHENTICATED caller still resolves to their cryptographically-validated
+        // issuer domain (or the cross-domain SUPERADMIN tier).
+        PrincipalDomain scope = jwt == null
+                ? PrincipalDomain.forDomain(DomainRegistry.DEFAULT_DOMAIN)
+                : PrincipalDomain.resolve(jwt, domains);
+        return capabilities.capabilities(scope);
     }
 }

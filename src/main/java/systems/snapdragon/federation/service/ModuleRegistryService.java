@@ -6,7 +6,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 
@@ -49,8 +49,8 @@ public class ModuleRegistryService {
      * brands ({@code findAll}). The per-domain CUT is enforced in the QUERY, not in
      * (spoofable) code.
      */
-    public Flux<FederationModule> list(DomainScope scope) {
-        return scope.isSuperadmin() ? repo.findAll() : repo.findByDomain(scope.domain());
+    public Flux<FederationModule> list(PrincipalDomain scope) {
+        return scope.superadmin() ? repo.findAll() : repo.findByDomain(scope.domain());
     }
 
     /**
@@ -58,8 +58,8 @@ public class ModuleRegistryService {
      * OWN domain — a slug owned by another brand returns 404 (the cross-domain row is
      * never surfaced). SUPERADMIN reads any slug.
      */
-    public Mono<FederationModule> get(String slug, DomainScope scope) {
-        Mono<FederationModule> found = scope.isSuperadmin()
+    public Mono<FederationModule> get(String slug, PrincipalDomain scope) {
+        Mono<FederationModule> found = scope.superadmin()
                 ? repo.findBySlug(slug)
                 : repo.findBySlugAndDomain(slug, scope.domain());
         return found.switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no module: " + slug)));
@@ -73,7 +73,7 @@ public class ModuleRegistryService {
      * provisioning of cross-brand rows is a later admin-tooling concern; the
      * foundation never lets a write land cross-domain by accident.
      */
-    public Mono<FederationModule> create(FederationModule m, DomainScope scope) {
+    public Mono<FederationModule> create(FederationModule m, PrincipalDomain scope) {
         Instant now = Instant.now();
         m.setId(null);
         if (m.getVisibility() == null) m.setVisibility("public");
@@ -87,8 +87,8 @@ public class ModuleRegistryService {
     /** The domain to stamp on a written row: the principal's domain, or
      *  {@code "default"} for a SUPERADMIN write (no domain in scope). NEVER taken
      *  from the request body. */
-    private static String domainForWrite(DomainScope scope) {
-        return scope.isSuperadmin() ? DomainScope.of("default").domain() : scope.domain();
+    private static String domainForWrite(PrincipalDomain scope) {
+        return scope.superadmin() ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
     /**
@@ -118,8 +118,8 @@ public class ModuleRegistryService {
      * patchable — it is left as the loaded row's value, so an update can never
      * re-home a row into another brand. SUPERADMIN updates any slug.
      */
-    public Mono<FederationModule> update(String slug, FederationModule patch, DomainScope scope) {
-        Mono<FederationModule> found = scope.isSuperadmin()
+    public Mono<FederationModule> update(String slug, FederationModule patch, PrincipalDomain scope) {
+        Mono<FederationModule> found = scope.superadmin()
                 ? repo.findBySlug(slug)
                 : repo.findBySlugAndDomain(slug, scope.domain());
         return found
@@ -146,8 +146,8 @@ public class ModuleRegistryService {
      * admin can NEVER delete another brand's module (cross-domain slug -> 404).
      * SUPERADMIN deletes any slug.
      */
-    public Mono<Void> delete(String slug, DomainScope scope) {
-        Mono<FederationModule> found = scope.isSuperadmin()
+    public Mono<Void> delete(String slug, PrincipalDomain scope) {
+        Mono<FederationModule> found = scope.superadmin()
                 ? repo.findBySlug(slug)
                 : repo.findBySlugAndDomain(slug, scope.domain());
         return found

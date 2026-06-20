@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import systems.snapdragon.federation.model.CapabilityDto;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 /**
  * The PUBLIC capability-projection read path behind
@@ -38,7 +38,7 @@ import systems.snapdragon.federation.security.DomainScope;
  *       — pinned to {@code scope.domain()} via
  *       {@link FederationModuleRepository#findByDomainAndKindNot}, so a brand-X
  *       caller's capability list never reveals brand-Y's registered services.</li>
- *   <li><b>SUPERADMIN</b> ({@code scope.isSuperadmin()}) — the un-pinned
+ *   <li><b>SUPERADMIN</b> ({@code scope.superadmin()}) — the un-pinned
  *       {@link FederationModuleRepository#findByKindNot} runs (all brands), still
  *       fragment-excluded.</li>
  * </ul>
@@ -67,10 +67,10 @@ public class CapabilityService {
     /**
      * Back-compat render: a caller with no domain context renders the
      * {@code "default"} domain's public capability list (the anonymous / single-issuer
-     * behaviour). Retained for callers/tests that have no {@link DomainScope} in hand.
+     * behaviour). Retained for callers/tests that have no {@link PrincipalDomain} in hand.
      */
     public Flux<CapabilityDto> capabilities() {
-        return capabilities(DomainScope.of("default"));
+        return capabilities(PrincipalDomain.forDomain("default"));
     }
 
     /**
@@ -81,9 +81,9 @@ public class CapabilityService {
      * is enforced in the QUERY (not in spoofable code), so a cross-brand row or a
      * {@code profile-<username>} vanity slug is NEVER returned.
      */
-    public Flux<CapabilityDto> capabilities(DomainScope scope) {
+    public Flux<CapabilityDto> capabilities(PrincipalDomain scope) {
         Flux<systems.snapdragon.federation.model.FederationModule> rows =
-                (scope != null && scope.isSuperadmin())
+                (scope != null && scope.superadmin())
                         ? repo.findByKindNot(FRAGMENT_KIND)
                         : repo.findByDomainAndKindNot(domainOf(scope), FRAGMENT_KIND);
         return rows
@@ -94,7 +94,7 @@ public class CapabilityService {
     /** The domain to pin the query to: the caller's domain, or {@code "default"} when
      *  no scope is supplied (anonymous public read). Never null — a per-domain scope
      *  always carries a domain (failed resolve => NO_DOMAIN, matches nothing). */
-    private static String domainOf(DomainScope scope) {
-        return scope == null ? DomainScope.of("default").domain() : scope.domain();
+    private static String domainOf(PrincipalDomain scope) {
+        return scope == null ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 }

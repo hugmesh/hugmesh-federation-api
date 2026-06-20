@@ -5,7 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -14,6 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.util.List;
@@ -70,7 +71,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 // Deliberately NOT @ActiveProfiles("test") — like CrossDomainWriteIsolationTest, we
 // exercise the PROD SecurityConfig#filterChain (@Profile "!dev & !test") so the real
 // multi-issuer resource-server path is under test end to end.
-class WriteEndpointTokenDenyIsolationTest {
+class WriteEndpointTokenDenyIsolationTest extends PostgresTestSupport {
 
     private static TestIssuer brandX;   // trusted -> DOMAIN_brandx
     private static TestIssuer brandY;   // trusted -> DOMAIN_brandy
@@ -104,17 +105,10 @@ class WriteEndpointTokenDenyIsolationTest {
                 brandX.issuerUri() + "=brandx,"
                         + brandY.issuerUri() + "=brandy,"
                         + revoked.issuerUri() + "=revokedbrand");
-        // Dedicated H2 store for this class (own Liquibase schema). Pin both R2DBC and
-        // Liquibase handles to sa/empty to match the URL's user (we run WITHOUT the
-        // test profile, so application.yml's prod creds would otherwise collide).
-        r.add("spring.r2dbc.url", () ->
-                "r2dbc:h2:mem:///fed_write_token_deny;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.r2dbc.username", () -> "sa");
-        r.add("spring.r2dbc.password", () -> "");
-        r.add("spring.liquibase.url", () ->
-                "jdbc:h2:mem:fed_write_token_deny;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE");
-        r.add("spring.liquibase.user", () -> "sa");
-        r.add("spring.liquibase.password", () -> "");
+        // DB wiring (r2dbc + liquibase, this class's own isolated PG) comes from
+        // PostgresTestSupport's @ServiceConnection container — the H2 url/user/password
+        // lines were dropped. We run WITHOUT the test profile, so the non-DB infra props
+        // (cassandra-off, filesystem bundles, dummy jwt uris) stay set explicitly here.
         r.add("app.manifest-cache.cassandra.enabled", () -> "false");
         r.add("app.bundles.storage", () -> "filesystem");
         r.add("app.bundles.dir", () -> System.getProperty("java.io.tmpdir")

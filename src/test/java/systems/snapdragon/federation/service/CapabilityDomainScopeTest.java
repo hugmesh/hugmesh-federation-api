@@ -6,7 +6,7 @@ import reactor.core.publisher.Flux;
 import systems.snapdragon.federation.model.CapabilityDto;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.util.List;
 
@@ -73,7 +73,7 @@ class CapabilityDomainScopeTest {
                 module("games", "remote-shell", "default")));
 
         List<CapabilityDto> caps = new CapabilityService(repo)
-                .capabilities(DomainScope.of("default")).collectList().block();
+                .capabilities(PrincipalDomain.forDomain("default")).collectList().block();
 
         assertThat(caps).extracting(CapabilityDto::slug)
                 .containsExactly("forum", "games");
@@ -97,7 +97,7 @@ class CapabilityDomainScopeTest {
                 .thenReturn(Flux.just(module("x-svc", "remote-shell", "brandx")));
 
         List<CapabilityDto> caps = new CapabilityService(repo)
-                .capabilities(DomainScope.of("brandx")).collectList().block();
+                .capabilities(PrincipalDomain.forDomain("brandx")).collectList().block();
 
         assertThat(caps).extracting(CapabilityDto::slug).containsExactly("x-svc");
         verify(repo).findByDomainAndKindNot("brandx", "fragment");
@@ -116,7 +116,7 @@ class CapabilityDomainScopeTest {
                 module("y-svc", "remote-shell", "brandy")));
 
         List<CapabilityDto> caps = new CapabilityService(repo)
-                .capabilities(DomainScope.superadmin()).collectList().block();
+                .capabilities(PrincipalDomain.superadminFor(null)).collectList().block();
 
         assertThat(caps).extracting(CapabilityDto::slug).containsExactly("x-svc", "y-svc");
         verify(repo).findByKindNot("fragment");

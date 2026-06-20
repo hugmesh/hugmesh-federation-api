@@ -11,7 +11,7 @@ import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
 
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.util.Collection;
 import java.util.List;

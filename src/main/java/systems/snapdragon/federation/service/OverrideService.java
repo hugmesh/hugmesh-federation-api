@@ -10,7 +10,7 @@ import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 
@@ -99,8 +99,8 @@ public class OverrideService {
      * brand's overrides; SUPERADMIN sees every override across all brands. The cut is
      * enforced in the QUERY (not in code).
      */
-    public Flux<FederationOverride> list(DomainScope scope) {
-        return scope.isSuperadmin()
+    public Flux<FederationOverride> list(PrincipalDomain scope) {
+        return scope.superadmin()
                 ? overrides.findAllByOrderByTsDesc()
                 : overrides.findByDomainOrderByTsDesc(scope.domain());
     }
@@ -113,7 +113,7 @@ public class OverrideService {
      * row is stamped with the caller's domain. SUPERADMIN targets any module.
      */
     public Mono<FederationOverride> apply(String moduleSlug, String scope, String scopeValue,
-                                          String action, String setBy, DomainScope domainScope) {
+                                          String action, String setBy, PrincipalDomain domainScope) {
         if (!isAction(action)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST,
                     "action must be circuit-break | unpublish | remove"));
@@ -121,7 +121,7 @@ public class OverrideService {
         if (!isScope(scope)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "scope must be all | role | user"));
         }
-        Mono<FederationModule> found = domainScope.isSuperadmin()
+        Mono<FederationModule> found = domainScope.superadmin()
                 ? modules.findBySlug(moduleSlug)
                 : modules.findBySlugAndDomain(moduleSlug, domainScope.domain());
         return found
@@ -134,10 +134,10 @@ public class OverrideService {
     /** The domain to stamp on a recorded override row: the caller's domain, or — for
      *  a SUPERADMIN action — the TARGETED MODULE's own domain (so the audit row stays
      *  attributed to the brand it acted on, not a phantom 'default'). */
-    private static String rowDomain(DomainScope scope, FederationModule target) {
-        if (!scope.isSuperadmin()) return scope.domain();
+    private static String rowDomain(PrincipalDomain scope, FederationModule target) {
+        if (!scope.superadmin()) return scope.domain();
         String d = target.getDomain();
-        return d == null ? DomainScope.of("default").domain() : d;
+        return d == null ? PrincipalDomain.forDomain("default").domain() : d;
     }
 
     private Mono<?> applyToModule(FederationModule m, String action) {
@@ -193,8 +193,8 @@ public class OverrideService {
      * domain so a per-domain admin can NEVER re-arm another brand's module
      * (cross-domain slug -> 404). SUPERADMIN re-arms any module.
      */
-    public Mono<FederationModule> rearm(String moduleSlug, DomainScope domainScope) {
-        Mono<FederationModule> found = domainScope.isSuperadmin()
+    public Mono<FederationModule> rearm(String moduleSlug, PrincipalDomain domainScope) {
+        Mono<FederationModule> found = domainScope.superadmin()
                 ? modules.findBySlug(moduleSlug)
                 : modules.findBySlugAndDomain(moduleSlug, domainScope.domain());
         return found
@@ -218,9 +218,9 @@ public class OverrideService {
      * admin can never re-arm a brand-Y kill. SUPERADMIN clears matching rows in every
      * brand. Returns the number of rows cleared. Scope kills are render-time only, so
      * clearing the row is sufficient to restore; per-module recovery still uses
-     * {@link #rearm(String, DomainScope)}.
+     * {@link #rearm(String, PrincipalDomain)}.
      */
-    public Mono<Long> clearScope(String scope, String target, DomainScope domainScope) {
+    public Mono<Long> clearScope(String scope, String target, PrincipalDomain domainScope) {
         if (!isScope(scope)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "scope must be all | role | user"));
         }
@@ -229,7 +229,7 @@ public class OverrideService {
                 : overrides.findByScopeAndTargetAndClearedAtIsNull(scope, target);
         Instant now = Instant.now();
         return active
-                .filter(o -> domainScope.isSuperadmin() || matchesDomain(o, domainScope.domain()))
+                .filter(o -> domainScope.superadmin() || matchesDomain(o, domainScope.domain()))
                 .flatMap(o -> {
                     o.setClearedAt(now);
                     return overrides.save(o);
@@ -241,7 +241,7 @@ public class OverrideService {
      *  (pre-026 data) is treated as {@code "default"} so legacy rows are clearable by
      *  a default-domain admin (single-issuer back-compat). */
     private static boolean matchesDomain(FederationOverride o, String domain) {
-        String d = o.getDomain() == null ? DomainScope.of("default").domain() : o.getDomain();
+        String d = o.getDomain() == null ? PrincipalDomain.forDomain("default").domain() : o.getDomain();
         return d.equals(domain);
     }
 
@@ -285,7 +285,7 @@ public class OverrideService {
                                                    String setBy, String source) {
         // Back-compat overload: single-issuer / legacy callers land the row in the
         // 'default' domain (matches their DOMAIN_default principals + pre-026 rows).
-        return applyUserScope(ownerUsername, action, setBy, source, DomainScope.of("default"));
+        return applyUserScope(ownerUsername, action, setBy, source, PrincipalDomain.forDomain("default"));
     }
 
     /**
@@ -297,7 +297,7 @@ public class OverrideService {
      */
     @CircuitBreaker(name = CB)
     public Mono<FederationOverride> applyUserScope(String ownerUsername, String action,
-                                                   String setBy, String source, DomainScope domainScope) {
+                                                   String setBy, String source, PrincipalDomain domainScope) {
         if (ownerUsername == null || ownerUsername.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "ownerUsername is required"));
         }
@@ -345,8 +345,8 @@ public class OverrideService {
         // Back-compat overload: the internal suspension-lift caller (admin-bff / mod-bff)
         // clears by source across EVERY brand. This is the SUPERADMIN-equivalent (no
         // domain predicate) and is NOT reachable from the per-domain admin endpoint —
-        // the controller always threads a resolved DomainScope (see the scoped overload).
-        return clearScopeBySource(source, DomainScope.superadmin());
+        // the controller always threads a resolved PrincipalDomain (see the scoped overload).
+        return clearScopeBySource(source, PrincipalDomain.superadminFor(null));
     }
 
     /**
@@ -359,9 +359,9 @@ public class OverrideService {
      * {@link #clearScopeBySource(String)} directly, so a domain-A admin who knew /
      * guessed a domain-B {@code reason} (e.g. {@code 'access_suspension:<id>'}) could
      * clear domain-B's row — a cross-tenant authz gap. This overload mirrors
-     * {@link #clearScope(String, String, DomainScope)}: the matched active rows are
+     * {@link #clearScope(String, String, PrincipalDomain)}: the matched active rows are
      * filtered to {@code domainScope.domain()} (a row in another brand is skipped,
-     * never saved/stamped), and SUPERADMIN ({@link DomainScope#isSuperadmin()}) sees
+     * never saved/stamped), and SUPERADMIN ({@link PrincipalDomain#isSuperadmin()}) sees
      * all. The cache is invalidated only after the (scoped) save stream completes so
      * the rearmed owner's modules return on the next render.
      *
@@ -373,7 +373,7 @@ public class OverrideService {
      * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all)
      */
     @CircuitBreaker(name = CB)
-    public Mono<Long> clearScopeBySource(String source, DomainScope domainScope) {
+    public Mono<Long> clearScopeBySource(String source, PrincipalDomain domainScope) {
         if (source == null || source.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "source is required"));
         }
@@ -381,7 +381,7 @@ public class OverrideService {
         return overrides.findByReasonAndClearedAtIsNull(source.trim())
                 // CROSS-TENANT CUT: a per-domain admin clears ONLY their own brand's
                 // rows; SUPERADMIN clears matching rows in every brand.
-                .filter(o -> domainScope.isSuperadmin() || matchesDomain(o, domainScope.domain()))
+                .filter(o -> domainScope.superadmin() || matchesDomain(o, domainScope.domain()))
                 .flatMap(o -> {
                     o.setClearedAt(now);
                     return overrides.save(o);
@@ -395,8 +395,8 @@ public class OverrideService {
     /** The domain to stamp on a directly-written override row: the principal's
      *  domain, or {@code "default"} for a SUPERADMIN write (no domain in scope).
      *  NEVER taken from a request body. */
-    private static String domainForWrite(DomainScope scope) {
-        return scope.isSuperadmin() ? DomainScope.of("default").domain() : scope.domain();
+    private static String domainForWrite(PrincipalDomain scope) {
+        return scope.superadmin() ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
     private static boolean isAction(String a) {

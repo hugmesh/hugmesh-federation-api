@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.ModerationRequest;
-import systems.snapdragon.federation.security.DomainRegistry;
-import systems.snapdragon.federation.security.DomainScope;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.ModerationService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -68,7 +68,7 @@ public class ModerationController {
             @RequestParam(required = false)
             @Pattern(regexp = ValidationPatterns.MODERATION_STATUS,
                     message = "status must be recommended|referred|approved|denied") String status) {
-        DomainScope scope = DomainScope.resolve(jwt, domains);
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         return status == null ? moderation.list(scope) : moderation.listByStatus(status, scope);
     }
 
@@ -77,7 +77,7 @@ public class ModerationController {
     @PreAuthorize("hasAnyRole('MOD','ADMIN','SUPERADMIN')")
     public Mono<ModerationRequest> submit(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody SubmitRequest req) {
         return moderation.submit(jwt.getSubject(), req.kind(), req.target(), req.reason(),
-                DomainScope.resolve(jwt, domains));
+                PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Refer a request up to admins (mod escalates; scoped to the caller's domain).")
@@ -85,7 +85,7 @@ public class ModerationController {
     @PreAuthorize("hasAnyRole('MOD','ADMIN','SUPERADMIN')")
     public Mono<ModerationRequest> refer(@AuthenticationPrincipal Jwt jwt,
                                          @PathVariable @Positive(message = "id must be a positive number") Long id) {
-        return moderation.refer(id, jwt.getSubject(), DomainScope.resolve(jwt, domains));
+        return moderation.refer(id, jwt.getSubject(), PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "Decide a request (admin approves / denies; scoped to the caller's domain).")
@@ -94,6 +94,6 @@ public class ModerationController {
     public Mono<ModerationRequest> decide(@AuthenticationPrincipal Jwt jwt,
                                           @PathVariable @Positive(message = "id must be a positive number") Long id,
                                           @RequestParam boolean approve) {
-        return moderation.decide(id, approve, jwt.getSubject(), DomainScope.resolve(jwt, domains));
+        return moderation.decide(id, approve, jwt.getSubject(), PrincipalDomain.resolve(jwt, domains));
     }
 }

@@ -1,18 +1,16 @@
-# Slice / context-load test profile. No external infra: R2DBC + Liquibase point
-# at an embedded H2 (the @DataR2dbcTest slices use TestDatabaseConfig instead;
-# this file backs the full-context smoke test). Cassandra is disabled so the
-# noop manifest cache wins; bundle storage is filesystem under a temp dir.
+# Full-context test profile. The DB (R2DBC for the app + JDBC for Liquibase) is a
+# REAL Postgres container wired by spring-boot-testcontainers @ServiceConnection in
+# PostgresTestSupport — NO H2 here (the @DataR2dbcTest slices still use H2 via
+# TestDatabaseConfig). Cassandra is disabled so the noop manifest cache wins; bundle
+# storage is filesystem under a temp dir.
+#
+# spring.r2dbc.url / spring.liquibase.url are deliberately ABSENT: @ServiceConnection
+# supplies both the r2dbc ConnectionFactory and the Liquibase JDBC connection details,
+# pointed at the SAME container, so Liquibase migrates the DB the app then reads.
 spring:
-  r2dbc:
-    url: "r2dbc:h2:mem:///fed_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD="
-    username: sa
-    password: ""
   liquibase:
     enabled: true
     change-log: "classpath:db/changelog/db.changelog-master.xml"
-    url: "jdbc:h2:mem:fed_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE"
-    user: sa
-    password: ""
   security:
     oauth2:
       resourceserver:

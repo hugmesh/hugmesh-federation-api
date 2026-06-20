@@ -4,7 +4,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -15,6 +15,7 @@ import systems.snapdragon.federation.model.FederationManifestDto;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.UserModuleRepository;
+import systems.snapdragon.commons.testsupport.PostgresTestSupport;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.time.Instant;
@@ -31,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Two per-brand {@link TestIssuer} servers ({@code brandx}, {@code brandy}) plus
  * an untrusted {@code rogue} issuer give the
- * {@link systems.snapdragon.federation.security.DomainRegistry} two trusted issuers
+ * {@link systems.snapdragon.commons.security.DomainRegistry} two trusted issuers
  * (so {@code isMultiIssuer()} holds and the per-issuer resolver swaps in) and an
  * unlisted one (for the fail-closed end-to-end case). A brand's token validates ONLY
  * against that brand's manager, so the per-request domain is the cryptographically
@@ -40,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Coverage (comprehensive test standard categories):
  * <ul>
  *   <li><b>MANIFEST</b> — anon 401; an unknown-issuer token 401s at the DECODER
- *       (so DomainScope is never reached); VISIBILITY cut (internal remote hidden
+ *       (so PrincipalDomain is never reached); VISIBILITY cut (internal remote hidden
  *       from a plain user, shown to admin); DOMAIN cut (brand-X sees only brand-X
  *       remotes, never brand-Y).</li>
  *   <li><b>MODULE REGISTRY / OVERRIDE</b> — USER 403, anon 401, brand-X admin 404
@@ -56,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @AutoConfigureWebTestClient
 @ActiveProfiles("test")
-class FederationHttpAuthzE2eTest {
+class FederationHttpAuthzE2eTest extends PostgresTestSupport {
 
     private static final TestIssuer BRANDX = new TestIssuer();
     private static final TestIssuer BRANDY = new TestIssuer();
@@ -71,10 +72,8 @@ class FederationHttpAuthzE2eTest {
         // jwk-set-uri stays so Boot's lazy default decoder bean still builds.
         reg.add("app.tenancy.issuers",
                 () -> BRANDX.issuerUri() + "=brandx," + BRANDY.issuerUri() + "=brandy");
-        reg.add("spring.r2dbc.url", () ->
-                "r2dbc:h2:mem:///fed_e2e_authz_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;USER=sa;PASSWORD=");
-        reg.add("spring.liquibase.url", () ->
-                "jdbc:h2:mem:fed_e2e_authz_ctx;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=ACTION,TARGET,VALUE,KEY,VERSION;DATABASE_TO_LOWER=TRUE");
+        // DB wiring (r2dbc + liquibase) comes from PostgresTestSupport's @ServiceConnection
+        // container — the H2 dual-URL lines were dropped.
     }
 
     @AfterAll
@@ -126,7 +125,7 @@ class FederationHttpAuthzE2eTest {
     void manifest_unknownIssuerToken_is401_atDecoder_beforeDomainScope() {
         // A perfectly valid, correctly-signed JWT — its iss is just NOT in
         // app.tenancy.issuers. The per-issuer resolver returns empty -> 401 at the
-        // decoder, BEFORE the controller (and DomainScope.resolve) runs. Fail-closed.
+        // decoder, BEFORE the controller (and PrincipalDomain.resolve) runs. Fail-closed.
         web.get().uri("/api/federation/manifest")
                 .header("Authorization", "Bearer " + token(ROGUE, "attacker", List.of("admin", "superadmin")))
                 .exchange()

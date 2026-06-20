@@ -9,13 +9,18 @@ spring:
   # actuator Cassandra health contributor would fail a no-Cassandra boot). Exclude
   # the auto-config so startup never depends on a reachable Cassandra — matching
   # admin-bff's "driver only, no spring-data autoconfig" design.
+  # Spring Boot 4 split auto-configuration into per-module packages: the Cassandra
+  # auto-config classes moved out of o.s.b.autoconfigure.* / o.s.b.actuate.autoconfigure.*
+  # into o.s.b.cassandra.autoconfigure.* / o.s.b.data.cassandra.autoconfigure.*. The old
+  # FQCNs are silently ignored (a non-matching exclusion is a no-op), so they MUST be
+  # updated or Cassandra auto-config re-activates and eagerly dials at startup.
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.cassandra.CassandraAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.cassandra.CassandraReactiveDataAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.cassandra.CassandraReactiveRepositoriesAutoConfiguration
-      - org.springframework.boot.actuate.autoconfigure.cassandra.CassandraHealthContributorAutoConfiguration
-      - org.springframework.boot.actuate.autoconfigure.cassandra.CassandraReactiveHealthContributorAutoConfiguration
+      - org.springframework.boot.cassandra.autoconfigure.CassandraAutoConfiguration
+      - org.springframework.boot.data.cassandra.autoconfigure.DataCassandraReactiveAutoConfiguration
+      - org.springframework.boot.data.cassandra.autoconfigure.DataCassandraReactiveRepositoriesAutoConfiguration
+      - org.springframework.boot.cassandra.autoconfigure.health.CassandraHealthContributorAutoConfiguration
+      - org.springframework.boot.cassandra.autoconfigure.health.CassandraReactiveHealthContributorAutoConfiguration
 
   security:
     oauth2:

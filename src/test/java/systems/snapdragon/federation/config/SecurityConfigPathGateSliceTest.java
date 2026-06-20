@@ -9,7 +9,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import systems.snapdragon.federation.security.DomainRegistry;
+import systems.snapdragon.commons.config.TenancyResourceServerConfig;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.config.TenancyResolvers;
 import systems.snapdragon.federation.testsupport.TestIssuer;
 
 import java.util.List;
@@ -37,7 +39,7 @@ import java.util.List;
  *   <li><b>UNKNOWN-ISSUER FAIL-CLOSED END-TO-END</b> — a well-formed, correctly
  *       signed token from an issuer NOT in {@code app.tenancy.issuers}, presented to
  *       {@code /api/federation/manifest}, 401s at the DECODER — so
- *       {@code DomainScope.resolve(...)} is NEVER reached for an untrusted tenant;</li>
+ *       {@code PrincipalDomain.resolve(...)} is NEVER reached for an untrusted tenant;</li>
  *   <li><b>USER-SITUATIONAL DENY</b> — {@code ROLE_USER} is 403 on the privileged
  *       paths (modules / overrides / username oracle), and even on the moderation
  *       surface (which floors at MOD);</li>
@@ -66,7 +68,7 @@ class SecurityConfigPathGateSliceTest extends SecuritySliceSupport {
         DomainRegistry registry = new DomainRegistry(brandX.issuerUri(), issuersCsv);
         TenancyResourceServerConfig tenancy = new TenancyResourceServerConfig(registry, "", "", false, 600_000L);
         ReactiveAuthenticationManagerResolver<ServerWebExchange> resolver =
-                tenancy.tenantAuthManagerResolver();
+                TenancyResolvers.tenantResolver(tenancy);
         client = sliceClient(registry, provider(resolver), new ProbeController());
     }
 
@@ -96,14 +98,14 @@ class SecurityConfigPathGateSliceTest extends SecuritySliceSupport {
         client.get().uri("/api/federation/bundles/some-bundle").exchange().expectStatus().isUnauthorized();
     }
 
-    // ── UNKNOWN-ISSUER FAIL-CLOSED END-TO-END (DomainScope never reached) ──────
+    // ── UNKNOWN-ISSUER FAIL-CLOSED END-TO-END (PrincipalDomain never reached) ──────
 
     @Test
     void crossUser_unknownIssuerToken_onManifest_is401_beforeDomainScope() {
         // The rogue issuer mints a well-formed, correctly-signed JWT carrying admin +
         // a forged domain — but its `iss` is NOT in app.tenancy.issuers. The per-issuer
         // resolver returns Mono.empty() -> 401 at the DECODER, BEFORE the controller (and
-        // thus before DomainScope.resolve) ever runs. This is the end-to-end proof that
+        // thus before PrincipalDomain.resolve) ever runs. This is the end-to-end proof that
         // an untrusted tenant can never reach the domain-scoped query layer.
         String token = rogue.mint("attacker", List.of("admin", "superadmin"));
         client.get().uri("/api/federation/manifest")
