@@ -24,6 +24,44 @@ It is built by reusing two proven references — a DB-backed federation engine a
 the productionised snapdragon-admin-bff-api conventions — not by inventing new
 patterns.
 
+## Current State
+
+> Snapshot as of 2026-06-20. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
+
+- ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.2 / Spring
+  Cloud 2025.1** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 21,
+  GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
+  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.0.0`
+  (a child of `spring-boot-starter-parent:4.0.2`) and consumes
+  `systems.snapdragon:snapdragon-commons:2.0.0` for the shared security/tenancy
+  primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
+  `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
+  commons library*.
+- ✅ **Pure Casdoor-JWT resource server, no login/session logic here.** This
+  service NEVER mints, exchanges or refreshes tokens and holds no session state.
+  It deliberately does **not** depend on the new `snapdragon-auth-core` artifact —
+  that account/session/MFA/Casdoor-admin core is consumed only by **user-bff** and
+  **admin-bff**, where login/session/account logic now lives (the platform-wide
+  relocation of login from admin-bff → user-bff does not touch this repo). The
+  browser holds only an **opaque `bff_` session**; the gateway swaps `bff_` → the
+  internal custody JWT *before* the request reaches a resource server, so by the
+  time a token arrives here it is an ordinary, already-validated Casdoor JWT. We
+  re-validate it and map claims with the commons converter.
+- ✅ **Multi-tenancy (domain scoping) shipped.** Tenant is keyed on the
+  cryptographically-validated issuer (`iss` → one `DOMAIN_<x>`); per-domain finders
+  + `SUPERADMIN` cross-domain bypass enforced in code + the QUERY (changeset `026`).
+- ✅ **The federation surface is feature-complete for the scaffold's scope:** the
+  manifest read path + kill-switch, the public `/capabilities` projection, vanity
+  resolve (+ suspension 404), owner-scoped bundle storage (filesystem + S3/MinIO),
+  the internal username/confusable gate, moderation, and the optional-service +
+  static-union module seeds. MFA_SATISFIED authority parity is inherited from the
+  commons converter, but **no federation route gates on it** today.
+- ✅ **GitLab CI only** (`.gitlab-ci.yml`) — the continuous-OWASP pen-test stages
+  (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
+  from `snapdragon-generator`. **No GitHub Actions anywhere.**
+- 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
+  PUBLISH trigger is the headline cross-service gap; the resolve half is shipped).
+
 ## Where it sits in the architecture
 
 | | |
@@ -74,7 +112,7 @@ de-duplication moves:
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:1.0.0`.
+2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:2.0.0`.
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -648,9 +686,10 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
 - 🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**` +
   `/capabilities` — a one-line change in the `snapdragon-gateway` repo (see above).
 - 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
-  Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). If
-  fail-closed MFA gating is ever extended to federation routes it will be noted
-  here — it is **not** enforced on this service today.
+  Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). The
+  shared commons converter already emits the `MFA_SATISFIED` authority (parity with
+  the gateway), but **no federation route gates on it today**; if fail-closed MFA
+  gating is ever extended to federation routes it will be noted here.
 - 🚧 **Superadmin Service Catalog TAILSCALE-VPN-ONLY federated remotes.** The in-flight
   superadmin Service Catalog will register tailnet-only federated remote modules in
   *this* registry as a future module class (off the public UI, gateway role-blocked
@@ -671,5 +710,3 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
   `DomainRegistry`, `Roles` helpers and `TenancyResourceServerConfig` are the
   canonical gateway code, copied verbatim so authorities + domain derivation are
   byte-identical across the platform.
-</content>
-</invoke>
