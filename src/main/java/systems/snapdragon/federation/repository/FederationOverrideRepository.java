@@ -58,6 +58,18 @@ public interface FederationOverrideRepository extends ReactiveCrudRepository<Fed
      * {@code OverrideService.clearScopeBySource} so an expiring suspension clears
      * ONLY the row(s) it wrote — never a manual admin kill (which carries a NULL /
      * different {@code reason}). Indexed on {@code reason}.
+     *
+     * <p>SUPERADMIN tier uses this (active source rows across ALL domains).
      */
     Flux<FederationOverride> findByReasonAndClearedAtIsNull(String reason);
+
+    /**
+     * DOMAIN-scoped source-override clear (multi-tenancy): the same
+     * {@code reason}-pinned active row set ({@code cleared_at IS NULL}), further
+     * pinned to a single {@code domain}. A per-domain ADMIN can clear ONLY the
+     * override row(s) their own brand created — never another brand's source-tagged
+     * row (cross-domain rearm is denied by returning empty, not a 403, so the caller
+     * can never guess foreign domain identifiers from the response count).
+     */
+    Flux<FederationOverride> findByReasonAndClearedAtIsNullAndDomain(String reason, String domain);
 }

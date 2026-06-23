@@ -475,6 +475,28 @@ class CrossDomainWriteIsolationTest extends PostgresTestSupport {
                 .isEmpty();
     }
 
+    @Test
+    void clearSource_missingSource_returns400() {
+        // Validation: blank source is rejected before reaching the service.
+        post("/api/federation/overrides/clear-source", adminX())
+                .bodyValue("""
+                        {"source":""}
+                        """)
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
+
+    @Test
+    void clearSource_unauthenticated_returns401() {
+        web.post().uri("/api/federation/overrides/clear-source")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"source":"access_suspension:999"}
+                        """)
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
     // ───────────────────────── fixtures ─────────────────────────
 
     private static FederationModule module(String slug, String domain, String circuit, boolean enabled) {

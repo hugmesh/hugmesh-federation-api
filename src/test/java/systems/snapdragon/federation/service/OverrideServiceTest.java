@@ -317,7 +317,8 @@ class OverrideServiceTest {
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         ManifestCache cache = noopCache();
         FederationOverride mine = suspensionRow("alice", "brand-a", "access_suspension:42");
-        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:42"))
+        // Domain-pinned finder returns the matching row for brand-a.
+        when(overrides.findByReasonAndClearedAtIsNullAndDomain("access_suspension:42", "brand-a"))
                 .thenReturn(Flux.just(mine));
         ArgumentCaptor<FederationOverride> saved = ArgumentCaptor.forClass(FederationOverride.class);
         when(overrides.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
@@ -328,6 +329,9 @@ class OverrideServiceTest {
                 .expectNext(1L)
                 .verifyComplete();
 
+        // Domain-pinned finder is used (NOT the broad cross-domain finder).
+        verify(overrides).findByReasonAndClearedAtIsNullAndDomain("access_suspension:42", "brand-a");
+        verify(overrides, never()).findByReasonAndClearedAtIsNull(any());
         assertThat(saved.getValue().getClearedAt()).isNotNull(); // rearmed
         verify(cache).invalidate();
     }
@@ -335,13 +339,13 @@ class OverrideServiceTest {
     @Test
     void clearScopeBySource_crossDomainAdmin_scopedOut_neverCleared() {
         // A brand-A admin tries to clear a row that belongs to brand-B (e.g. by
-        // guessing the source tag). The matched row is filtered out by domain, so it
-        // is NEVER saved/stamped -> stays ACTIVE (the prior attempt's cross-tenant gap).
+        // guessing the source tag). The domain-pinned finder returns empty for
+        // brand-A, so the brand-B row is NEVER saved/stamped -> stays ACTIVE.
         FederationOverrideRepository overrides = mock(FederationOverrideRepository.class);
         ManifestCache cache = noopCache();
-        FederationOverride otherBrand = suspensionRow("bob", "brand-b", "access_suspension:42");
-        when(overrides.findByReasonAndClearedAtIsNull("access_suspension:42"))
-                .thenReturn(Flux.just(otherBrand));
+        // Brand-A admin queries brand-A domain — the brand-B row is invisible.
+        when(overrides.findByReasonAndClearedAtIsNullAndDomain("access_suspension:42", "brand-a"))
+                .thenReturn(Flux.empty());
 
         OverrideService svc = new OverrideService(overrides, mock(FederationModuleRepository.class), cache);
 
@@ -349,9 +353,11 @@ class OverrideServiceTest {
                 .expectNext(0L) // nothing of brand-A's to clear
                 .verifyComplete();
 
-        // The brand-B row is never stamped -> the suspension stays in force.
+        // Only the domain-pinned finder is consulted — the broad finder is never called.
+        verify(overrides).findByReasonAndClearedAtIsNullAndDomain("access_suspension:42", "brand-a");
+        verify(overrides, never()).findByReasonAndClearedAtIsNull(any());
+        // No row was stamped.
         verify(overrides, never()).save(any());
-        assertThat(otherBrand.getClearedAt()).isNull();
     }
 
     @Test
@@ -371,6 +377,9 @@ class OverrideServiceTest {
                 .expectNext(2L)
                 .verifyComplete();
 
+        // Cross-domain (un-pinned) finder used for SUPERADMIN.
+        verify(overrides).findByReasonAndClearedAtIsNull("access_suspension:42");
+        verify(overrides, never()).findByReasonAndClearedAtIsNullAndDomain(any(), any());
         assertThat(brandA.getClearedAt()).isNotNull();
         assertThat(brandB.getClearedAt()).isNotNull();
     }
@@ -392,5 +401,18 @@ class OverrideServiceTest {
         StepVerifier.create(svc.clearScopeBySource("access_suspension:7"))
                 .expectNext(2L)
                 .verifyComplete();
+
+        verify(overrides).findByReasonAndClearedAtIsNull("access_suspension:7");
+        verify(overrides, never()).findByReasonAndClearedAtIsNullAndDomain(any(), any());
+        assertThat(brandA.getClearedAt()).isNotNull();
+        assertThat(brandB.getClearedAt()).isNotNull();
+    }
+
+    @Test
+    void clearScopeBySource_domainScoped_requiresSource() {
+        OverrideService svc = service(
+                mock(FederationOverrideRepository.class), mock(FederationModuleRepository.class));
+        StepVerifier.create(svc.clearScopeBySource("  ", PrincipalDomain.forDomain("brandx"))).expectError().verify();
+        StepVerifier.create(svc.clearScopeBySource(null, PrincipalDomain.superadminFor(null))).expectError().verify();
     }
 }

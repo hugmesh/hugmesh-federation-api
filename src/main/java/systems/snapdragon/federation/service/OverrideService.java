@@ -335,6 +335,11 @@ public class OverrideService {
      * and is therefore never rearmed. After clearing, the manifest cache is
      * invalidated so the owner's modules return on the next render.
      *
+     * <p>This overload is the BACK-COMPAT / LEGACY entry-point (single-issuer,
+     * no JWT in scope). It delegates to the domain-scoped overload with a
+     * SUPERADMIN scope so the un-pinned (cross-domain) finder is used. Callers
+     * that do have a JWT MUST use the domain-scoped overload directly.
+     *
      * <p>Returns the number of rows cleared. Wrapped in {@code @CircuitBreaker}
      * (fail-fast) for symmetry with {@link #applyUserScope}.
      *
@@ -359,11 +364,12 @@ public class OverrideService {
      * {@link #clearScopeBySource(String)} directly, so a domain-A admin who knew /
      * guessed a domain-B {@code reason} (e.g. {@code 'access_suspension:<id>'}) could
      * clear domain-B's row — a cross-tenant authz gap. This overload mirrors
-     * {@link #clearScope(String, String, PrincipalDomain)}: the matched active rows are
-     * filtered to {@code domainScope.domain()} (a row in another brand is skipped,
-     * never saved/stamped), and SUPERADMIN ({@link PrincipalDomain#isSuperadmin()}) sees
-     * all. The cache is invalidated only after the (scoped) save stream completes so
-     * the rearmed owner's modules return on the next render.
+     * {@link #clearScope(String, String, PrincipalDomain)}: for a per-domain ADMIN the
+     * domain-pinned repository finder ({@link FederationOverrideRepository#findByReasonAndClearedAtIsNullAndDomain})
+     * is used — a brand-A admin supplying a brand-B source tag finds ZERO matching rows
+     * in their own domain and clears nothing. SUPERADMIN ({@link PrincipalDomain#superadmin()})
+     * uses the un-pinned finder and sees all. The cache is invalidated only after the
+     * (scoped) save stream completes so the rearmed owner's modules return on the next render.
      *
      * <p>A pre-026 row with a NULL domain is treated as {@code "default"} (see
      * {@link #matchesDomain}) so a default-domain admin can still rearm legacy rows
@@ -377,11 +383,12 @@ public class OverrideService {
         if (source == null || source.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "source is required"));
         }
+        String trimmed = source.trim();
         Instant now = Instant.now();
-        return overrides.findByReasonAndClearedAtIsNull(source.trim())
-                // CROSS-TENANT CUT: a per-domain admin clears ONLY their own brand's
-                // rows; SUPERADMIN clears matching rows in every brand.
-                .filter(o -> domainScope.superadmin() || matchesDomain(o, domainScope.domain()))
+        Flux<FederationOverride> active = domainScope.superadmin()
+                ? overrides.findByReasonAndClearedAtIsNull(trimmed)
+                : overrides.findByReasonAndClearedAtIsNullAndDomain(trimmed, domainScope.domain());
+        return active
                 .flatMap(o -> {
                     o.setClearedAt(now);
                     return overrides.save(o);
