@@ -10,12 +10,14 @@ import systems.snapdragon.federation.model.FederationManifestDto;
 import systems.snapdragon.federation.model.FederationManifestDto.FederationRemoteDto;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
+import systems.snapdragon.federation.model.ScopeKind;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
 import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.commons.security.Roles;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -64,8 +66,14 @@ public class ManifestService {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** The scope kinds that are applied at render time (not via per-module mutation). */
-    private static final List<String> SCOPE_KINDS = List.of("all", "user", "role");
+    /**
+     * The scope kinds applied at render time (not via per-module mutation), as the
+     * lowercase wire tokens the {@code scope IN (...)} DB finder expects. DERIVED from
+     * {@link ScopeKind} so the in-clause can never drift from the enum, while the
+     * actual values passed to R2DBC stay the identical {@code [all, user, role]}.
+     */
+    private static final List<String> SCOPE_KINDS =
+            Arrays.stream(ScopeKind.values()).map(ScopeKind::value).toList();
 
     private final FederationModuleRepository repo;
     private final FederationOverrideRepository overrides;
@@ -129,29 +137,64 @@ public class ManifestService {
                 ? repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed")
                 : repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", domain);
 
+        // Whether THIS render may be written through to the shared cache: only the
+        // public-safe DEFAULT-domain view (no internal rows, no cross-domain superset)
+        // is cacheable, so a tokenless poller never sees internal/other-brand remotes.
+        boolean cacheable = isPublicSafeDefaultRender(canSeeInternal, superadmin, domain);
+
+        // Linear pipeline (was a 4-level nested lambda):
+        //   1. load the active scope-override set once,
+        //   2. filter+assemble the modules into a manifest against it,
+        //   3. write-through the cache only when this render is public-safe.
         return activeScope
                 .collectList()
-                .flatMap(active -> modules
-                        .filter(m -> isVisibleTo(m, canSeeInternal))
-                        .filter(m -> !isSuppressedByScope(m, active)) // active scope cut
-                        .map(FederationRemoteDto::from)
-                        .collectList()
-                        .map(remotes -> new FederationManifestDto(Instant.now().toString(), remotes))
-                        .flatMap(manifest -> {
-                            // Write-through ONLY the public-safe DEFAULT-domain view
-                            // (no internal rows, no superadmin cross-domain superset)
-                            // so a cache poller without a token never sees internal
-                            // remotes NOR another brand's remotes. Best-effort; failure
-                            // swallowed in the cache. (A per-brand cache key is a later
-                            // enhancement — until then only the canonical default
-                            // public view is cached, never a brand-specific or
-                            // cross-domain one.)
-                            if (!canSeeInternal && !superadmin
-                                    && PrincipalDomain.forDomain("default").domain().equals(domain)) {
-                                return cache.put(manifest).thenReturn(manifest);
-                            }
-                            return Mono.just(manifest);
-                        }));
+                .flatMap(active -> assembleManifest(modules, active, canSeeInternal))
+                .flatMap(manifest -> cacheIfPublicSafe(manifest, cacheable));
+    }
+
+    /**
+     * Apply the per-caller cuts to the module stream and assemble the manifest DTO:
+     * drop internal rows the caller may not see (visibility cut), drop rows an ACTIVE
+     * scope override suppresses (kill-switch cut), then project the survivors to
+     * remote DTOs under a fresh {@code generatedAt}. Behaviour is identical to the
+     * prior inline chain; only the nesting is gone.
+     */
+    private Mono<FederationManifestDto> assembleManifest(Flux<FederationModule> modules,
+                                                         List<FederationOverride> active,
+                                                         boolean canSeeInternal) {
+        return modules
+                // visibility cut: internal rows only for admin/internal callers
+                .filter(m -> isVisibleTo(m, canSeeInternal))
+                // active scope-override cut: drop any module a live kill-switch matches
+                .filter(m -> !isSuppressedByScope(m, active))
+                // project each surviving module row to its public remote descriptor
+                .map(FederationRemoteDto::from)
+                .collectList()
+                // stamp the render time and wrap the remotes into the manifest body
+                .map(remotes -> new FederationManifestDto(Instant.now().toString(), remotes));
+    }
+
+    /**
+     * Best-effort write-through: a public-safe DEFAULT-domain render is stored so a
+     * tokenless poller can serve it; every other render (internal-bearing, superadmin
+     * cross-domain, or a brand-specific view) is returned WITHOUT touching the cache
+     * so it can never leak. A per-brand cache key is a later enhancement — until then
+     * only the canonical default public view is ever cached. Cache failure is
+     * swallowed inside the cache, so this never breaks the read path.
+     */
+    private Mono<FederationManifestDto> cacheIfPublicSafe(FederationManifestDto manifest, boolean cacheable) {
+        if (cacheable) {
+            return cache.put(manifest).thenReturn(manifest);
+        }
+        return Mono.just(manifest);
+    }
+
+    /** A render is public-safe (cacheable) iff it carries no internal rows, is not the
+     *  superadmin cross-domain superset, and targets the canonical DEFAULT domain. */
+    private static boolean isPublicSafeDefaultRender(boolean canSeeInternal, boolean superadmin, String domain) {
+        return !canSeeInternal
+                && !superadmin
+                && PrincipalDomain.forDomain("default").domain().equals(domain);
     }
 
     /** Visibility/role cut: public to all; internal only to admin/internal callers. */
@@ -193,19 +236,26 @@ public class ManifestService {
     }
 
     private static boolean matches(FederationModule m, FederationOverride o) {
-        String scope = o.getScope();
-        if ("all".equals(scope)) {
-            return true;
+        // Route the closed all|user|role vocabulary through the ScopeKind enum. The
+        // stored value is the SAME lowercase string; fromWire is a null-tolerant lens
+        // (an unknown/null scope -> null -> "matches nothing", exactly the prior
+        // string-equals fall-through). No DB/JSON value changes.
+        ScopeKind kind = ScopeKind.fromWire(o.getScope());
+        if (kind == null) {
+            return false;
         }
-        if ("user".equals(scope)) {
-            return m.getOwnerUserId() != null && m.getOwnerUserId().equals(o.getTarget());
-        }
-        if ("role".equals(scope)) {
-            String required = requiresRole(m.getMetadata());
-            return required != null && o.getTarget() != null
-                    && required.equalsIgnoreCase(o.getTarget());
-        }
-        return false;
+        return switch (kind) {
+            // scope=all matches EVERY module (global kill — the override's target is NULL).
+            case ALL -> true;
+            // scope=user matches when the module's owner equals the override target.
+            case USER -> m.getOwnerUserId() != null && m.getOwnerUserId().equals(o.getTarget());
+            // scope=role matches when the module's declared requiresRole equals the target (case-insensitive).
+            case ROLE -> {
+                String required = requiresRole(m.getMetadata());
+                yield required != null && o.getTarget() != null
+                        && required.equalsIgnoreCase(o.getTarget());
+            }
+        };
     }
 
     /**

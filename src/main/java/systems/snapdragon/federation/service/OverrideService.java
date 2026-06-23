@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.cache.ManifestCache;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
+import systems.snapdragon.federation.model.ScopeKind;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
 import systems.snapdragon.commons.security.PrincipalDomain;
@@ -179,9 +180,10 @@ public class OverrideService {
     }
 
     /** Decision-1 target rule: NULL for 'all'; the scope_value for user/role; the
-     *  slug only when no scope_value was given (genuine per-slug intent). */
+     *  slug only when no scope_value was given (genuine per-slug intent). The
+     *  scope=all test goes through {@link ScopeKind} (same lowercase token). */
     private static String scopeForTarget(String scope, String moduleSlug, String scopeValue) {
-        if ("all".equals(scope)) {
+        if (ScopeKind.ALL == ScopeKind.fromWire(scope)) {
             return null;
         }
         return (scopeValue == null || scopeValue.isBlank()) ? moduleSlug : scopeValue;
@@ -224,8 +226,11 @@ public class OverrideService {
         if (!isScope(scope)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "scope must be all | role | user"));
         }
-        Flux<FederationOverride> active = "all".equals(scope)
-                ? overrides.findByScopeAndClearedAtIsNull("all")
+        // scope=all carries a NULL target, so it keys on scope alone; user/role key on
+        // scope+target. The branch test routes through ScopeKind; the value handed to
+        // the finder is still the identical lowercase token.
+        Flux<FederationOverride> active = ScopeKind.ALL == ScopeKind.fromWire(scope)
+                ? overrides.findByScopeAndClearedAtIsNull(ScopeKind.ALL.value())
                 : overrides.findByScopeAndTargetAndClearedAtIsNull(scope, target);
         Instant now = Instant.now();
         return active
@@ -310,7 +315,9 @@ public class OverrideService {
                     "source (reason tag) is required so the row is clearable by its source"));
         }
         FederationOverride o = new FederationOverride();
-        o.setScope("user");
+        // A profile-ban is always a per-owner (scope=user) kill; the stored column
+        // value is the identical lowercase "user" token (via ScopeKind).
+        o.setScope(ScopeKind.USER.value());
         o.setTarget(ownerUsername.trim());
         o.setAction(action);
         o.setSetBy(setBy);
@@ -410,7 +417,10 @@ public class OverrideService {
         return "circuit-break".equals(a) || "unpublish".equals(a) || "remove".equals(a);
     }
 
+    /** True iff {@code s} is a valid scope token ({@code all | role | user}) — routed
+     *  through {@link ScopeKind} so the accept/reject set is the enum, not a hand-kept
+     *  string list. The validated value is still the SAME lowercase string. */
     private static boolean isScope(String s) {
-        return "all".equals(s) || "role".equals(s) || "user".equals(s);
+        return ScopeKind.isValid(s);
     }
 }

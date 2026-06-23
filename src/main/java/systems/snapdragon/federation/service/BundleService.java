@@ -140,45 +140,74 @@ public class BundleService {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "slug required"));
         }
         String safeEntry = (entryFile == null || entryFile.isBlank()) ? "remoteEntry.json" : entryFile;
+        // Linear pipeline (was a 3-level nested lambda):
+        //   1. stage the body to a temp dir + content-hash + install -> [hash, locator],
+        //   2. owner-scoped supersede (fail-closed) then insert the new active row.
+        return stageAndInstall(slug, safeEntry, body)
+                .flatMap(hl -> insertNewVersion(
+                        ownerUserId, slug, safeEntry, visibility, manifestJson, admin, scope, hl));
+    }
+
+    /**
+     * Stage the uploaded body to a private temp dir, content-hash the staged tree, and
+     * install it via the {@link BundleStorage} strategy. Returns {@code [hash, locator]}.
+     * Path-traversal is rejected (the resolved entry must stay under the staging dir)
+     * BEFORE any byte is written. All blocking filesystem work runs on boundedElastic
+     * so the WebFlux event loop stays clean.
+     */
+    private Mono<String[]> stageAndInstall(String slug, String safeEntry, Flux<DataBuffer> body) {
         return Mono.fromCallable(() -> Files.createTempDirectory("fed-stage-"))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(staging -> {
-                    Path target = staging.resolve(safeEntry).normalize();
-                    if (!target.startsWith(staging)) {
-                        return Mono.error(new ResponseStatusException(BAD_REQUEST, "entryFile escapes bundle"));
-                    }
-                    return DataBufferUtils.write(body, target)
-                            .then(Mono.fromCallable(() -> {
-                                String hash = sha256OfTree(staging);
-                                String locator = storage.installFromStaging(slug, hash, staging);
-                                return new String[]{hash, locator};
-                            }).subscribeOn(Schedulers.boundedElastic()));
-                })
-                .flatMap(hl -> {
-                    String hash = hl[0];
-                    String locator = hl[1];
-                    // Owner-scoped supersede: rejects (409) a cross-owner PUT BEFORE
-                    // the new row is assembled/saved (fail-closed short-circuit).
-                    return supersedePriorOwned(ownerUserId, slug, admin)
-                            .then(Mono.defer(() -> {
-                                UserModule m = new UserModule();
-                                m.setOwnerUserId(ownerUserId);
-                                m.setSlug(slug);
-                                m.setVersionDir(locator);
-                                m.setEntryFile(safeEntry);
-                                m.setContentHash(hash);
-                                m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
-                                m.setVisibility(visibility == null ? "internal" : visibility);
-                                // DOMAIN stamp (changeset 035): the bundle's brand, taken
-                                // from the authenticated principal's scope — NEVER from a
-                                // request param — so the metadata reads can pin to it. A
-                                // SUPERADMIN publish lands in 'default' (no domain in scope),
-                                // mirroring ModuleRegistryService.domainForWrite.
-                                m.setDomain(domainForWrite(scope));
-                                m.setCreatedAt(Instant.now());
-                                return repo.save(m);
-                            }));
-                });
+                .flatMap(staging -> writeStagedBody(staging, safeEntry, body)
+                        .then(installStagedTree(slug, staging)));
+    }
+
+    /** Write the body to {@code <staging>/<safeEntry>}, rejecting an entry that escapes
+     *  the staging dir (zip-slip-style traversal) before the write runs. */
+    private static Mono<Void> writeStagedBody(Path staging, String safeEntry, Flux<DataBuffer> body) {
+        Path target = staging.resolve(safeEntry).normalize();
+        if (!target.startsWith(staging)) {
+            return Mono.error(new ResponseStatusException(BAD_REQUEST, "entryFile escapes bundle"));
+        }
+        return DataBufferUtils.write(body, target).then();
+    }
+
+    /** Content-hash the staged tree and install it as {@code <slug>/<hash>/...},
+     *  returning {@code [hash, locator]}. Blocking work runs on boundedElastic. */
+    private Mono<String[]> installStagedTree(String slug, Path staging) {
+        return Mono.fromCallable(() -> {
+            String hash = sha256OfTree(staging);
+            String locator = storage.installFromStaging(slug, hash, staging);
+            return new String[]{hash, locator};
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * Owner-scoped supersede (fail-closed: a cross-owner PUT is rejected with 409
+     * BEFORE the new row is assembled) then insert the new active {@code user_modules}
+     * row from {@code hl = [hash, locator]}. The {@code domain} column is stamped from
+     * the authenticated scope — NEVER from a request param — so a SUPERADMIN publish
+     * lands in {@code "default"} (mirrors ModuleRegistryService.domainForWrite).
+     */
+    private Mono<UserModule> insertNewVersion(String ownerUserId, String slug, String safeEntry,
+                                              String visibility, String manifestJson, boolean admin,
+                                              PrincipalDomain scope, String[] hl) {
+        String hash = hl[0];
+        String locator = hl[1];
+        return supersedePriorOwned(ownerUserId, slug, admin)
+                .then(Mono.defer(() -> {
+                    UserModule m = new UserModule();
+                    m.setOwnerUserId(ownerUserId);
+                    m.setSlug(slug);
+                    m.setVersionDir(locator);
+                    m.setEntryFile(safeEntry);
+                    m.setContentHash(hash);
+                    m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
+                    m.setVisibility(visibility == null ? "internal" : visibility);
+                    m.setDomain(domainForWrite(scope));
+                    m.setCreatedAt(Instant.now());
+                    return repo.save(m);
+                }));
     }
 
     /** Fetch a file from a bundle by content-hash — the remote-fragment SYNC read. */
@@ -205,18 +234,26 @@ public class BundleService {
     public Mono<Resource> readOwnBody(String ownerUserId, String slug, boolean admin) {
         return activeRowForCaller(ownerUserId, slug, admin)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug)))
-                .flatMap(m -> {
-                    String entry = (m.getEntryFile() == null || m.getEntryFile().isBlank())
-                            ? "remoteEntry.json" : m.getEntryFile();
-                    // storage.read returns null when the entry file is gone; wrap in
-                    // Optional so Reactor doesn't silently drop the null into onComplete.
-                    return Mono.fromCallable(() -> java.util.Optional.ofNullable(storage.read(m.getVersionDir(), entry)))
-                            .subscribeOn(Schedulers.boundedElastic())
-                            .flatMap(opt -> opt
-                                    .<Mono<Resource>>map(Mono::just)
-                                    .orElseGet(() -> Mono.error(
-                                            new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug))));
-                });
+                // read the active row's entry-file bytes (or 404 if the file is gone)
+                .flatMap(m -> readEntryFileOr404(m, slug));
+    }
+
+    /**
+     * Read the entry-file bytes of a {@code user_modules} row, or 404 when the entry
+     * file is gone from storage. {@code storage.read} returns {@code null} for a
+     * missing file, so the result is wrapped in an {@link java.util.Optional} — Reactor
+     * would otherwise silently drop a {@code null} into {@code onComplete} (an empty
+     * Mono), masking the missing-file case. Blocking read runs on boundedElastic.
+     */
+    private Mono<Resource> readEntryFileOr404(UserModule m, String slug) {
+        String entry = (m.getEntryFile() == null || m.getEntryFile().isBlank())
+                ? "remoteEntry.json" : m.getEntryFile();
+        return Mono.fromCallable(() -> java.util.Optional.ofNullable(storage.read(m.getVersionDir(), entry)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(opt -> opt
+                        .<Mono<Resource>>map(Mono::just)
+                        .orElseGet(() -> Mono.error(
+                                new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug))));
     }
 
     /**
