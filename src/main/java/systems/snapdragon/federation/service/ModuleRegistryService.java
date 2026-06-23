@@ -192,21 +192,27 @@ public class ModuleRegistryService {
                 : repo.findBySlugAndDomain(slug, scope.domain());
         return found
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no module: " + slug)))
-                .flatMap(existing -> {
-                    if (patch.getDisplayName() != null) existing.setDisplayName(patch.getDisplayName());
-                    if (patch.getKind() != null) existing.setKind(patch.getKind());
-                    if (patch.getRemoteEntryUrl() != null) existing.setRemoteEntryUrl(patch.getRemoteEntryUrl());
-                    if (patch.getExposedModule() != null) existing.setExposedModule(patch.getExposedModule());
-                    if (patch.getVersion() != null) existing.setVersion(patch.getVersion());
-                    if (patch.getContentHash() != null) existing.setContentHash(patch.getContentHash());
-                    if (patch.getVisibility() != null) existing.setVisibility(patch.getVisibility());
-                    if (patch.getCircuitState() != null) existing.setCircuitState(patch.getCircuitState());
-                    if (patch.getMetadata() != null) existing.setMetadata(patch.getMetadata());
-                    // domain is intentionally NOT patchable — a row stays in its brand.
-                    existing.setEnabled(patch.isEnabled());
-                    existing.setUpdatedAt(Instant.now());
-                    return repo.save(existing);
-                });
+                // Merge non-null patch fields into the existing row and persist the result.
+                .flatMap(existing -> repo.save(applyPatch(existing, patch)));
+    }
+
+    /**
+     * Merges all non-null fields from {@code patch} into {@code existing}; the domain
+     * field is intentionally excluded — a row always stays in its original brand.
+     */
+    private static FederationModule applyPatch(FederationModule existing, FederationModule patch) {
+        if (patch.getDisplayName() != null) existing.setDisplayName(patch.getDisplayName());
+        if (patch.getKind() != null) existing.setKind(patch.getKind());
+        if (patch.getRemoteEntryUrl() != null) existing.setRemoteEntryUrl(patch.getRemoteEntryUrl());
+        if (patch.getExposedModule() != null) existing.setExposedModule(patch.getExposedModule());
+        if (patch.getVersion() != null) existing.setVersion(patch.getVersion());
+        if (patch.getContentHash() != null) existing.setContentHash(patch.getContentHash());
+        if (patch.getVisibility() != null) existing.setVisibility(patch.getVisibility());
+        if (patch.getCircuitState() != null) existing.setCircuitState(patch.getCircuitState());
+        if (patch.getMetadata() != null) existing.setMetadata(patch.getMetadata());
+        existing.setEnabled(patch.isEnabled());
+        existing.setUpdatedAt(Instant.now());
+        return existing;
     }
 
     /**

@@ -434,19 +434,26 @@ public class BundleService {
         String hash = hl[0];
         String locator = hl[1];
         return supersedePriorOwned(ownerUserId, slug, admin)
-                .then(Mono.defer(() -> {
-                    UserModule m = new UserModule();
-                    m.setOwnerUserId(ownerUserId);
-                    m.setSlug(slug);
-                    m.setVersionDir(locator);
-                    m.setEntryFile(safeEntry);
-                    m.setContentHash(hash);
-                    m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
-                    m.setVisibility(visibility == null ? "internal" : visibility);
-                    m.setDomain(domainForWrite(scope));
-                    m.setCreatedAt(Instant.now());
-                    return repo.save(m);
-                }));
+                // Build and persist the new UserModule version after superseding any prior owned row.
+                .then(Mono.defer(() -> repo.save(buildUserModule(ownerUserId, slug, safeEntry,
+                        visibility, manifestJson, scope, hash, locator))));
+    }
+
+    /** Construct a new {@link UserModule} entity from the given field values, ready to persist. */
+    private UserModule buildUserModule(String ownerUserId, String slug, String safeEntry,
+                                       String visibility, String manifestJson,
+                                       PrincipalDomain scope, String hash, String locator) {
+        UserModule m = new UserModule();
+        m.setOwnerUserId(ownerUserId);
+        m.setSlug(slug);
+        m.setVersionDir(locator);
+        m.setEntryFile(safeEntry);
+        m.setContentHash(hash);
+        m.setManifestJson(manifestJson == null ? "{}" : manifestJson);
+        m.setVisibility(visibility == null ? "internal" : visibility);
+        m.setDomain(domainForWrite(scope));
+        m.setCreatedAt(Instant.now());
+        return m;
     }
 
     // ----- Helpers -----

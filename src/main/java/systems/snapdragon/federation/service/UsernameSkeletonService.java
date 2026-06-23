@@ -266,18 +266,22 @@ public class UsernameSkeletonService {
     /** Throw if the string carries a zero-width / bidi-control / format (Cf) /
      *  default-ignorable code point (the pre-ICU bypass guard). */
     private static void rejectIgnorables(String s) {
-        s.codePoints().forEach(cp -> {
-            int type = Character.getType(cp);
-            if (type == Character.FORMAT // Cf — zero-width joiner/non-joiner, bidi controls, BOM, ...
-                    || Character.isIdentifierIgnorable(cp)
-                    || (cp >= 0x200B && cp <= 0x200F)   // zero-width space/(non-)joiner + LRM/RLM
-                    || cp == 0xFEFF                       // BOM / zero-width no-break space
-                    || (cp >= 0x202A && cp <= 0x202E)   // bidi embedding/override
-                    || (cp >= 0x2066 && cp <= 0x2069)) { // bidi isolates
-                throw new ConfusableException("zero-width",
-                        "disallowed zero-width / bidi / format code point U+%04X".formatted(cp));
-            }
-        });
+        // Reject each code point that is a disallowed zero-width / bidi / format character.
+        s.codePoints().forEach(UsernameSkeletonService::rejectIfIgnorable);
+    }
+
+    /** Throw a {@link ConfusableException} when {@code cp} is a disallowed invisible code point. */
+    private static void rejectIfIgnorable(int cp) {
+        int type = Character.getType(cp);
+        if (type == Character.FORMAT // Cf — zero-width joiner/non-joiner, bidi controls, BOM, ...
+                || Character.isIdentifierIgnorable(cp)
+                || (cp >= 0x200B && cp <= 0x200F)   // zero-width space/(non-)joiner + LRM/RLM
+                || cp == 0xFEFF                       // BOM / zero-width no-break space
+                || (cp >= 0x202A && cp <= 0x202E)   // bidi embedding/override
+                || (cp >= 0x2066 && cp <= 0x2069)) { // bidi isolates
+            throw new ConfusableException("zero-width",
+                    "disallowed zero-width / bidi / format code point U+%04X".formatted(cp));
+        }
     }
 
     private static String stripCombiningMarks(String s) {

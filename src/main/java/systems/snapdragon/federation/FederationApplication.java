@@ -21,6 +21,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * patterns.
  */
 @SpringBootApplication
+@SuppressWarnings("checkstyle:HideUtilityClassConstructor")
 public class FederationApplication {
     public static void main(String[] args) {
         SpringApplication.run(FederationApplication.class, args);

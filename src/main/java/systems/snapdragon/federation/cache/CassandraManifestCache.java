@@ -208,22 +208,28 @@ public class CassandraManifestCache implements ManifestCache {
 
     @Override
     public Mono<Void> put(FederationManifestDto manifest) {
-        return Mono.<Void>fromRunnable(() -> {
-            try {
-                String body = mapper.writeValueAsString(manifest);
-                session().execute(SimpleStatement.builder(
-                        "INSERT INTO federation_manifest (id, body, updated_at) "
-                        + "VALUES (?, ?, toTimestamp(now()))")
-                        .addPositionalValues(KEY, body).build());
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }).subscribeOn(Schedulers.boundedElastic())
-          .onErrorResume(e -> {
-              log.warn("[manifest-cache] best-effort put failed: {} (read path still serves from Postgres)",
-                      e.toString());
-              return Mono.empty();
-          }).then();
+        // Offload the blocking Cassandra write to boundedElastic; swallow failures so
+        // a missing Cassandra never blocks the Postgres-served manifest read path.
+        return Mono.<Void>fromRunnable(() -> executePut(manifest))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(e -> {
+                    log.warn("[manifest-cache] best-effort put failed: {} (read path still serves from Postgres)",
+                            e.toString());
+                    return Mono.empty();
+                }).then();
+    }
+
+    /** Serialize {@code manifest} to JSON and upsert it into Cassandra synchronously. */
+    private void executePut(FederationManifestDto manifest) {
+        try {
+            String body = mapper.writeValueAsString(manifest);
+            session().execute(SimpleStatement.builder(
+                    "INSERT INTO federation_manifest (id, body, updated_at) "
+                    + "VALUES (?, ?, toTimestamp(now()))")
+                    .addPositionalValues(KEY, body).build());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override

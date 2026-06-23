@@ -277,21 +277,30 @@ public class UsernameAvailabilityController {
         // Override requested — require ROLE_ADMIN. A non-admin gets the unmodified
         // verdict (the override is silently ignored rather than a 403, so service-token
         // callers never discover the override capability).
-        return base.flatMap(result -> isAdmin().map(admin -> {
-            if (!admin) {
-                // Non-admin requested override → silently return the raw verdict.
-                return result;
-            }
-            UsernameAvailabilityDto after = UsernameAvailabilityService.applyConfusableOverride(result);
-            if (UsernameAvailabilityService.overrideApplied(result, after)) {
-                // Audit EVERY successful override — the durable record of who overrode which
-                // candidate and what the skeleton + prior collision was.
-                AUDIT.warn("confusable-override actor={} candidate={} skeleton={} reason={} matchedWith={}",
-                        jwt == null ? "?" : jwt.getSubject(),
-                        result.candidate(), result.skeleton(), result.reason(), result.matchedWith());
-            }
-            return after;
-        }));
+        return base.flatMap(result -> isAdmin()
+                // Apply the confusable override when the caller is an admin; audit on success.
+                .map(admin -> applyOverrideIfAdmin(result, admin, jwt)));
+    }
+
+    /**
+     * Applies the confusable override when {@code admin} is {@code true} and audits
+     * every successful application; returns the unmodified {@code result} for non-admins.
+     */
+    private static UsernameAvailabilityDto applyOverrideIfAdmin(
+            UsernameAvailabilityDto result, boolean admin, Jwt jwt) {
+        if (!admin) {
+            // Non-admin requested override → silently return the raw verdict.
+            return result;
+        }
+        UsernameAvailabilityDto after = UsernameAvailabilityService.applyConfusableOverride(result);
+        if (UsernameAvailabilityService.overrideApplied(result, after)) {
+            // Audit EVERY successful override — the durable record of who overrode which
+            // candidate and what the skeleton + prior collision was.
+            AUDIT.warn("confusable-override actor={} candidate={} skeleton={} reason={} matchedWith={}",
+                    jwt == null ? "?" : jwt.getSubject(),
+                    result.candidate(), result.skeleton(), result.reason(), result.matchedWith());
+        }
+        return after;
     }
 
     /**
