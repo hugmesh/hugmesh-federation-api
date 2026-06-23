@@ -1,6 +1,8 @@
 package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -47,11 +49,56 @@ public class FederationController {
     @Operation(
         summary = "Active federation manifest",
         description = """
-            Returns every enabled + circuit-closed `federation_modules` row the
-            caller may see (public to all; internal only to ROLE_ADMIN /
-            ROLE_INTERNAL), ordered by kind then slug, as {generatedAt, remotes[]}.
-            The host calls this on bootstrap + every full reload.
+            Returns the runtime module-federation manifest: every enabled,\s\
+            circuit-closed <code>federation_modules</code> row the caller may\s\
+            see, ordered by kind then slug, as\s\
+            <code>{generatedAt, remotes[]}</code>.
+
+            <p>The Angular host shell calls this endpoint on bootstrap and on\s\
+            every full reload, feeding <code>remotes[]</code> into\s\
+            native-federation's <code>initFederation(…)</code> before\s\
+            <code>bootstrapApplication()</code>.
+
+            <h4>Caller-role access matrix</h4>
+            <table>
+              <tr><th>Caller role</th><th>Rows visible</th><th>Domain scope</th></tr>
+              <tr><td>ROLE_USER / ROLE_MOD</td>
+                  <td><code>visibility='public'</code> only</td>
+                  <td>own brand only</td></tr>
+              <tr><td>ROLE_ADMIN / ROLE_INTERNAL</td>
+                  <td><code>public</code> + <code>internal</code></td>
+                  <td>own brand only</td></tr>
+              <tr><td>ROLE_SUPERADMIN</td>
+                  <td><code>public</code> + <code>internal</code></td>
+                  <td>ALL brands (control-plane view)</td></tr>
+            </table>
+
+            <h4>Kill-switch / scope-override filters (applied in code)</h4>
+            <ul>
+              <li><b>scope=all</b> active override → drops EVERY module from\s\
+                  the manifest (global kill).</li>
+              <li><b>scope=user</b> active override → drops all modules owned\s\
+                  by the targeted Casdoor subject.</li>
+              <li><b>scope=role</b> active override → drops modules whose\s\
+                  <code>metadata.requiresRole</code> matches the target role.</li>
+            </ul>
+            An override is active while its <code>cleared_at IS NULL</code>;\s\
+            clearing it rearms the affected modules immediately on the next\s\
+            render.
             """)
+    @ApiResponses({
+        @ApiResponse(responseCode = "200",
+            description = "Manifest returned — remotes[] may be empty if no "
+                + "modules pass the caller's visibility and scope-override filters."),
+        @ApiResponse(responseCode = "401",
+            description = "Missing, expired, or invalid Casdoor JWT. "
+                + "Obtain a fresh token from the Casdoor SSO and retry."),
+        @ApiResponse(responseCode = "500",
+            description = "Postgres or cache error while rendering the manifest. "
+                + "The manifest cache (Cassandra) is best-effort; a cache failure "
+                + "alone does not produce a 500 — only a Postgres failure does. "
+                + "Check server logs for details.")
+    })
     @GetMapping("/manifest")
     public Mono<FederationManifestDto> manifest(Authentication auth, @AuthenticationPrincipal Jwt jwt) {
         // The manifest is DOMAIN-scoped: a per-domain principal sees ONLY their own

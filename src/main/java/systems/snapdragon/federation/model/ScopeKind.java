@@ -3,6 +3,8 @@ package systems.snapdragon.federation.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
+import java.util.Arrays;
+
 /**
  * The closed set of {@code federation_override.scope} kinds — the WHO a
  * scoped kill-switch applies to. This is a genuinely CLOSED vocabulary: it is
@@ -64,12 +66,7 @@ public enum ScopeKind {
         if (wire == null) {
             return null;
         }
-        for (ScopeKind k : values()) {
-            if (k.value.equals(wire)) {
-                return k;
-            }
-        }
-        return null;
+        return Arrays.stream(values()).filter(k -> k.value.equals(wire)).findFirst().orElse(null);
     }
 
     /**

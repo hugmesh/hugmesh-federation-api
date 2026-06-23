@@ -275,7 +275,7 @@ public class UsernameSkeletonService {
                     || (cp >= 0x202A && cp <= 0x202E)   // bidi embedding/override
                     || (cp >= 0x2066 && cp <= 0x2069)) { // bidi isolates
                 throw new ConfusableException("zero-width",
-                        String.format("disallowed zero-width / bidi / format code point U+%04X", cp));
+                        "disallowed zero-width / bidi / format code point U+%04X".formatted(cp));
             }
         });
     }
