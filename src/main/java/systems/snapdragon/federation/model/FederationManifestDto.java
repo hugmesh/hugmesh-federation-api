@@ -11,8 +11,11 @@ import java.util.List;
  * {@code contentHash} so the host (and the remote-fragment pods) can pin /
  * cache-bust by content-addressed version.
  *
- * <p>{@code metadata} stays a JSON-string blob on the wire (the service does not
- * deserialise it; the host does only when it needs a flag).
+ * <p>{@code metadata} stays a JSON-string blob on the wire (the service does
+ * not deserialise it; the host does only when it needs a flag).
+ *
+ * @param generatedAt ISO-8601 timestamp when the manifest was rendered
+ * @param remotes     list of remote-fragment descriptors
  */
 public record FederationManifestDto(
         String generatedAt,
@@ -29,7 +32,13 @@ public record FederationManifestDto(
             String visibility,
             String metadata
     ) {
-        public static FederationRemoteDto from(FederationModule m) {
+        /**
+         * Maps a persisted {@link FederationModule} to the wire shape.
+         *
+         * @param m the federation module to map
+         * @return the corresponding wire DTO
+         */
+        public static FederationRemoteDto from(final FederationModule m) {
             return new FederationRemoteDto(
                     m.getSlug(),
                     m.getDisplayName(),

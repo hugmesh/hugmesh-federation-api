@@ -266,7 +266,12 @@ public class CassandraManifestCache implements ManifestCache {
     void close() {
         CqlSession s = session;
         if (s != null) {
-            try { s.close(); } catch (Exception ignore) { /* shutting down */ }
+            try {
+                s.close();
+            } catch (Exception ignore) {
+                // Swallow close errors — the JVM is shutting down; nothing to recover.
+                log.debug("[manifest-cache] session close suppressed: {}", ignore.toString());
+            }
         }
     }
 }

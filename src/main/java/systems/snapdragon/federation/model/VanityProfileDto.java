@@ -40,7 +40,7 @@ public record VanityProfileDto(
      * bundle has not been synced/published), so the host can distinguish "module
      * registered but no bytes" from "served".
      */
-    public static VanityProfileDto from(String username, FederationModule m) {
+    public static VanityProfileDto from(final String username, final FederationModule m) {
         String path = (m.getContentHash() == null || m.getContentHash().isBlank())
                 ? null
                 : "/_fragments/" + m.getSlug() + "/" + m.getContentHash() + "/";
