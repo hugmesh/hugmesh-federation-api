@@ -15,7 +15,6 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * R2DBC type-conversion shims. Copied from the games {@code R2dbcConvertersConfig}:
@@ -35,7 +34,7 @@ public class R2dbcConvertersConfig {
     @Bean
     public R2dbcCustomConversions r2dbcCustomConversions(ConnectionFactory connectionFactory) {
         R2dbcDialect dialect = DialectResolver.getDialect(connectionFactory);
-        List<Object> converters = new ArrayList<>(dialect.getConverters());
+        var converters = new ArrayList<>(dialect.getConverters());
         converters.add(new OffsetDateTimeToInstantConverter());
         converters.add(new LocalDateTimeToInstantConverter());
         return R2dbcCustomConversions.of(dialect, converters);

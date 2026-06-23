@@ -1,6 +1,8 @@
 package systems.snapdragon.federation.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -14,30 +16,50 @@ import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.CapabilityService;
 
 /**
- * PUBLIC capability projection — {@code GET /api/federation/capabilities}.
+ * Public install-state projection — {@code GET /api/federation/capabilities}.
  *
- * <p>The install-state list a LOGGED-OUT or non-admin host reads to grey-out
- * OPTIONAL services (forum / mastodon / matrix / games) that are absent or
- * disabled. This is the public sibling of {@code GET /api/federation/manifest}:
- * the manifest is {@code authenticated()} + visibility-filtered (anonymous → 401,
- * and internal remotes are stripped for non-admins), so a logged-out host could
- * never learn an optional service exists — it CANNOT drive greying. This endpoint
- * is {@code permitAll} (see {@link systems.snapdragon.federation.config.SecurityConfig};
- * declared BEFORE the authenticated catch-all, exactly like the
- * {@code /api/federation/vanity} public read rule) and returns a deliberately
- * NARROW, public-safe projection (slug + installed + mountAt + requiresRole only —
- * no internal locator/detail).
+ * <p>Returns a narrow, public-safe descriptor per registered federation module
+ * ({@code slug + installed + mountAt + requiresRole}) so a logged-out or non-admin
+ * Angular host can grey-out OPTIONAL services (forum / mastodon / matrix / games)
+ * that are absent or disabled — WITHOUT requiring a JWT.
  *
- * <p>GET-only so it can never mutate. It is DOMAIN-scoped (and excludes per-user
- * {@code profile-<username>} vanity fragments): an anonymous caller resolves to the
- * {@code "default"} domain, an authenticated per-domain caller sees only their own
- * brand's services, and SUPERADMIN sees all — so this {@code permitAll} endpoint
- * cannot be a cross-brand registry / username enumeration oracle. The manifest /
- * override read paths are untouched: this is purely additive.
+ * <p>This is the public sibling of {@code GET /api/federation/manifest}: the manifest
+ * is {@code authenticated()} + visibility-filtered (an anonymous caller gets 401, and
+ * internal remotes are stripped for non-admins), so a logged-out host could never learn
+ * an optional service exists through the manifest and therefore cannot drive greying.
+ *
+ * <h2>Security gating</h2>
+ * <p>{@code GET /api/federation/capabilities} is {@code permitAll} (see
+ * {@link systems.snapdragon.federation.config.SecurityConfig}, declared BEFORE the
+ * authenticated catch-all — exactly like {@code /api/federation/vanity}). It is safe
+ * because:
+ * <ul>
+ *   <li>Only a narrow, public-safe shape is returned — no internal locators or details.</li>
+ *   <li>Per-user vanity fragments ({@code profile-<username>}) are EXCLUDED from the
+ *       projection so this endpoint is not a username enumeration oracle.</li>
+ *   <li>GET-only — it can never mutate state.</li>
+ * </ul>
+ *
+ * <h2>Domain scoping</h2>
+ * <p>Even though the endpoint is {@code permitAll}, it is DOMAIN-scoped:
+ * <ul>
+ *   <li>An anonymous caller ({@code jwt == null}) resolves to the {@code "default"}
+ *       domain (single-issuer / logged-out behaviour). Note: {@link PrincipalDomain#resolve}
+ *       fails-closed to {@code NO_DOMAIN} for a null JWT, so the null case is
+ *       explicitly mapped here to preserve the pre-commons default-domain behaviour.</li>
+ *   <li>An authenticated per-domain caller sees only their own brand's registered
+ *       services.</li>
+ *   <li>SUPERADMIN sees all brands (the cross-domain infra view).</li>
+ * </ul>
+ * The domain is derived from the cryptographically-validated issuer, never a spoofable
+ * claim, so this {@code permitAll} endpoint cannot become a cross-brand registry oracle.
+ *
+ * @see CapabilityService
+ * @see systems.snapdragon.federation.config.SecurityConfig
  */
 @Tag(name = "Capabilities",
         description = "PUBLIC install-state projection (slug + installed + mountAt + requiresRole). "
-                + "Drives host greying-out of absent/disabled optional services. Public read — no JWT.")
+                + "Drives host greying-out of absent/disabled optional services. Public read — no JWT required.")
 @RestController
 @RequestMapping("/api/federation/capabilities")
 public class CapabilityController {
@@ -53,32 +75,50 @@ public class CapabilityController {
     @Operation(
         summary = "Public install-state list of registered federation modules.",
         description = """
-            Returns one public-safe descriptor per registered federation module —
-            {slug, installed, mountAt, requiresRole} — ordered by slug. `installed`
-            is true when the module's row is enabled AND circuit-closed (serveable
-            right now). An OPTIONAL service that was never registered is ABSENT from
-            the list (host greys it out by absence); a registered-but-disabled /
-            circuit-broken one appears with installed=false (host greys it out by
-            state). Public read — no JWT, no internal locator/detail. The host uses
-            this (NOT the authed, visibility-filtered manifest) to grey-out absent
-            services.
+            Returns one public-safe descriptor per registered, non-fragment federation
+            module — <code>{slug, installed, mountAt, requiresRole}</code> — ordered
+            by slug. <code>installed</code> is <code>true</code> when the module's row
+            is enabled AND circuit-closed (serveable right now).
+
+            <h4>Presence / state rules</h4>
+            <ul>
+              <li>An OPTIONAL service that was never registered is <em>absent</em> from
+                  the list — the host greys it out by absence.</li>
+              <li>A registered-but-disabled or circuit-broken service appears with
+                  <code>installed=false</code> — the host greys it out by state.</li>
+            </ul>
+
+            <h4>Caller-role access matrix</h4>
+            <table>
+              <tr><th>Caller</th><th>Domain scope</th></tr>
+              <tr><td>Anonymous (no JWT)</td>
+                  <td><code>"default"</code> domain only</td></tr>
+              <tr><td>ROLE_USER / ROLE_MOD / ROLE_ADMIN</td>
+                  <td>Own brand only</td></tr>
+              <tr><td>ROLE_SUPERADMIN</td>
+                  <td>All brands (control-plane view)</td></tr>
+            </table>
+
+            <p>Public read — no JWT required. The host uses this (NOT the
+            authenticated, visibility-filtered manifest) to grey-out absent services.
+            Always rendered from Postgres; no cache (must reflect install-state
+            changes immediately).
             """)
+    @ApiResponses({
+        @ApiResponse(responseCode = "200",
+            description = "Capability list returned — empty array when no non-fragment modules "
+                + "are registered for the resolved domain."),
+        @ApiResponse(responseCode = "500",
+            description = "Postgres error while querying federation_modules. Check server logs.")
+    })
     @GetMapping
     public Flux<CapabilityDto> capabilities(@AuthenticationPrincipal Jwt jwt) {
-        // DOMAIN-scoped even though this is permitAll: an ANONYMOUS caller (jwt==null)
-        // resolves to the "default" domain (single-issuer / logged-out behaviour); an
-        // authenticated per-domain caller sees ONLY their own brand's registered
-        // services; SUPERADMIN (cross-domain infra role) sees every brand's. The domain
-        // is derived from the cryptographically-validated issuer (never a spoofable
-        // claim) and fragment slugs are excluded in the query — so this public endpoint
-        // can never become a cross-brand registry / username enumeration oracle.
-        // ANONYMOUS (jwt==null) -> the public "default" domain list (logged-out /
-        // single-issuer behaviour). NOTE: commons PrincipalDomain.resolve(null, reg)
-        // deliberately FAILS CLOSED to the NO_DOMAIN sentinel (a null principal proves
-        // no tenant), so for this permitAll public read we map a null jwt to the
-        // explicit default-domain scope to PRESERVE the pre-commons behaviour
-        // (federation's old DomainScope.resolve(null) fell through to "default"). An
-        // AUTHENTICATED caller still resolves to their cryptographically-validated
+        // DOMAIN-scoped even though this is permitAll. An ANONYMOUS caller (jwt == null)
+        // resolves to the "default" domain — we must NOT call PrincipalDomain.resolve(null, ...)
+        // here because commons fails-closed to NO_DOMAIN for a null JWT (a null principal
+        // proves no tenant), and NO_DOMAIN would match nothing. Instead we explicitly map
+        // null → forDomain("default") to preserve the pre-commons single-issuer behaviour.
+        // An AUTHENTICATED caller still resolves to their cryptographically-validated
         // issuer domain (or the cross-domain SUPERADMIN tier).
         PrincipalDomain scope = jwt == null
                 ? PrincipalDomain.forDomain(DomainRegistry.DEFAULT_DOMAIN)

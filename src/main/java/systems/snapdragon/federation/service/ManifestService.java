@@ -22,44 +22,135 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The federation manifest read path — the platform keystone.
+ * Manifest read path — the keystone of the dynamic module-federation platform.
  *
- * <p>Lifted from the games {@code FederationController.manifest()}
- * (findAllByEnabledTrue -> DTO -> {generatedAt, remotes}) and extended with the
- * three platform filters applied IN CODE against the caller (so the same DB rows
- * serve every audience, filtered per request):
+ * <h2>Responsibility</h2>
  *
- * <ul>
- *   <li><b>enabled</b>  — DB-side ({@code findAllByEnabledTrue...}); an
- *       unpublish override flips {@code enabled=false}.</li>
- *   <li><b>circuit-state</b> — only {@code circuit_state='closed'} rows ship;
- *       a circuit-break override flips it to {@code 'open'} so the remote drops
- *       from the manifest without a redeploy (kill-switch).</li>
- *   <li><b>visibility / role</b> — {@code visibility='public'} rows are visible
- *       to everyone; {@code visibility='internal'} rows only to callers holding
- *       {@code ROLE_ADMIN} (or {@code ROLE_INTERNAL}). The host enforces
- *       per-remote route access too; this is the catalog-level cut.</li>
- *   <li><b>active scope overrides</b> — a scope={@code all|user|role}
- *       {@code federation_override} that has NOT been rearmed
- *       ({@code cleared_at IS NULL}) is applied across the WHOLE catalogue at
- *       render time (these have no single module slug to mutate, so they cannot
- *       ride the DB finder). See {@link #isSuppressedByScope}.</li>
- * </ul>
+ * <p>Renders a {@link FederationManifestDto} for
+ * {@code GET /api/federation/manifest} (see
+ * {@link systems.snapdragon.federation.controller.FederationController#manifest
+ * FederationController.manifest}).
+ * The Angular host shell calls this endpoint on bootstrap and on every full
+ * reload, feeding {@code remotes[]} directly into native-federation's
+ * {@code initFederation(...)} before {@code bootstrapApplication()} — so new
+ * Angular micro-frontend modules appear without redeploying the host shell.
  *
- * <p><b>scope=role semantics (honest limitation).</b> There is NO module role
- * column and NO user→role table in this service (roles live only in the Casdoor
- * JWT). An AUDIENCE cut (filter by the caller's roles) is rejected because the
- * manifest cache stores a single public-safe view and per-caller filtering would
- * poison it. So scope=role suppresses modules whose DECLARED required role
- * ({@code metadata.requiresRole}, case-insensitive) equals the target role. This
- * is content-based (cache-safe) and uses data already present in the seed. It is
- * NOT "modules owned by users holding role R" (no owner→role source exists). See
- * README → Deferred.
+ * <p>Lifted from the games {@code FederationController.manifest()} (the
+ * {@code findAllByEnabledTrue → DTO → {generatedAt, remotes}} chain) and
+ * extended with platform filters applied <em>in code</em> so that the same DB
+ * rows serve every caller audience correctly.
  *
- * <p>The rendered manifest is write-through cached (best-effort) so the
- * remote-fragment pods / edge can poll it; a cache miss / failure always renders
- * from Postgres. The scope cut runs on the SAME public-safe stream, so the cache
- * keeps storing only the public-safe (now also scope-filtered) view.
+ * <h2>Caller-role access matrix</h2>
+ *
+ * <p>The Casdoor JWT is validated by the Spring Security resource-server filter
+ * before reaching this service; the JWT {@code roles} claim maps to Spring
+ * authority strings (see
+ * {@link systems.snapdragon.federation.config.SecurityConfig SecurityConfig}).
+ * Two orthogonal parameters shape the result:
+ *
+ * <pre>
+ *  Caller                      │ visibility rows visible │ domain scope
+ *  ────────────────────────────┼─────────────────────────┼──────────────────────
+ *  ROLE_USER / ROLE_MOD        │ public only             │ own brand only
+ *  ROLE_ADMIN / ROLE_INTERNAL  │ public + internal       │ own brand only
+ *  ROLE_SUPERADMIN             │ public + internal       │ ALL brands (control
+ *                              │                         │ plane — no predicate)
+ * </pre>
+ *
+ * <p>{@code ROLE_MOD} confers no manifest privilege beyond {@code ROLE_USER}:
+ * mods act in the moderation controller
+ * ({@link systems.snapdragon.federation.controller.ModerationController
+ * ModerationController}), not here.
+ *
+ * <h2>Four render-time filters</h2>
+ *
+ * <p>The same {@code federation_modules} rows serve every audience; the caller
+ * sees only what passes all four gates:
+ *
+ * <ol>
+ *   <li><b>enabled</b> — DB-side ({@code findAllByEnabledTrue...}).  An
+ *       "unpublish" override sets {@code enabled = false} on the module row
+ *       at apply time (slug-scoped mutation — never in this path).</li>
+ *   <li><b>circuit-state</b> — DB-side; only {@code circuit_state = 'closed'}
+ *       rows are returned.  A "circuit-break" override trips a module to
+ *       {@code 'open'} as a runtime kill-switch without logically disabling
+ *       it (still visible to admins in the registry).</li>
+ *   <li><b>visibility</b> — in code ({@link #isVisibleTo}).
+ *       {@code visibility = 'public'} is visible to ALL authenticated callers;
+ *       {@code visibility = 'internal'} is stripped unless the caller holds
+ *       {@code ROLE_ADMIN}, {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}.</li>
+ *   <li><b>active scope overrides</b> — in code ({@link #isSuppressedByScope}).
+ *       A {@code federation_override} row with {@code scope IN ('all','user','role')}
+ *       and {@code cleared_at IS NULL} is an active catalogue-level kill that
+ *       suppresses matching modules at render time without mutating any module
+ *       row. These are loaded once per render, applied in code.</li>
+ * </ol>
+ *
+ * <h2>Reactive pipeline marble diagram</h2>
+ *
+ * <pre>
+ *  ┌─ activeScope (Flux → collectList) ──────────────────────────────────────┐
+ *  │  repository: findByScopeIn(all|user|role) WHERE cleared_at IS NULL      │
+ *  │  [domain-pinned for per-brand caller; un-pinned for SUPERADMIN]          │
+ *  └──────────────────────────────────────┬──────────────────────────────────┘
+ *                                         │  List&lt;FederationOverride&gt;
+ *                                         ▼
+ *  ┌─ assembleManifest(modules, active, canSeeInternal) ─────────────────────┐
+ *  │                                                                         │
+ *  │  modules (Flux&lt;FederationModule&gt;)                                       │
+ *  │  ──── .filter(isVisibleTo)           ← 3. visibility cut               │
+ *  │  ──── .filter(!isSuppressedByScope)  ← 4. scope-override kill cut      │
+ *  │  ──── .map(FederationRemoteDto::from)   project to wire shape          │
+ *  │  ──── .collectList()                                                    │
+ *  │  ──── .map(remotes → new FederationManifestDto(now, remotes))          │
+ *  └──────────────────────────────────────┬──────────────────────────────────┘
+ *                                         │  FederationManifestDto
+ *                                         ▼
+ *  ┌─ cacheIfPublicSafe ─────────────────────────────────────────────────────┐
+ *  │  write-through to ManifestCache ONLY when all three hold:              │
+ *  │    · !canSeeInternal  (no internal rows in the result)                 │
+ *  │    · !superadmin      (not the cross-domain SUPERADMIN superset)       │
+ *  │    · domain = "default"  (the canonical single-brand / legacy view)   │
+ *  │  Any other render is returned directly — cache is never touched.       │
+ *  └──────────────────────────────────────┬──────────────────────────────────┘
+ *                                         │
+ *                                         ▼
+ *                          Mono&lt;FederationManifestDto&gt;
+ * </pre>
+ *
+ * <h2>Cache contract</h2>
+ *
+ * <p>The rendered manifest is written through to {@link ManifestCache}
+ * (backed by
+ * {@link systems.snapdragon.federation.cache.CassandraManifestCache
+ * CassandraManifestCache} or a no-op) so remote-fragment pods and CDN edge
+ * pollers can serve a stale-but-valid view during a brief Postgres blip.
+ * Only the <em>public-safe DEFAULT-domain</em> view is ever cached; internal
+ * rows, the SUPERADMIN cross-brand superset, and non-default-brand renders
+ * bypass the cache entirely, so an anonymous poller can never be served
+ * elevated or cross-brand content from a stale hit. Cache failure is swallowed
+ * (implementation contract: best-effort, never throws); the authoritative
+ * Postgres render is always returned.
+ *
+ * <h2>Scope-override honest limitation ({@code scope=role})</h2>
+ *
+ * <p>There is NO per-module role column and NO user-to-role mapping in this
+ * service — roles live only in the Casdoor JWT. An audience cut that filters by
+ * the <em>caller's</em> roles would poison the shared cache (per-caller
+ * filtering requires a per-caller cache key). Instead, {@code scope=role}
+ * suppresses modules whose <em>declared</em>
+ * {@code metadata.requiresRole} (case-insensitive) matches the override
+ * target. This is content-based and cache-safe. It is NOT "modules owned by
+ * users holding role R." See README → Deferred for the future audience-cut
+ * design.
+ *
+ * @see systems.snapdragon.federation.controller.FederationController#manifest
+ * @see systems.snapdragon.federation.repository.FederationModuleRepository
+ * @see systems.snapdragon.federation.repository.FederationOverrideRepository
+ * @see ManifestCache
+ * @see ScopeKind
+ * @see PrincipalDomain
+ * @see systems.snapdragon.federation.service.OverrideService
  */
 @Service
 public class ManifestService {
@@ -67,10 +158,11 @@ public class ManifestService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
-     * The scope kinds applied at render time (not via per-module mutation), as the
-     * lowercase wire tokens the {@code scope IN (...)} DB finder expects. DERIVED from
-     * {@link ScopeKind} so the in-clause can never drift from the enum, while the
-     * actual values passed to R2DBC stay the identical {@code [all, user, role]}.
+     * The {@code scope IN (...)} in-clause for the active-override DB finder,
+     * derived at class-load from {@link ScopeKind} so the list stays byte-identical
+     * to the enum values and can never drift.  Only {@code all|user|role} scope rows
+     * reach this path; per-module-slug rows mutated the DB module record at apply
+     * time and are excluded by the enabled/circuit-state DB finder.
      */
     private static final List<String> SCOPE_KINDS =
             Arrays.stream(ScopeKind.values()).map(ScopeKind::value).toList();
@@ -87,11 +179,23 @@ public class ManifestService {
         this.cache = cache;
     }
 
+    // -------------------------------------------------------------------------
+    // Public render API
+    // -------------------------------------------------------------------------
+
     /**
-     * Back-compat render: a caller with only authorities (no domain context) renders
-     * the {@code "default"} domain's manifest (single-issuer / legacy behaviour). A
-     * SUPERADMIN authority set still gets the cross-domain (all-brands) tier so the
-     * infra control plane sees every remote even via this overload.
+     * Back-compat render: a caller with only authority strings (no resolved
+     * domain context) renders the {@code "default"} domain's manifest —
+     * single-issuer / legacy behaviour.  A SUPERADMIN authority set still gets
+     * the cross-domain (all-brands) tier so the infra control plane sees every
+     * remote even via this overload.
+     *
+     * @param authorities the caller's Spring Security authority strings (e.g.
+     *                    {@code Set.of("ROLE_ADMIN", "DOMAIN_default")}); null
+     *                    or empty yields a public-only, default-domain render
+     * @return a {@code Mono} emitting exactly one {@link FederationManifestDto};
+     *         never empty — worst case an empty {@code remotes} list
+     * @see #render(Set, PrincipalDomain)
      */
     public Mono<FederationManifestDto> render(Set<String> authorities) {
         PrincipalDomain scope = (authorities != null && Roles.isSuperadminNames(authorities))
@@ -101,25 +205,38 @@ public class ManifestService {
     }
 
     /**
-     * Render the manifest for a caller with the given authorities, scoped to their
-     * brand/domain. Two tiers:
+     * Renders the manifest for a caller with the given authorities, scoped to
+     * their brand/domain.  This is the primary entry point, called from
+     * {@link systems.snapdragon.federation.controller.FederationController#manifest
+     * FederationController.manifest}.
      *
-     * <ul>
-     *   <li><b>PER-DOMAIN</b> (the common case) — the module + active-scope-override
-     *       finders are pinned to {@code scope.domain()}, so a brand-X principal's
-     *       manifest lists ONLY brand-X remotes and a brand-X scope=all kill never
-     *       blanks brand-Y. This is the per-domain CUT, enforced in the QUERY.</li>
-     *   <li><b>SUPERADMIN</b> ({@code scope.superadmin()}) — the un-pinned finders
-     *       run, so the cross-domain infra role sees EVERY brand's remotes in one
-     *       manifest (the control-plane tier). No domain predicate.</li>
-     * </ul>
+     * <p><b>Per-domain tier</b> (common case) — the module and active-scope-override
+     * finders are pinned to {@code scope.domain()}, so a brand-X principal's
+     * manifest lists ONLY brand-X remotes, and a brand-X {@code scope=all} kill
+     * never blanks brand-Y.  The domain predicate is enforced in the DB query,
+     * not spoofable in code.
      *
-     * <p>{@code canSeeInternal} (ADMIN/INTERNAL) still controls whether
-     * {@code internal}-visibility remotes are included — orthogonal to the domain
-     * cut. Always rendered from Postgres for the authoritative, per-caller-filtered
-     * result; the cache is written through ONLY on the public-safe DEFAULT-domain
-     * render (see below) so it never leaks internal rows NOR another brand's remotes
-     * to an anonymous poller.
+     * <p><b>SUPERADMIN tier</b> ({@code scope.superadmin() == true}) — the
+     * un-pinned finders run; the cross-domain infra role sees EVERY brand's
+     * remotes in one manifest (the control-plane tier).  No domain predicate.
+     *
+     * <p>{@code canSeeInternal} (ADMIN / INTERNAL / SUPERADMIN) controls whether
+     * {@code visibility='internal'} remotes are included — orthogonal to the
+     * domain cut.  Always rendered from Postgres for the per-caller-filtered
+     * authoritative result; the cache is written through ONLY on the public-safe
+     * DEFAULT-domain render (see {@link #isPublicSafeDefaultRender}) so it never
+     * leaks internal rows or another brand's remotes to an anonymous poller.
+     *
+     * @param authorities the caller's Spring Security authority strings from the
+     *                    validated Casdoor JWT; null or empty yields public-only
+     * @param scope       the resolved tenant scope — carries the
+     *                    cryptographically-derived {@code domain} and the
+     *                    {@code superadmin} flag;  null collapses to a
+     *                    default-domain, non-superadmin render
+     * @return a {@code Mono} emitting exactly one {@link FederationManifestDto};
+     *         never empty — worst case an empty {@code remotes} list
+     * @see PrincipalDomain
+     * @see systems.snapdragon.commons.security.DomainRegistry
      */
     public Mono<FederationManifestDto> render(Set<String> authorities, PrincipalDomain scope) {
         boolean canSeeInternal = authorities != null
@@ -129,7 +246,7 @@ public class ManifestService {
         String domain = scope == null ? PrincipalDomain.forDomain("default").domain() : scope.domain();
 
         // Active scope-override set + module stream — pinned to the caller's domain
-        // unless SUPERADMIN (un-pinned, all brands). Loaded ONCE per render.
+        // unless SUPERADMIN (un-pinned, all brands).  Loaded ONCE per render.
         Flux<FederationOverride> activeScope = superadmin
                 ? overrides.findByScopeInAndClearedAtIsNull(SCOPE_KINDS)
                 : overrides.findByScopeInAndClearedAtIsNullAndDomain(SCOPE_KINDS, domain);
@@ -139,12 +256,13 @@ public class ManifestService {
 
         // Whether THIS render may be written through to the shared cache: only the
         // public-safe DEFAULT-domain view (no internal rows, no cross-domain superset)
-        // is cacheable, so a tokenless poller never sees internal/other-brand remotes.
+        // is cacheable, so a tokenless poller never receives internal or cross-brand
+        // remotes.
         boolean cacheable = isPublicSafeDefaultRender(canSeeInternal, superadmin, domain);
 
-        // Linear pipeline (was a 4-level nested lambda):
+        // Linear pipeline:
         //   1. load the active scope-override set once,
-        //   2. filter+assemble the modules into a manifest against it,
+        //   2. filter + assemble modules into a manifest against it,
         //   3. write-through the cache only when this render is public-safe.
         return activeScope
                 .collectList()
@@ -152,12 +270,38 @@ public class ManifestService {
                 .flatMap(manifest -> cacheIfPublicSafe(manifest, cacheable));
     }
 
+    // -------------------------------------------------------------------------
+    // Pipeline stages
+    // -------------------------------------------------------------------------
+
     /**
-     * Apply the per-caller cuts to the module stream and assemble the manifest DTO:
-     * drop internal rows the caller may not see (visibility cut), drop rows an ACTIVE
-     * scope override suppresses (kill-switch cut), then project the survivors to
-     * remote DTOs under a fresh {@code generatedAt}. Behaviour is identical to the
-     * prior inline chain; only the nesting is gone.
+     * Applies the per-caller cuts to the module stream and assembles the manifest
+     * DTO.  Drops {@code visibility='internal'} rows the caller may not see,
+     * drops rows an active scope override suppresses, then projects the survivors
+     * to wire-shape {@link FederationRemoteDto} under a fresh {@code generatedAt}
+     * timestamp.
+     *
+     * <p>The reactive chain is intentionally flat (named method references, no
+     * nested lambdas) so each step reads as a plain-English sentence:
+     *
+     * <pre>
+     *   modules
+     *     → filter(visibility cut)
+     *     → filter(scope-override cut)
+     *     → map(→ FederationRemoteDto)
+     *     → collectList()
+     *     → map(→ FederationManifestDto(generatedAt, remotes))
+     * </pre>
+     *
+     * @param modules        reactive stream of all enabled + circuit-closed module
+     *                       rows for the caller's domain (or all domains for
+     *                       SUPERADMIN)
+     * @param active         active scope-override rows loaded once per render;
+     *                       passed in to avoid a reactive fan-out inside the
+     *                       per-module filter loop
+     * @param canSeeInternal {@code true} when the caller holds {@code ROLE_ADMIN},
+     *                       {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}
+     * @return a {@code Mono<FederationManifestDto>} emitting exactly one DTO
      */
     private Mono<FederationManifestDto> assembleManifest(Flux<FederationModule> modules,
                                                          List<FederationOverride> active,
@@ -175,12 +319,22 @@ public class ManifestService {
     }
 
     /**
-     * Best-effort write-through: a public-safe DEFAULT-domain render is stored so a
-     * tokenless poller can serve it; every other render (internal-bearing, superadmin
-     * cross-domain, or a brand-specific view) is returned WITHOUT touching the cache
-     * so it can never leak. A per-brand cache key is a later enhancement — until then
-     * only the canonical default public view is ever cached. Cache failure is
-     * swallowed inside the cache, so this never breaks the read path.
+     * Best-effort write-through: a public-safe DEFAULT-domain render is stored so
+     * a tokenless poller / CDN edge can serve it.  Every other render —
+     * internal-bearing, SUPERADMIN cross-domain, or a brand-specific view — is
+     * returned WITHOUT touching the cache so it can never leak privileged or
+     * cross-brand content.
+     *
+     * <p>A per-brand cache key is a later enhancement; until then only the
+     * canonical default public view is ever cached.  Cache failure is swallowed
+     * inside {@link ManifestCache} (implementation contract: best-effort, never
+     * throws), so a cache outage never breaks the read path.
+     *
+     * @param manifest  the freshly rendered manifest to (maybe) cache
+     * @param cacheable {@code true} iff this render is public-safe (see
+     *                  {@link #isPublicSafeDefaultRender})
+     * @return a {@code Mono} emitting {@code manifest} after the optional cache
+     *         write completes, or immediately when not cacheable
      */
     private Mono<FederationManifestDto> cacheIfPublicSafe(FederationManifestDto manifest, boolean cacheable) {
         if (cacheable) {
@@ -189,15 +343,58 @@ public class ManifestService {
         return Mono.just(manifest);
     }
 
-    /** A render is public-safe (cacheable) iff it carries no internal rows, is not the
-     *  superadmin cross-domain superset, and targets the canonical DEFAULT domain. */
+    // -------------------------------------------------------------------------
+    // Filter predicates
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns {@code true} iff this render may be written to the shared cache.
+     * A render is public-safe when:
+     * <ul>
+     *   <li>it carries no {@code visibility='internal'} rows
+     *       ({@code !canSeeInternal}),</li>
+     *   <li>it is not the SUPERADMIN cross-domain superset
+     *       ({@code !superadmin}), and</li>
+     *   <li>it targets the canonical DEFAULT domain.</li>
+     * </ul>
+     * Violating any condition risks poisoning the cache for anonymous pollers
+     * with elevated or cross-brand content.
+     *
+     * @param canSeeInternal {@code true} when the caller holds {@code ROLE_ADMIN},
+     *                       {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}
+     * @param superadmin     {@code true} when the caller is the cross-domain
+     *                       infra role
+     * @param domain         the resolved domain for this render
+     * @return {@code true} iff the rendered manifest is safe to cache publicly
+     */
     private static boolean isPublicSafeDefaultRender(boolean canSeeInternal, boolean superadmin, String domain) {
         return !canSeeInternal
                 && !superadmin
                 && PrincipalDomain.forDomain("default").domain().equals(domain);
     }
 
-    /** Visibility/role cut: public to all; internal only to admin/internal callers. */
+    /**
+     * Visibility/role cut — returns {@code true} iff the given module is visible
+     * to a caller at the given access level.
+     *
+     * <ul>
+     *   <li>{@code visibility = 'public'} (or any null / unrecognised value) —
+     *       visible to ALL authenticated callers (ROLE_USER, ROLE_MOD, ROLE_ADMIN,
+     *       ROLE_SUPERADMIN).</li>
+     *   <li>{@code visibility = 'internal'} — visible ONLY to callers holding
+     *       {@code ROLE_ADMIN}, {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}
+     *       ({@code canSeeInternal = true}).</li>
+     * </ul>
+     *
+     * <p>A null or unrecognised visibility value defaults to {@code 'public'}:
+     * fail-open for unknown future values so a mis-typed field never silently hides
+     * a module from every caller.
+     *
+     * @param m              the module row to test
+     * @param canSeeInternal {@code true} when the caller holds {@code ROLE_ADMIN},
+     *                       {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}
+     * @return {@code true} iff {@code m} should appear in the caller's manifest
+     */
     static boolean isVisibleTo(FederationModule m, boolean canSeeInternal) {
         String v = m.getVisibility() == null ? "public" : m.getVisibility();
         if ("internal".equalsIgnoreCase(v)) {
@@ -207,24 +404,45 @@ public class ManifestService {
     }
 
     /**
-     * The active-scope-override cut. A module is suppressed (dropped from the
-     * manifest) if ANY active scope override matches it:
+     * Active-scope-override cut — returns {@code true} iff the given module is
+     * suppressed (dropped from the manifest) by at least one active scope override.
      *
+     * <p>Scope semantics:
+     *
+     * <pre>
+     *  scope   │ target (override.target)            │ matches when
+     *  ────────┼─────────────────────────────────────┼───────────────────────────
+     *  all     │ NULL                                │ EVERY module — global kill
+     *  user    │ Casdoor subject of the killed owner │ module.ownerUserId equals target
+     *  role    │ role name (e.g. "admin")            │ module.metadata.requiresRole
+     *          │                                     │ equals target (case-insensitive)
+     * </pre>
+     *
+     * <p><b>Who creates active scope overrides</b>:
      * <ul>
-     *   <li>{@code scope=all}  — matches EVERY module (global kill).</li>
-     *   <li>{@code scope=user} — matches when {@code module.owner_user_id} equals
-     *       the override target (the killed owner's modules; system NULL-owner
-     *       modules are untouched).</li>
-     *   <li>{@code scope=role} — matches when the module's declared
-     *       {@code metadata.requiresRole} (case-insensitive) equals the override
-     *       target role (see class javadoc for the honest limitation).</li>
+     *   <li><b>Admin / Superadmin via API</b>
+     *       ({@code POST /api/federation/overrides}) — manual kill;
+     *       {@code set_by} = admin subject, {@code reason = NULL}.</li>
+     *   <li><b>Account-states / access-suspension path</b> — writes
+     *       {@code reason = 'access_suspension:&lt;id&gt;'} so the ban can be cleared
+     *       precisely via
+     *       {@link systems.snapdragon.federation.service.OverrideService#clearScopeBySource
+     *       OverrideService.clearScopeBySource} when the suspension expires, without
+     *       accidentally clearing an unrelated admin kill.</li>
      * </ul>
      *
-     * <p>The {@code action} verb (circuit-break / unpublish / remove) is
-     * informational here: an ACTIVE scope row drops the matched module from the
-     * manifest while in effect, regardless of verb. Per-module-slug overrides are
-     * NOT in this set (they already mutated the module at apply time and are
-     * dropped by the DB finder), so there is no regression.
+     * <p>The {@code action} verb ({@code circuit-break | unpublish | remove}) is
+     * informational at this stage: ANY active scope row ({@code cleared_at IS NULL})
+     * suppresses matched modules regardless of verb.  Per-module-slug overrides are
+     * NOT in {@code active} — they mutated the module row at apply time and are
+     * excluded by the enabled/circuit-state DB finder before this method is reached.
+     *
+     * @param m      the module row to test
+     * @param active all currently active scope-override rows for the caller's domain
+     *               (loaded once per render, not re-queried per module)
+     * @return {@code true} iff {@code m} should be dropped from the manifest
+     * @see ScopeKind
+     * @see systems.snapdragon.federation.service.OverrideService
      */
     static boolean isSuppressedByScope(FederationModule m, List<FederationOverride> active) {
         for (FederationOverride o : active) {
@@ -235,11 +453,22 @@ public class ManifestService {
         return false;
     }
 
+    /**
+     * Tests whether a single active scope-override row suppresses the given module.
+     * Routes the scope string through {@link ScopeKind#fromWire(String)} so the
+     * branching is exhaustive and typo-proof via a sealed {@code switch}.
+     * An unknown or null scope returns {@code false} (matches nothing), preserving
+     * the prior {@code "all".equals(scope)} fall-through behaviour.
+     *
+     * @param m the module row to test
+     * @param o the active scope-override row to test against
+     * @return {@code true} iff {@code o} suppresses {@code m}
+     */
     private static boolean matches(FederationModule m, FederationOverride o) {
         // Route the closed all|user|role vocabulary through the ScopeKind enum. The
         // stored value is the SAME lowercase string; fromWire is a null-tolerant lens
-        // (an unknown/null scope -> null -> "matches nothing", exactly the prior
-        // string-equals fall-through). No DB/JSON value changes.
+        // (an unknown/null scope → null → "matches nothing", exactly the prior
+        // string-equals fall-through behaviour). No DB/JSON value changes.
         ScopeKind kind = ScopeKind.fromWire(o.getScope());
         if (kind == null) {
             return false;
@@ -249,7 +478,8 @@ public class ManifestService {
             case ALL -> true;
             // scope=user matches when the module's owner equals the override target.
             case USER -> m.getOwnerUserId() != null && m.getOwnerUserId().equals(o.getTarget());
-            // scope=role matches when the module's declared requiresRole equals the target (case-insensitive).
+            // scope=role matches when the module's declared requiresRole equals the target
+            // (case-insensitive).
             case ROLE -> {
                 String required = requiresRole(m.getMetadata());
                 yield required != null && o.getTarget() != null
@@ -258,11 +488,24 @@ public class ManifestService {
         };
     }
 
+    // -------------------------------------------------------------------------
+    // Metadata helpers
+    // -------------------------------------------------------------------------
+
     /**
      * Null-safe parse of the module's declared required role from its
-     * {@code metadata} JSON ({@code {"requiresRole":"admin"}}). Pure CPU; no
-     * blocking I/O, so it is safe on the reactive path. Returns {@code null} when
-     * metadata is absent / unparseable / has no {@code requiresRole}.
+     * {@code metadata} JSON blob ({@code {"requiresRole":"admin"}} convention).
+     * Pure CPU, no blocking I/O — safe on the reactive scheduler thread.
+     *
+     * <p>Returns {@code null} in all failure cases (null/blank metadata string,
+     * malformed JSON, absent or non-textual {@code requiresRole} field).  The
+     * exception is swallowed intentionally: metadata is optional / admin-supplied,
+     * so a bad JSON blob must never break the manifest read path.
+     *
+     * @param metadata the raw JSON string from
+     *                 {@link FederationModule#getMetadata()}, or {@code null}
+     * @return the declared role name (e.g. {@code "admin"}), or {@code null}
+     *         when absent / unparseable
      */
     static String requiresRole(String metadata) {
         if (metadata == null || metadata.isBlank()) {
@@ -277,7 +520,20 @@ public class ManifestService {
         }
     }
 
-    /** All enabled+closed rows as entities (used by tests + admin tooling). */
+    // -------------------------------------------------------------------------
+    // Admin / test helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns all enabled + circuit-closed ({@code circuit_state = 'closed'})
+     * module rows across ALL domains (no domain predicate), ordered by kind then
+     * slug.  Used by integration tests and admin tooling that need to inspect the
+     * full registry state — NOT the caller-filtered manifest render path (use
+     * {@link #render(Set, PrincipalDomain)} for that).
+     *
+     * @return a {@code Flux} streaming every active module row; empty when none
+     *         are registered or all are disabled / circuit-open
+     */
     public Flux<FederationModule> activeModules() {
         return repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed");
     }

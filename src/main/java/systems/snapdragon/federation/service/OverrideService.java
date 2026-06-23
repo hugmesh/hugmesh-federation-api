@@ -51,6 +51,26 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * per-module intent still mutates the named module. This replaces the previous
  * {@code "slug@scopeValue"} fold (see README).
  *
+ * <h2>Caller-role access matrix</h2>
+ *
+ * <p>HTTP endpoints are secured by the gateway; the Casdoor JWT {@code roles} claim
+ * maps to Spring authority strings before reaching this service. Internal-service
+ * callers (admin-bff / mod-bff) call the ban path methods directly — not via HTTP.
+ *
+ * <pre>
+ *  Caller                       │ list             │ apply / rearm / clearScope
+ *                               │                  │ clearScopeBySource (HTTP)
+ *  ─────────────────────────────┼──────────────────┼───────────────────────────
+ *  ROLE_ADMIN                   │ own domain only  │ own domain only (cross-
+ *                               │                  │ domain slug → 404)
+ *  ROLE_SUPERADMIN              │ ALL brands       │ ALL brands (no domain
+ *                               │                  │ predicate)
+ *  Internal svc (admin-bff /    │ —                │ applyUserScope +
+ *  mod-bff, no HTTP endpoint)   │                  │ clearScopeBySource(String)
+ *                               │                  │ (no domain predicate;
+ *                               │                  │ cross-brand suspension)
+ * </pre>
+ *
  * <h2>Account-states profile-ban path (foundation)</h2>
  * {@link #applyUserScope} / {@link #clearScopeBySource} are the read/write path the
  * access-suspension foundation (admin-bff / mod-bff) drives when a USER is banned:
@@ -76,6 +96,17 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  *       the source of truth, so the read path converges once it lands — the breaker
  *       sheds load against a wedged store rather than stalling the ban caller.</li>
  * </ul>
+ *
+ * @see systems.snapdragon.federation.controller.OverrideController
+ * @see FederationOverrideRepository
+ * @see FederationModuleRepository
+ * @see FederationOverride
+ * @see FederationModule
+ * @see ScopeKind
+ * @see ManifestService
+ * @see VanityService
+ * @see ManifestCache
+ * @see PrincipalDomain
  */
 @Service
 public class OverrideService {
@@ -95,10 +126,21 @@ public class OverrideService {
         this.cache = cache;
     }
 
+    // ----- Override Audit List -----
+
     /**
-     * DOMAIN-scoped override audit list. A per-domain admin sees ONLY their own
-     * brand's overrides; SUPERADMIN sees every override across all brands. The cut is
-     * enforced in the QUERY (not in code).
+     * Returns the override audit log scoped to the caller's domain. A per-domain
+     * ROLE_ADMIN sees ONLY their own brand's override rows, ordered newest-first.
+     * A ROLE_SUPERADMIN sees every row across all brands. The cut is enforced in
+     * the DB query (not in code) via the appropriate repository finder.
+     *
+     * @param scope the caller's resolved brand predicate — carries the
+     *              cryptographically-derived domain and the superadmin flag
+     * @return a {@code Flux} streaming {@link FederationOverride} rows ordered by
+     *         {@code ts} descending; empty when no overrides have been recorded
+     *         for the caller's domain (or at all, for SUPERADMIN)
+     * @see FederationOverrideRepository#findAllByOrderByTsDesc()
+     * @see FederationOverrideRepository#findByDomainOrderByTsDesc(String)
      */
     public Flux<FederationOverride> list(PrincipalDomain scope) {
         return scope.superadmin()
@@ -106,12 +148,44 @@ public class OverrideService {
                 : overrides.findByDomainOrderByTsDesc(scope.domain());
     }
 
+    // ----- Override Apply and Rearm -----
+
     /**
-     * Apply an override against a module slug IN THE CALLER'S DOMAIN. {@code setBy} is
-     * the admin's Casdoor subject. The targeted module is looked up pinned to the
-     * caller's domain, so a per-domain admin can NEVER circuit-break / unpublish /
-     * remove another brand's module (a cross-domain slug -> 404). The recorded audit
-     * row is stamped with the caller's domain. SUPERADMIN targets any module.
+     * Applies an override verb against a named module slug in the caller's domain,
+     * mutating the module's read-path fields and recording an audit row. The
+     * targeted module is looked up pinned to the caller's domain so a ROLE_ADMIN
+     * can NEVER circuit-break / unpublish / remove another brand's module — a
+     * cross-domain slug resolves to 404. ROLE_SUPERADMIN targets any module across
+     * all brands. The audit row is stamped with the resolved domain of the targeted
+     * module (see {@link #rowDomain}).
+     *
+     * <p>The two effects applied atomically in sequence:
+     * <ol>
+     *   <li>Module row mutation via {@link #applyToModule} (circuit_state, enabled,
+     *       or hard-delete) — takes effect on the next manifest render.</li>
+     *   <li>Override audit row written via {@link #recordOverride} with scope,
+     *       target, action, setBy, domain, and ts.</li>
+     * </ol>
+     *
+     * @param moduleSlug  the unique slug identifying the target module
+     * @param scope       the scope of the kill ({@code all | user | role}); see
+     *                    {@link ScopeKind} for the valid vocabulary
+     * @param scopeValue  the scope-value to store as the override target: the
+     *                    owner userId for {@code scope=user}, the role name for
+     *                    {@code scope=role}, or {@code null} / blank for
+     *                    {@code scope=all} (target stored as NULL)
+     * @param action      the override verb: {@code circuit-break}, {@code unpublish},
+     *                    or {@code remove}
+     * @param setBy       the Casdoor subject of the admin applying the override
+     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all brands)
+     * @return a {@code Mono} emitting the saved {@link FederationOverride} audit row
+     *         after the module mutation and row write both complete
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when {@code action} or
+     *                                 {@code scope} is not a valid token
+     * @throws ResponseStatusException {@code 404 NOT_FOUND} when no module with
+     *                                 {@code moduleSlug} exists in the caller's domain
+     * @see #rearm(String, PrincipalDomain)
+     * @see ScopeKind
      */
     public Mono<FederationOverride> apply(String moduleSlug, String scope, String scopeValue,
                                           String action, String setBy, PrincipalDomain domainScope) {
@@ -132,32 +206,79 @@ public class OverrideService {
                                 rowDomain(domainScope, m))));
     }
 
-    /** The domain to stamp on a recorded override row: the caller's domain, or — for
-     *  a SUPERADMIN action — the TARGETED MODULE's own domain (so the audit row stays
-     *  attributed to the brand it acted on, not a phantom 'default'). */
+    /**
+     * Resolves the domain to stamp on the recorded override audit row. For a
+     * per-domain ROLE_ADMIN the caller's own domain is used directly. For a
+     * ROLE_SUPERADMIN the targeted module's own domain is used so the audit row
+     * stays attributed to the brand it acted on rather than a phantom
+     * {@code "default"}.
+     *
+     * @param scope  the caller's resolved brand predicate
+     * @param target the module row that is being overridden
+     * @return the domain string to write into the override row's {@code domain}
+     *         column; falls back to {@code "default"} when the module has no domain
+     *         set (pre-026 data)
+     */
     private static String rowDomain(PrincipalDomain scope, FederationModule target) {
         if (!scope.superadmin()) return scope.domain();
         String d = target.getDomain();
         return d == null ? PrincipalDomain.forDomain("default").domain() : d;
     }
 
+    /**
+     * Mutates a module's read-path fields in accordance with the override verb and
+     * persists the change. The three branches map directly to the three valid action
+     * tokens:
+     *
+     * <ul>
+     *   <li>{@code circuit-break} — sets {@code circuit_state='open'} so the
+     *       manifest's DB finder excludes the module on the next render.</li>
+     *   <li>{@code unpublish} — sets {@code enabled=false} so the enabled+circuit
+     *       finder excludes it.</li>
+     *   <li>{@code remove} — hard-deletes the module row from the repository.</li>
+     * </ul>
+     *
+     * @param m      the module row to mutate; modified in place before saving
+     * @param action the override verb ({@code circuit-break | unpublish | remove}),
+     *               already validated by the caller
+     * @return a {@code Mono} completing when the save (or delete) finishes; signals
+     *         {@code 400 BAD_REQUEST} on an unrecognised action (defensive — the
+     *         caller validates first)
+     */
     private Mono<?> applyToModule(FederationModule m, String action) {
-        switch (action) {
-            case "circuit-break":
+        return switch (action) {
+            case "circuit-break" -> {
                 m.setCircuitState("open");
                 m.setUpdatedAt(Instant.now());
-                return modules.save(m);
-            case "unpublish":
+                yield modules.save(m);
+            }
+            case "unpublish" -> {
                 m.setEnabled(false);
                 m.setUpdatedAt(Instant.now());
-                return modules.save(m);
-            case "remove":
-                return modules.delete(m);
-            default:
-                return Mono.error(new ResponseStatusException(BAD_REQUEST, "unknown action: " + action));
-        }
+                yield modules.save(m);
+            }
+            case "remove" -> modules.delete(m);
+            default -> Mono.error(new ResponseStatusException(BAD_REQUEST, "unknown action: " + action));
+        };
     }
 
+    /**
+     * Builds and saves the {@link FederationOverride} audit row that records the
+     * override event. The {@code target} column is set via {@link #scopeForTarget}
+     * to the read-path match key the manifest and vanity resolvers will key on:
+     * NULL for {@code scope=all}, the scope value for {@code scope=user|role}.
+     *
+     * @param moduleSlug  slug of the mutated module (used as fallback target when no
+     *                    explicit scope value is provided)
+     * @param scope       the scope token ({@code all | user | role})
+     * @param scopeValue  the caller-supplied scope value (userId or role name), or
+     *                    null / blank
+     * @param action      the override verb
+     * @param setBy       the Casdoor subject of the admin applying the override
+     * @param domain      the resolved domain to stamp on the row (from
+     *                    {@link #rowDomain})
+     * @return a {@code Mono} emitting the saved {@link FederationOverride} row
+     */
     private Mono<FederationOverride> recordOverride(String moduleSlug, String scope, String scopeValue,
                                                     String action, String setBy, String domain) {
         FederationOverride o = new FederationOverride();
@@ -179,9 +300,22 @@ public class OverrideService {
         return overrides.save(o);
     }
 
-    /** Decision-1 target rule: NULL for 'all'; the scope_value for user/role; the
-     *  slug only when no scope_value was given (genuine per-slug intent). The
-     *  scope=all test goes through {@link ScopeKind} (same lowercase token). */
+    /**
+     * Resolves the value to store in the override row's {@code target} column,
+     * following the Decision-1 target rule. For {@code scope=all} the target is
+     * NULL (the global-kill row has no per-key match; scope alone is sufficient).
+     * For {@code scope=user|role} the target is the explicit scope value when
+     * provided, or the module slug as a fallback when the caller omitted it
+     * (genuine per-slug intent with a scope annotation).
+     *
+     * @param scope       the scope token ({@code all | user | role})
+     * @param moduleSlug  the slug of the mutated module (fallback target)
+     * @param scopeValue  the caller-supplied scope value (userId or role name), or
+     *                    null / blank
+     * @return {@code null} for {@code scope=all}; the explicit scope value, or
+     *         {@code moduleSlug} as fallback, for {@code scope=user|role}
+     * @see ScopeKind
+     */
     private static String scopeForTarget(String scope, String moduleSlug, String scopeValue) {
         if (ScopeKind.ALL == ScopeKind.fromWire(scope)) {
             return null;
@@ -190,10 +324,20 @@ public class OverrideService {
     }
 
     /**
-     * Re-arm a circuit-broken module IN THE CALLER'S DOMAIN (admin recovery): flip
-     * circuit_state back to closed. The module is loaded pinned to the caller's
-     * domain so a per-domain admin can NEVER re-arm another brand's module
-     * (cross-domain slug -> 404). SUPERADMIN re-arms any module.
+     * Re-arms a circuit-broken module in the caller's domain (admin recovery path):
+     * flips {@code circuit_state} back to {@code "closed"} and re-enables the
+     * module so it reappears on the next manifest render. The module is looked up
+     * pinned to the caller's domain so a ROLE_ADMIN can NEVER re-arm another
+     * brand's module — a cross-domain slug resolves to 404. ROLE_SUPERADMIN
+     * re-arms any module across all brands.
+     *
+     * @param moduleSlug  the unique slug of the module to re-arm
+     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all brands)
+     * @return a {@code Mono} emitting the saved {@link FederationModule} with
+     *         {@code circuitState="closed"} and {@code enabled=true}
+     * @throws ResponseStatusException {@code 404 NOT_FOUND} when no module with
+     *                                 {@code moduleSlug} exists in the caller's domain
+     * @see #apply(String, String, String, String, String, PrincipalDomain)
      */
     public Mono<FederationModule> rearm(String moduleSlug, PrincipalDomain domainScope) {
         Mono<FederationModule> found = domainScope.superadmin()
@@ -209,18 +353,37 @@ public class OverrideService {
                 });
     }
 
+    // ----- Scope Override Clear -----
+
     /**
-     * Rearm a SCOPE override (admin recovery for an all/user/role kill): stamp
-     * {@code cleared_at} on every matching active row so the manifest read path
-     * stops applying it (the suppressed modules return to the next render). For
-     * scope=all the target is NULL and we key on scope alone.
+     * Rearms a catalogue-level scope override (recovery for an {@code all},
+     * {@code user}, or {@code role} kill): stamps {@code cleared_at} on every
+     * matching active row so the manifest read path stops suppressing the affected
+     * modules on the next render. For {@code scope=all} the target is NULL and the
+     * key is scope alone; for {@code scope=user|role} the finder keys on both
+     * scope and target.
      *
-     * <p>DOMAIN-scoped: a per-domain admin clears ONLY active rows in their own brand
-     * — the matched stream is filtered to {@code domainScope.domain()} so a brand-X
-     * admin can never re-arm a brand-Y kill. SUPERADMIN clears matching rows in every
-     * brand. Returns the number of rows cleared. Scope kills are render-time only, so
-     * clearing the row is sufficient to restore; per-module recovery still uses
-     * {@link #rearm(String, PrincipalDomain)}.
+     * <p>DOMAIN-scoped: a ROLE_ADMIN clears ONLY active rows in their own brand —
+     * the matched stream is filtered to {@code domainScope.domain()} in code so a
+     * brand-X admin can never rearm a brand-Y kill. ROLE_SUPERADMIN clears matching
+     * rows in every brand. Scope kills are render-time only (no module row
+     * mutation), so clearing the active row is sufficient to restore; per-module
+     * recovery uses {@link #rearm(String, PrincipalDomain)}.
+     *
+     * @param scope       the scope token to match ({@code all | user | role});
+     *                    validated against {@link ScopeKind}
+     * @param target      the scope value to match ({@code null} / blank is accepted
+     *                    for {@code scope=all}; for {@code user|role} it identifies
+     *                    the userId or role name whose kill rows to clear)
+     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all brands)
+     * @return a {@code Mono} emitting the count of override rows that were cleared
+     *         (stamped with {@code cleared_at}); zero when no active matching rows
+     *         exist in the caller's domain
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when {@code scope} is
+     *                                 not a valid token
+     * @see #rearm(String, PrincipalDomain)
+     * @see FederationOverrideRepository#findByScopeAndClearedAtIsNull(String)
+     * @see FederationOverrideRepository#findByScopeAndTargetAndClearedAtIsNull(String, String)
      */
     public Mono<Long> clearScope(String scope, String target, PrincipalDomain domainScope) {
         if (!isScope(scope)) {
@@ -242,15 +405,25 @@ public class OverrideService {
                 .count();
     }
 
-    /** True iff the override row belongs to {@code domain}. A row with a NULL domain
-     *  (pre-026 data) is treated as {@code "default"} so legacy rows are clearable by
-     *  a default-domain admin (single-issuer back-compat). */
+    /**
+     * Tests whether an override row belongs to the given domain. Used in-code to
+     * enforce the per-domain admin scope after the repository returns rows (the
+     * {@code clearScope} active-row stream is not domain-pinned at the DB level for
+     * the {@code scope=all} case). A row with a NULL domain (pre-026 data) is
+     * treated as {@code "default"} so legacy rows remain clearable by a
+     * default-domain admin (single-issuer back-compat).
+     *
+     * @param o      the override row to test
+     * @param domain the caller's resolved domain string
+     * @return {@code true} iff the row's domain (or {@code "default"} when NULL)
+     *         equals {@code domain}
+     */
     private static boolean matchesDomain(FederationOverride o, String domain) {
         String d = o.getDomain() == null ? PrincipalDomain.forDomain("default").domain() : o.getDomain();
         return d.equals(domain);
     }
 
-    // ── Account-states profile-ban path (foundation) ────────────────────────────
+    // ----- Account-States Profile-Ban Path (Foundation) -----
 
     /**
      * Apply a scope=user override DIRECTLY (the access-suspension profile-ban
@@ -278,12 +451,23 @@ public class OverrideService {
      * source of truth, so the read path converges once it lands; the breaker sheds
      * load against a wedged override store rather than stalling the ban caller.
      *
+     * <p>This overload is the BACK-COMPAT / LEGACY entry-point (single-issuer, no
+     * domain in scope). It delegates to the domain-scoped overload landing the row in
+     * the {@code "default"} domain. Callers that do have a resolved domain MUST use
+     * the domain-scoped overload directly.
+     *
      * @param ownerUsername the {@code owner_user_id} value to ban (username / localpart)
      * @param action        the override verb ({@code unpublish} for a profile ban —
      *                       there is no ROLE_USER self-publish endpoint today, so the
      *                       ban is unpublish / vanity-suppress only)
      * @param setBy         the Casdoor subject (or service identity) applying the ban
      * @param source        the SOURCE tag, e.g. {@code 'access_suspension:<id>'}
+     * @return a {@code Mono} emitting the saved {@link FederationOverride} audit row
+     *         after the cache is invalidated
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when any required
+     *                                 parameter is blank or {@code action} is invalid
+     * @see #applyUserScope(String, String, String, String, PrincipalDomain)
+     * @see #clearScopeBySource(String)
      */
     @CircuitBreaker(name = CB)
     public Mono<FederationOverride> applyUserScope(String ownerUsername, String action,
@@ -299,6 +483,20 @@ public class OverrideService {
      * suspension drops only brand-X manifests. SUPERADMIN-issued suspensions land in
      * the {@code "default"} domain (cross-brand suspension is a later admin-tooling
      * concern; the foundation never lets a ban silently apply to every brand).
+     *
+     * @param ownerUsername the {@code owner_user_id} value to ban (username / localpart)
+     * @param action        the override verb ({@code unpublish} for a profile ban)
+     * @param setBy         the Casdoor subject (or service identity) applying the ban
+     * @param source        the SOURCE tag, e.g. {@code 'access_suspension:<id>'}
+     * @param domainScope   the caller's resolved brand predicate; SUPERADMIN writes
+     *                      land in the {@code "default"} domain (see
+     *                      {@link #domainForWrite})
+     * @return a {@code Mono} emitting the saved {@link FederationOverride} audit row
+     *         after the cache is invalidated
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when any required
+     *                                 parameter is blank or {@code action} is invalid
+     * @see #applyUserScope(String, String, String, String)
+     * @see ManifestCache#invalidate()
      */
     @CircuitBreaker(name = CB)
     public Mono<FederationOverride> applyUserScope(String ownerUsername, String action,
@@ -335,22 +533,28 @@ public class OverrideService {
     }
 
     /**
-     * Clear (rearm) the scope override(s) created by a specific {@code source}
-     * (the suspension lifting/expiring). Stamps {@code cleared_at} on EVERY active
-     * row whose {@code reason} equals {@code source}, and ONLY those — a manual
-     * scope=user kill an admin applied separately carries a NULL / different reason
-     * and is therefore never rearmed. After clearing, the manifest cache is
-     * invalidated so the owner's modules return on the next render.
+     * Clears (rearms) the scope override row(s) created by a specific {@code source}
+     * tag (the suspension lifting or expiring). Stamps {@code cleared_at} on EVERY
+     * active row whose {@code reason} equals {@code source}, and ONLY those — a
+     * manual scope=user kill an admin applied separately carries a NULL or different
+     * reason and is therefore never rearmed by this path. After clearing, the
+     * manifest cache is invalidated so the owner's modules return on the next render.
      *
-     * <p>This overload is the BACK-COMPAT / LEGACY entry-point (single-issuer,
-     * no JWT in scope). It delegates to the domain-scoped overload with a
-     * SUPERADMIN scope so the un-pinned (cross-domain) finder is used. Callers
-     * that do have a JWT MUST use the domain-scoped overload directly.
+     * <p>This overload is the BACK-COMPAT / LEGACY entry-point (single-issuer, no
+     * JWT domain in scope). It delegates to the domain-scoped overload with a
+     * SUPERADMIN scope so the un-pinned (cross-domain) finder is used. Callers that
+     * do have a resolved domain MUST use the domain-scoped overload directly.
      *
-     * <p>Returns the number of rows cleared. Wrapped in {@code @CircuitBreaker}
-     * (fail-fast) for symmetry with {@link #applyUserScope}.
+     * <p>Wrapped in {@code @CircuitBreaker} (fail-fast) for symmetry with
+     * {@link #applyUserScope}.
      *
-     * @param source the SOURCE tag whose rows to clear, e.g. {@code 'access_suspension:<id>'}
+     * @param source the SOURCE tag whose rows to clear, e.g.
+     *               {@code 'access_suspension:<id>'}
+     * @return a {@code Mono} emitting the count of rows cleared (stamped with
+     *         {@code cleared_at}); zero when no active rows carry this source tag
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when {@code source}
+     *                                 is blank
+     * @see #clearScopeBySource(String, PrincipalDomain)
      */
     @CircuitBreaker(name = CB)
     public Mono<Long> clearScopeBySource(String source) {
@@ -362,9 +566,9 @@ public class OverrideService {
     }
 
     /**
-     * DOMAIN-scoped variant of {@link #clearScopeBySource(String)}: clear (rearm)
-     * the active scope override(s) created by a specific {@code source}, filtered to
-     * the caller's brand so a per-domain admin can NEVER rearm another brand's
+     * DOMAIN-scoped variant of {@link #clearScopeBySource(String)}: clears (rearms)
+     * the active scope override row(s) created by a specific {@code source} tag,
+     * filtered to the caller's brand so a ROLE_ADMIN can NEVER rearm another brand's
      * suspension row by guessing its source tag.
      *
      * <p>SECURITY (cross-tenant): the prior endpoint attempt called the un-scoped
@@ -382,8 +586,17 @@ public class OverrideService {
      * {@link #matchesDomain}) so a default-domain admin can still rearm legacy rows
      * (single-issuer back-compat).
      *
-     * @param source      the SOURCE tag whose rows to clear, e.g. {@code 'access_suspension:<id>'}
-     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all)
+     * @param source      the SOURCE tag whose rows to clear, e.g.
+     *                    {@code 'access_suspension:<id>'}
+     * @param domainScope the caller's resolved brand predicate (SUPERADMIN = all brands)
+     * @return a {@code Mono} emitting the count of rows cleared (stamped with
+     *         {@code cleared_at}); zero when no active rows match within the
+     *         caller's domain
+     * @throws ResponseStatusException {@code 400 BAD_REQUEST} when {@code source}
+     *                                 is blank
+     * @see #clearScopeBySource(String)
+     * @see FederationOverrideRepository#findByReasonAndClearedAtIsNull(String)
+     * @see FederationOverrideRepository#findByReasonAndClearedAtIsNullAndDomain(String, String)
      */
     @CircuitBreaker(name = CB)
     public Mono<Long> clearScopeBySource(String source, PrincipalDomain domainScope) {
@@ -406,20 +619,44 @@ public class OverrideService {
                 .flatMap(n -> cache.invalidate().thenReturn(n));
     }
 
-    /** The domain to stamp on a directly-written override row: the principal's
-     *  domain, or {@code "default"} for a SUPERADMIN write (no domain in scope).
-     *  NEVER taken from a request body. */
+    // ----- Helpers -----
+
+    /**
+     * Resolves the domain to stamp on a directly-written override row (the ban
+     * path, where the row is built in code rather than derived from a module
+     * lookup). For a per-domain principal the principal's own domain is used.
+     * For a SUPERADMIN write (no domain in scope) the row lands in {@code "default"}.
+     * The value is NEVER taken from a request body.
+     *
+     * @param scope the caller's resolved brand predicate
+     * @return the domain string to write into the override row's {@code domain}
+     *         column
+     */
     private static String domainForWrite(PrincipalDomain scope) {
         return scope.superadmin() ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
+    /**
+     * Returns {@code true} iff {@code a} is a valid override action token
+     * ({@code circuit-break}, {@code unpublish}, or {@code remove}).
+     *
+     * @param a the action string to test
+     * @return {@code true} iff {@code a} is one of the three recognised verbs
+     */
     private static boolean isAction(String a) {
         return "circuit-break".equals(a) || "unpublish".equals(a) || "remove".equals(a);
     }
 
-    /** True iff {@code s} is a valid scope token ({@code all | role | user}) — routed
-     *  through {@link ScopeKind} so the accept/reject set is the enum, not a hand-kept
-     *  string list. The validated value is still the SAME lowercase string. */
+    /**
+     * Returns {@code true} iff {@code s} is a valid scope token
+     * ({@code all | role | user}) — routed through {@link ScopeKind} so the
+     * accept/reject set is the enum, not a hand-kept string list. The validated
+     * value is still the SAME lowercase string.
+     *
+     * @param s the scope string to test
+     * @return {@code true} iff {@code s} maps to a known {@link ScopeKind} value
+     * @see ScopeKind#isValid(String)
+     */
     private static boolean isScope(String s) {
         return ScopeKind.isValid(s);
     }
