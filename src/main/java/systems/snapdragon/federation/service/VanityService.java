@@ -3,6 +3,7 @@ package systems.snapdragon.federation.service;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
+import systems.snapdragon.federation.model.ScopeKind;
 import systems.snapdragon.federation.model.VanityProfileDto;
 import systems.snapdragon.federation.repository.FederationModuleRepository;
 import systems.snapdragon.federation.repository.FederationOverrideRepository;
@@ -58,8 +59,10 @@ public class VanityService {
     static final String PUBLIC_VISIBILITY = "public";
     /** Kill-switch: only circuit-closed rows ship (mirrors the manifest read path). */
     static final String CIRCUIT_CLOSED = "closed";
-    /** Scope of an owner-level (per-user) kill-switch / access-suspension override. */
-    static final String USER_SCOPE = "user";
+    /** Scope of an owner-level (per-user) kill-switch / access-suspension override.
+     *  Sourced from {@link ScopeKind#USER} so it stays the identical lowercase "user"
+     *  token the override store keys on. */
+    static final String USER_SCOPE = ScopeKind.USER.value();
 
     private final FederationModuleRepository repo;
     private final FederationOverrideRepository overrides;

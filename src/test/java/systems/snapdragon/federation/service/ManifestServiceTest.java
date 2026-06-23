@@ -444,6 +444,27 @@ class ManifestServiceTest {
         assertThat(ManifestService.isSuppressedByScope(adminUi, List.of())).isFalse();
     }
 
+    /**
+     * The ScopeKind routing is behaviour-preserving: a row carrying an UNKNOWN or NULL
+     * scope token suppresses NOTHING (ScopeKind.fromWire -> null -> matches nothing),
+     * exactly as the prior {@code "all".equals(scope)} string fall-through did. This
+     * guards against the enum ever throwing / over-matching on a stray scope value.
+     */
+    @Test
+    void isSuppressedByScope_unknownOrNullScope_suppressesNothing() {
+        FederationModule any = owned("mine", "u1");
+
+        FederationOverride unknownScope = scope("everything", null); // not a valid token
+        assertThat(ManifestService.isSuppressedByScope(any, List.of(unknownScope))).isFalse();
+
+        FederationOverride nullScope = new FederationOverride();      // scope left null
+        nullScope.setTarget("u1");
+        assertThat(ManifestService.isSuppressedByScope(any, List.of(nullScope))).isFalse();
+
+        // A valid 'user' row in the same active set still matches (routing intact).
+        assertThat(ManifestService.isSuppressedByScope(any, List.of(unknownScope, scope("user", "u1")))).isTrue();
+    }
+
     /** Compile-time guard that the finder signature accepts a Collection<String>. */
     @SuppressWarnings("unused")
     private static Collection<String> scopeKinds() {
