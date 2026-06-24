@@ -101,9 +101,20 @@ app:
 # SecurityConfig: permitAll under dev/test (so gen:fetch can curl the spec
 # without a token) and ROLE_ADMIN otherwise (prod). Mirrors admin-bff.
 springdoc:
+  # Force JSON as the default produced media type. Without this, springdoc emits
+  # `*/*` for endpoints with no explicit `produces`, which ng-openapi-gen maps to a
+  # `Blob` response type — breaking JSON parsing in the generated typed clients.
+  # Mirrors snapdragon-admin-bff-api / snapdragon-mod-bff-api.
+  default-produces-media-type: application/json
   api-docs:
     enabled: true
     path: /v3/api-docs
+    # Emit OpenAPI 3.0.1 (not springdoc-3.x's new 3.1.0 default). The Boot-4 upgrade
+    # put this service on springdoc 3.x (via snapdragon-parent), which silently
+    # switched the dumped spec to 3.1.0 — but the Angular UIs generate their typed
+    # clients with ng-openapi-gen 0.51.0, which CANNOT parse 3.1.0. Pinning back to
+    # 3.0 keeps the BFF<->UI ng-openapi-gen contract unchanged. Mirrors admin-bff.
+    version: openapi_3_0
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
