@@ -28,11 +28,11 @@ patterns.
 
 > Snapshot as of 2026-06-24. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
 
-- ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.2 / Spring
-  Cloud 2025.1** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 21,
+- ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
+  Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
-  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.4.0`
-  (a child of `spring-boot-starter-parent:4.0.2`) and consumes
+  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.7.0`
+  (a child of `spring-boot-starter-parent:4.0.7`) and consumes
   `systems.snapdragon:snapdragon-commons:2.0.0` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
@@ -79,8 +79,8 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 
 ## Stack
 
-- Spring Boot **4.0.2** / Spring Cloud **2025.1** (Spring Framework 7 / Spring
-  Security 7 / Jackson 3), Java **21**, reactive **WebFlux** (no blocking).
+- Spring Boot **4.0.7** / Spring Cloud **2025.1.2** (Spring Framework 7 / Spring
+  Security 7 / Jackson 3), Java **25 LTS**, reactive **WebFlux** (no blocking).
 - **R2DBC** (r2dbc-postgresql) for ALL runtime reads/writes. JDBC is used **only**
   by Liquibase for schema migrations.
 - **Casdoor** JWT OAuth2 resource-server; the authority converter (`CasdoorAuthorities`),
@@ -104,8 +104,8 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 This service is the **first adopter** of the org's shared Maven artifacts. Two
 de-duplication moves:
 
-1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.4.0` (itself a child of
-   `spring-boot-starter-parent:4.0.2`, so the whole Spring Boot dependency/plugin
+1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.7.0` (itself a child of
+   `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
    R2DBC + Liquibase + JDBC, springdoc, the full test stack) and the
