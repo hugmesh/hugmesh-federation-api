@@ -26,12 +26,12 @@ patterns.
 
 ## Current State
 
-> Snapshot as of 2026-06-20. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
+> Snapshot as of 2026-06-24. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
 
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.2 / Spring
   Cloud 2025.1** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 21,
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
-  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.0.0`
+  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.4.0`
   (a child of `spring-boot-starter-parent:4.0.2`) and consumes
   `systems.snapdragon:snapdragon-commons:2.0.0` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
@@ -88,7 +88,9 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
   config-gated multi-issuer `TenancyResourceServerConfig` now come from the shared
   **`systems.snapdragon:snapdragon-commons`** library (see *Shared commons library*).
 - **springdoc-openapi-starter-webflux-ui** — spec at `/v3/api-docs`, UI at
-  `/swagger-ui.html` (profile-split gating, see *Security*).
+  `/swagger-ui.html` (profile-split gating, see *Security*). The published spec is
+  pinned to **OpenAPI 3.0** (`springdoc.api-docs.version=openapi_3_0`) — springdoc
+  3.x defaults to 3.1.0, which the Angular UIs' ng-openapi-gen cannot parse.
 - **Resilience4j** circuit breakers on the direct-write profile-ban path.
 - **ICU4j** + **commons-text** for the confusable-username skeleton computation.
 - **Cassandra-reactive** driver for a best-effort manifest write-through cache
@@ -102,7 +104,7 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 This service is the **first adopter** of the org's shared Maven artifacts. Two
 de-duplication moves:
 
-1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.0.0` (itself a child of
+1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.4.0` (itself a child of
    `spring-boot-starter-parent:4.0.2`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
@@ -427,9 +429,11 @@ brand **the exact same way the gateway does**:
   domain index to the three tenant-owned tables (`federation_modules`,
   `federation_override`, `moderation_requests`). A row's domain is stamped from the
   **principal's domain at write time** (never a body value, never patchable); the
-  domain-pinned finders enforce the cut in the QUERY. `user_modules` /
-  `username_skeleton` / vanity fragments are owner-scoped (keyed on
-  `owner_user_id`, already a per-domain namespace) and unchanged.
+  domain-pinned finders enforce the cut in the QUERY. Changeset **`035`** extends
+  the same NOT-NULL `domain` column to `user_modules` so the bundle-metadata reads
+  are domain-pinned **in addition** to the owner cut (closing a cross-tenant
+  metadata IDOR — see *Schema*). `username_skeleton` / vanity fragments remain
+  owner-scoped only (keyed on `owner_user_id`, already a per-domain namespace).
 
 **Backward-compatible.** With only a single issuer and no `app.tenancy.issuers`,
 every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
@@ -485,6 +489,13 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   `(slug, owner_user_id)` over **active** (non-superseded) `user_modules` rows,
   enforcing **one active bundle per (slug, owner)** at the DB layer (Postgres
   partial-unique / H2-compat equivalent).
+- **`035`** — multi-tenancy `domain` column (NOT-NULL, DEFAULT `'default'`) on
+  `user_modules`, the same backward-compatible cut as `026`. Lets the bundle
+  **metadata** reads (`GET /bundles/slug/{slug}`, `GET /bundles/{hash}`) be
+  DOMAIN-pinned in addition to the owner cut, closing a cross-tenant metadata IDOR
+  where a brand-X caller could enumerate another brand's bundle metadata. Stamped
+  from the publishing principal's issuer-derived `DOMAIN_<x>` at write time
+  (`BundleService.put`); SUPERADMIN un-pinned.
 
 ### A note on the JSON columns (honest constraint)
 
