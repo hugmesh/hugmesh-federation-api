@@ -104,6 +104,20 @@
       <artifactId>resilience4j-reactor</artifactId>
     </dependency>
 
+    <!-- AspectJ weaver — REQUIRED for resilience4j's @CircuitBreaker to take effect.
+         The breaker is applied by a Spring AOP @Aspect (CircuitBreakerAspect) that
+         resilience4j registers ONLY under its AspectJOnClasspathCondition (which checks
+         for org.aspectj.lang.ProceedingJoinPoint), and Boot's AopAutoConfiguration
+         enables AspectJ auto-proxy only when AspectJ is present. resilience4j-spring-boot4
+         does NOT pull it transitively and Boot 4 removed the spring-boot-starter-aop
+         starter, so without this dependency every @CircuitBreaker (incl. the
+         fail-closed/fail-open fallbacks) is a SILENT no-op. Version BOM-managed.
+         Guarded by CircuitBreakerWiringTest. -->
+    <dependency>
+      <groupId>org.aspectj</groupId>
+      <artifactId>aspectjweaver</artifactId>
+    </dependency>
+
     <!-- ICU4J — the Unicode SpoofChecker (CONFUSABLE | RESTRICTION_LEVEL) +
          getSkeleton/getBidiSkeleton drives the canonical username/displayName
          confusable fold (homoglyph + mixed-script + bidi). PINNED via
