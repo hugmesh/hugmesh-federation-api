@@ -208,6 +208,7 @@ privileged surface in every brand.
 | `/overrides` | GET/POST | ROLE_ADMIN | Kill-switch: list / apply (`circuit-break` \| `unpublish` \| `remove`), domain-scoped. |
 | `/overrides/{slug}/rearm` | POST | ROLE_ADMIN | Recover a circuit-broken module (per-slug). |
 | `/overrides/clear` | POST | ROLE_ADMIN | Rearm an active scope override (`{scope,target}`; stamps `cleared_at`). |
+| `/overrides/clear-source` | POST | ROLE_ADMIN / SUPERADMIN | Lift/expire a suspension by source tag: stamps `cleared_at` on **only** the `federation_override` rows whose `reason` equals the supplied `source` — so an expiring access-suspension never rearms an unrelated manual scope override (`OverrideController.clearSource` → `OverrideService.clearScopeBySource`). |
 
 ## The manifest read path (the keystone)
 
