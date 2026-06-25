@@ -26,7 +26,7 @@ patterns.
 
 ## Current State
 
-> Snapshot as of 2026-06-24. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
+> Snapshot as of 2026-06-25. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
 
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
   Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
@@ -272,7 +272,7 @@ ones), and returns a deliberately narrow, public-safe `CapabilityDto`
 hidden/disabled so they appear greyed/absent until a superadmin enables them
 per-domain: **owncast** and **tube** are seeded `enabled=false` +
 `visibility='internal'` (GPU-gated live-streaming / YouTube-archiver), and **wiki**
-is seeded `visibility='internal'` (inert until enabled by a superadmin per-domain (the wiki-bff-api and wiki-ui are shipped)). The
+is seeded `visibility='internal'` (inert until a superadmin enables it per-domain; the wiki BFF and UI are shipped). The
 capabilities projection therefore reports `installed=false` (or omits them from the
 role-visible manifest) until they are turned on and the matching role is granted.
 
@@ -469,7 +469,7 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   tables (see *Multi-tenancy*). ✅ merged to `main`.
 - **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
   optional-service module (`slug='wiki'`, `mountAt /wiki`, `requiresRole 'wiki'`,
-  **`visibility='internal'`** — seeded INERT/hidden until enabled by a superadmin per-domain (the wiki-bff-api and wiki-ui are shipped)).
+  **`visibility='internal'`** — seeded INERT/hidden (`visibility='internal'`) pending per-domain superadmin enablement; snapdragon-wiki-bff-api and snapdragon-wiki-ui are shipped).
 - **`029`** — **COMPLETE the `federation_modules` seed** so the dynamic manifest is
   AUTHORITATIVE: seed the three static-manifest slugs that had no DB row — `mod`
   (`visibility='internal'`, `requiresRole 'mod'`, `/mod`), `apidocs`

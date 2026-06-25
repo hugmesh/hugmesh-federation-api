@@ -39,7 +39,7 @@
     <icu4j.version>77.1</icu4j.version>
     <commons-text.version>1.13.1</commons-text.version>
     <!-- The Testcontainers BOM, the r2dbc-h2 1.0.0.RELEASE / H2 2.3.232 pins, and the
-         testcontainers test deps are now ALL provided by snapdragon-parent:2.0.0
+         testcontainers test deps are now ALL provided by snapdragon-parent:2.7.0
          (its dependencyManagement imports the TC BOM + pins H2; its shared
          <dependencies> declare spring-boot-testcontainers / postgresql / junit-jupiter
          / r2dbc). The federation-spike-local dependencyManagement block and the
