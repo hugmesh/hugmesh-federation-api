@@ -7,6 +7,10 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler;
+import org.springframework.security.access.expression.method.MethodSecurityExpressionHandler;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
@@ -237,6 +241,33 @@ public class SecurityConfig {
         } else {
             o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter()));
         }
+    }
+
+    /**
+     * The org role hierarchy for METHOD security ({@code @PreAuthorize}). Mirrors the
+     * web-filter intent (and admin-bff's identical bean) so a SUPERADMIN satisfies a
+     * {@code hasRole('ADMIN')} / {@code hasAnyRole('SERVICE','ADMIN')} method gate — the
+     * "cross-domain infra role reaches every privileged surface" contract. Without this
+     * bean {@code @EnableReactiveMethodSecurity} does NO hierarchy expansion, so the
+     * narrower controller gates on {@code UsernameAvailabilityController}
+     * (availability/check/confusables) wrongly 403'd SUPERADMIN even though the
+     * {@code /api/federation/username/**} path rule and the controller's own OpenAPI
+     * contract admit it. SUPERADMIN does NOT imply ADMIN⇄MOD (siblings); only the
+     * top-down edges are declared.
+     */
+    @Bean
+    RoleHierarchy roleHierarchy() {
+        return RoleHierarchyImpl.fromHierarchy(
+                "ROLE_SUPERADMIN > ROLE_ADMIN\n" +
+                "ROLE_SUPERADMIN > ROLE_MOD\n" +
+                "ROLE_SUPERADMIN > ROLE_USER");
+    }
+
+    @Bean
+    MethodSecurityExpressionHandler federationMethodSecurityExpressionHandler(RoleHierarchy roleHierarchy) {
+        var handler = new DefaultMethodSecurityExpressionHandler();
+        handler.setRoleHierarchy(roleHierarchy);
+        return handler;
     }
 
     private ReactiveJwtAuthenticationConverter jwtConverter() {

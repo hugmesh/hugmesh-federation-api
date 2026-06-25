@@ -112,6 +112,17 @@ class UsernameAvailabilityControllerTest extends PostgresTestSupport {
         verify(availability).check(eq("charlie"), isNull());
     }
 
+    @Test
+    void availability_roleSuperadmin_is2xx() {
+        // SUPERADMIN > ADMIN: the cross-domain infra role must reach the username oracle.
+        // Regression guard for the SUPERADMIN-lockout fix — before the RoleHierarchy bean
+        // was wired into method security, the @PreAuthorize narrowing to ADMIN wrongly
+        // 403'd SUPERADMIN (the path rule admitted it but the method gate did not).
+        stubAvailable();
+        as("SUPERADMIN").get().uri(AVAIL).exchange().expectStatus().isOk();
+        verify(availability).check(eq("charlie"), isNull());
+    }
+
     // ── POST /check is gated identically ─────────────────────────────────────────
 
     @Test
@@ -135,6 +146,14 @@ class UsernameAvailabilityControllerTest extends PostgresTestSupport {
     void confusables_roleAdmin_is2xx() {
         stubAvailable();
         as("ADMIN").get().uri(CONFUSABLES).exchange().expectStatus().isOk();
+        verify(availability).check(eq("charlie"), isNull());
+    }
+
+    @Test
+    void confusables_roleSuperadmin_is2xx() {
+        // hasRole('ADMIN') on /confusables must admit SUPERADMIN via the RoleHierarchy.
+        stubAvailable();
+        as("SUPERADMIN").get().uri(CONFUSABLES).exchange().expectStatus().isOk();
         verify(availability).check(eq("charlie"), isNull());
     }
 
