@@ -33,7 +33,7 @@ patterns.
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
   shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.7.0`
   (a child of `spring-boot-starter-parent:4.0.7`) and consumes
-  `systems.snapdragon:snapdragon-commons:2.0.0` for the shared security/tenancy
+  `systems.snapdragon:snapdragon-commons:2.7.0` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
   commons library*.
@@ -114,7 +114,7 @@ de-duplication moves:
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:2.0.0`.
+2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:2.7.0`.
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -272,7 +272,7 @@ ones), and returns a deliberately narrow, public-safe `CapabilityDto`
 hidden/disabled so they appear greyed/absent until a superadmin enables them
 per-domain: **owncast** and **tube** are seeded `enabled=false` +
 `visibility='internal'` (GPU-gated live-streaming / YouTube-archiver), and **wiki**
-is seeded `visibility='internal'` (inert until the wiki UI/BFF surfaces ship). The
+is seeded `visibility='internal'` (inert until enabled by a superadmin per-domain (the wiki-bff-api and wiki-ui are shipped)). The
 capabilities projection therefore reports `installed=false` (or omits them from the
 role-visible manifest) until they are turned on and the matching role is granted.
 
@@ -469,8 +469,7 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   tables (see *Multi-tenancy*). ✅ merged to `main`.
 - **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
   optional-service module (`slug='wiki'`, `mountAt /wiki`, `requiresRole 'wiki'`,
-  **`visibility='internal'`** — seeded INERT/hidden until the
-  `snapdragon-wiki-ui` + `snapdragon-wiki-bff-api` surfaces ship).
+  **`visibility='internal'`** — seeded INERT/hidden until enabled by a superadmin per-domain (the wiki-bff-api and wiki-ui are shipped)).
 - **`029`** — **COMPLETE the `federation_modules` seed** so the dynamic manifest is
   AUTHORITATIVE: seed the three static-manifest slugs that had no DB row — `mod`
   (`visibility='internal'`, `requiresRole 'mod'`, `/mod`), `apidocs`

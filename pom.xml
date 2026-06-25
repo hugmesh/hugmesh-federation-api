@@ -4,13 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <!-- The org metapom (2.0.0 / Boot-4 line) — consolidates the Spring Boot 4.0.2 /
-       Spring Cloud 2025.1 / Java 21 reactive BFF baseline (WebFlux + Casdoor OAuth2
+  <!-- The org metapom (2.7.0 / Boot-4 line) — consolidates the Spring Boot 4.0.7 /
+       Spring Cloud 2025.1.2 / Java 25 reactive BFF baseline (WebFlux + Casdoor OAuth2
        resource server + R2DBC/Liquibase + SpringDoc), the shared <dependencies>,
-       dependencyManagement (snapdragon-commons 2.0.0, Spring Cloud BOM, AWS SDK BOM,
+       dependencyManagement (snapdragon-commons 2.7.0, Spring Cloud BOM, AWS SDK BOM,
        resilience4j-spring-boot4, springdoc 3.x), pluginManagement (compiler / surefire
        bytebuddy flag / spring-boot / native) and the GitLab Maven publishing wiring.
-       snapdragon-parent is itself a child of spring-boot-starter-parent:4.0.2, so the
+       snapdragon-parent is itself a child of spring-boot-starter-parent:4.0.7, so the
        Spring Boot dependency + plugin management is inherited TRANSITIVELY. -->
   <parent>
     <groupId>systems.snapdragon</groupId>
@@ -25,7 +25,7 @@
   <description>Snapdragon dynamic federation registry + manifest API (DB-hosted federated modules)</description>
 
   <properties>
-    <!-- java.version (21), encoding, the snapdragon-commons version, the AWS SDK
+    <!-- java.version (25), encoding, the snapdragon-commons version, the AWS SDK
          BOM version, the resilience4j version and the springdoc version are all
          inherited from snapdragon-parent. ONLY the federation-specific pins stay. -->
 
@@ -65,7 +65,7 @@
          jdbc wired at the same DB, json.type=text default). This replaces federation's
          deleted local copy of PostgresTestSupport. classifier=tests, type=test-jar,
          test scope. The version is set EXPLICITLY to ${snapdragon-commons.version}
-         (the parent-inherited property, 2.0.0): snapdragon-parent's dependencyManagement
+         (the parent-inherited property, 2.7.0): snapdragon-parent's dependencyManagement
          manages the MAIN snapdragon-commons jar but not the test-jar classifier variant,
          so Maven cannot infer a version for it. -->
     <dependency>

@@ -49,7 +49,7 @@ spring:
 app:
   # Bundle storage for user_modules. 'filesystem' (default) keeps a vanilla
   # `docker compose up -d` working with no object store; 's3' swaps in the
-  # S3/MinIO strategy (currently a documented stub — see README Deferred).
+  # fully-implemented S3/MinIO strategy (S3BundleStorage — AWS S3 in prod, MinIO in dev/CI; see README Bundle storage).
   bundles:
     storage: "${APP_BUNDLES_STORAGE:filesystem}"
     dir: "${APP_BUNDLES_DIR:/var/snapdragon/federation/bundles}"
