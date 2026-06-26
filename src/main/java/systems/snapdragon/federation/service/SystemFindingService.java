@@ -5,6 +5,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.commons.security.PrincipalDomain;
+import systems.snapdragon.federation.model.ResolvedFindingView;
 import systems.snapdragon.federation.model.SystemFinding;
 import systems.snapdragon.federation.repository.SystemFindingRepository;
 
@@ -39,6 +40,12 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  */
 @Service
 public class SystemFindingService {
+
+    /** Default reconcile page size when the caller omits {@code limit}. */
+    public static final int DEFAULT_RECONCILE_LIMIT = 200;
+    /** Hard cap on a reconcile page — a caller-supplied {@code limit} is clamped to this
+     *  so the watermark poll can never request an unbounded scan. */
+    public static final int MAX_RECONCILE_LIMIT = 500;
 
     private final SystemFindingRepository repo;
 
@@ -109,6 +116,52 @@ public class SystemFindingService {
         return scope.superadmin()
                 ? repo.findByStatusOrderByTsDesc(status)
                 : repo.findByStatusAndDomainOrderByTsDesc(status, scope.domain());
+    }
+
+    // ----- Resolved-findings RECONCILE read (moderation → activation loop) -----
+
+    /**
+     * A cursor-paged page of RESOLVED findings for the admin-bff moderation → activation
+     * reconciler. Returns findings that are {@code actioned}/{@code dismissed} on the
+     * given {@code surface}, carry a non-null {@code subjectRef} (the user-bff row id),
+     * and have {@code id > sinceId} — id-ASC so the id is a monotonic watermark, capped
+     * at {@code limit}. Held findings (still in review) and surface-level rows with no
+     * subjectRef are excluded by the query.
+     *
+     * <h3>Domain scoping</h3>
+     * <p>This is the PLATFORM reconcile read. A {@code crossDomain} caller — the platform
+     * reconciler running on a SERVICE token, or a SUPERADMIN — reads across ALL brands
+     * (it must close the loop for every domain). A per-domain ADMIN reconciler reads ONLY
+     * its own brand's resolved findings (domain-pinned), so it can never observe another
+     * brand's moderation outcomes. The {@code crossDomain} decision is made by the
+     * controller from the caller's roles (SERVICE/SUPERADMIN ⇒ cross-domain); the per-
+     * domain pin uses {@code scope.domain()}.
+     *
+     * @param surface     the surface to scope to ({@code character-part} / {@code character-sticker})
+     * @param sinceId     the watermark — only findings with {@code id > sinceId} are returned
+     * @param limit       requested page size; clamped to {@code [1, MAX_RECONCILE_LIMIT]}
+     * @param crossDomain {@code true} for the platform reconciler (SERVICE/SUPERADMIN);
+     *                    {@code false} pins to {@code scope.domain()}
+     * @param scope       the caller's resolved tenant scope (used only when {@code !crossDomain})
+     * @return the resolved findings as reconciler-facing {@link ResolvedFindingView}s, id-ASC
+     */
+    public Flux<ResolvedFindingView> resolvedForReconcile(String surface, long sinceId, int limit,
+                                                          boolean crossDomain, PrincipalDomain scope) {
+        int capped = clampLimit(limit);
+        long cursor = Math.max(0L, sinceId);
+        Flux<SystemFinding> rows = crossDomain
+                ? repo.findResolvedForReconcile(surface, cursor, capped)
+                : repo.findResolvedForReconcileInDomain(surface, cursor, scope.domain(), capped);
+        return rows.map(ResolvedFindingView::of);
+    }
+
+    /** Clamp a requested page size into {@code [1, MAX_RECONCILE_LIMIT]} (a non-positive
+     *  request falls back to the default). */
+    private static int clampLimit(int requested) {
+        if (requested <= 0) {
+            return DEFAULT_RECONCILE_LIMIT;
+        }
+        return Math.min(requested, MAX_RECONCILE_LIMIT);
     }
 
     // ----- Resolve (consumer) -----

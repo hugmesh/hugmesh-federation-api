@@ -7,8 +7,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +18,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.snapdragon.commons.security.DomainRegistry;
 import systems.snapdragon.commons.security.PrincipalDomain;
+import systems.snapdragon.federation.model.ResolvedFindingView;
 import systems.snapdragon.federation.model.SystemFinding;
 import systems.snapdragon.federation.service.SystemFindingService;
 
@@ -113,5 +116,70 @@ public class SystemFindingController {
             @PathVariable @Positive(message = "id must be a positive number") Long id,
             @RequestParam boolean actioned) {
         return findings.resolve(id, actioned, jwt.getSubject(), PrincipalDomain.resolve(jwt, domains));
+    }
+
+    /**
+     * Cursor-paged RESOLVED-findings read for the admin-bff moderation → activation
+     * reconciler (an internal @Scheduled poller). Returns the resolved
+     * ({@code actioned}/{@code dismissed}) findings on {@code surface} that carry a
+     * {@code subjectRef} (the user-bff row id) and have {@code id > sinceId}, id-ASC so
+     * {@code id} is a monotonic watermark the reconciler advances each poll.
+     *
+     * <h3>Gating</h3>
+     * <p>INTERNAL / service-to-service — {@code ROLE_SERVICE} (the platform reconciler's
+     * token) or {@code ROLE_ADMIN}/{@code ROLE_SUPERADMIN}, mirroring the
+     * {@code /api/federation/username/**} internal convention (path rule in
+     * {@link systems.snapdragon.federation.config.SecurityConfig} + this method gate,
+     * defence-in-depth). NOT a public / ROLE_USER / ROLE_MOD surface.
+     *
+     * <h3>Domain scope</h3>
+     * <p>A SERVICE token (the platform reconciler) or a SUPERADMIN reads CROSS-DOMAIN —
+     * it must close the activation loop for every brand. A per-domain ADMIN reads ONLY
+     * its own brand's resolved findings.
+     *
+     * @param surface the surface to scope to ({@code character-part} / {@code character-sticker})
+     * @param sinceId the watermark — only findings with {@code id > sinceId} (default 0)
+     * @param limit   page size (default {@value SystemFindingService#DEFAULT_RECONCILE_LIMIT},
+     *                capped at {@value SystemFindingService#MAX_RECONCILE_LIMIT})
+     */
+    @Operation(summary = "INTERNAL (ROLE_SERVICE/ADMIN/SUPERADMIN): cursor-paged resolved findings on a surface "
+            + "(id > sinceId, subjectRef present) for the moderation → activation reconciler. "
+            + "SERVICE/SUPERADMIN = cross-domain; per-domain ADMIN = own brand.")
+    @GetMapping("/resolved")
+    @PreAuthorize("hasAnyRole('SERVICE','ADMIN','SUPERADMIN')")
+    public Flux<ResolvedFindingView> resolved(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam
+            @NotBlank(message = "surface is required")
+            @Size(max = 64, message = "surface must be at most 64 chars") String surface,
+            @RequestParam(required = false, defaultValue = "0")
+            @PositiveOrZero(message = "sinceId must be zero or positive") long sinceId,
+            @RequestParam(required = false, defaultValue = "0")
+            @PositiveOrZero(message = "limit must be zero or positive") int limit) {
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
+        // Cross-domain reader = the platform reconciler (a SERVICE token) OR a SUPERADMIN;
+        // a per-domain ADMIN stays pinned to scope.domain(). Read from the granted
+        // authorities on the reactive context (the SAME source the path/method gates use,
+        // and exactly how UsernameAvailabilityController.isAdmin() resolves a role) so the
+        // domain cut mirrors federation's "cross-domain infra role spans all brands"
+        // contract whether the SERVICE/SUPERADMIN role arrives as an authority or a claim.
+        return isCrossDomainReader()
+                .flatMapMany(crossDomain ->
+                        findings.resolvedForReconcile(surface, sinceId, limit, crossDomain, scope));
+    }
+
+    /**
+     * Returns {@code true} when the caller is a CROSS-DOMAIN reader of resolved findings:
+     * the platform reconciler ({@code ROLE_SERVICE}) or a {@code ROLE_SUPERADMIN}. A
+     * per-domain {@code ROLE_ADMIN} returns {@code false} (stays pinned to its own brand).
+     * Reads the granted authorities off the reactive security context, mirroring
+     * {@code UsernameAvailabilityController.isAdmin()}.
+     */
+    private static Mono<Boolean> isCrossDomainReader() {
+        return ReactiveSecurityContextHolder.getContext()
+                .map(ctx -> ctx.getAuthentication().getAuthorities().stream()
+                        .map(a -> a.getAuthority())
+                        .anyMatch(a -> "ROLE_SERVICE".equals(a) || "ROLE_SUPERADMIN".equals(a)))
+                .defaultIfEmpty(false);
     }
 }

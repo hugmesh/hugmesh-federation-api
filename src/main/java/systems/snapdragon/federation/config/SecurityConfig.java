@@ -62,6 +62,11 @@ import systems.snapdragon.commons.security.DomainRegistry;
  *       ({@code /api/federation/overrides/**}) = ROLE_ADMIN or ROLE_SUPERADMIN;</li>
  *   <li>moderation ({@code /api/federation/moderation/**}) = ROLE_MOD/ADMIN/SUPERADMIN
  *       (method-security narrows decide to ROLE_ADMIN/SUPERADMIN);</li>
+ *   <li>findings file ({@code POST /api/federation/findings}) = authenticated (a BFF
+ *       files about the JWT subject's OWN content); findings reconcile read
+ *       ({@code GET /api/federation/findings/resolved}) = ROLE_SERVICE/ADMIN/SUPERADMIN
+ *       (INTERNAL — the moderation → activation reconciler poll); all other
+ *       {@code /api/federation/findings/**} = ROLE_MOD/ADMIN/SUPERADMIN;</li>
  *   <li>bundles ({@code /api/federation/bundles/**}) = authenticated
  *       (owner-or-admin enforced in the service: owner = JWT subject — UNWEAKENED;
  *       the metadata reads are additionally DOMAIN-scoped + projected to a public-safe
@@ -181,6 +186,13 @@ public class SecurityConfig {
         // RESOLVE (and any sub-path) are MOD/ADMIN/SUPERADMIN. Most-specific (the POST
         // file rule) declared FIRST so it is not swallowed by the mod-only /findings/** rule.
         ex.pathMatchers(HttpMethod.POST, "/api/federation/findings").authenticated();
+        // INTERNAL reconcile read: the moderation → activation reconciler (admin-bff
+        // @Scheduled poller) reads resolved findings to push outcomes back to user-bff.
+        // ROLE_SERVICE (the platform reconciler's token — NOT MOD) / ADMIN / SUPERADMIN,
+        // mirroring the /api/federation/username/** internal-service convention. Declared
+        // BEFORE the mod-only /findings/** catch-all so a SERVICE token is not 403'd by it.
+        ex.pathMatchers(HttpMethod.GET, "/api/federation/findings/resolved")
+                .hasAnyRole("SERVICE", "ADMIN", "SUPERADMIN");
         ex.pathMatchers("/api/federation/findings", "/api/federation/findings/**").hasAnyRole("MOD", "ADMIN", "SUPERADMIN");
         // Manifest read + bundle sync/serve + everything else needs a validated
         // Casdoor JWT (manifest is visibility + DOMAIN-filtered in code; bundles are

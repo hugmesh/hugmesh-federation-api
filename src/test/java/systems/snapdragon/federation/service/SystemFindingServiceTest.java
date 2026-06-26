@@ -12,6 +12,8 @@ import systems.snapdragon.federation.repository.SystemFindingRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -168,5 +170,68 @@ class SystemFindingServiceTest {
         SystemFindingService svc = new SystemFindingService(repo);
         StepVerifier.create(svc.listByStatus("held", DEFAULT)).expectNextCount(1).verifyComplete();
         verify(repo).findByStatusAndDomainOrderByTsDesc(eq("held"), eq("default"));
+    }
+
+    // ── resolvedForReconcile: cross-domain vs domain-pinned routing + limit clamp ──
+
+    private static SystemFinding resolved(Long id, String surface, String subjectRef) {
+        SystemFinding f = held(id);
+        f.setSurface(surface);
+        f.setStatus("actioned");
+        f.setSubjectRef(subjectRef);
+        f.setReviewer("mod-bob");
+        return f;
+    }
+
+    @Test
+    void resolvedForReconcile_crossDomain_usesUnpinnedFinder_andProjects() {
+        SystemFindingRepository repo = mock(SystemFindingRepository.class);
+        when(repo.findResolvedForReconcile("character-part", 5L, 200))
+                .thenReturn(Flux.just(resolved(6L, "character-part", "part-42")));
+        SystemFindingService svc = new SystemFindingService(repo);
+
+        // crossDomain=true (platform reconciler / SUPERADMIN) → un-pinned finder; the view
+        // carries exactly the reconciler-facing fields.
+        StepVerifier.create(svc.resolvedForReconcile("character-part", 5L, 200, true, DEFAULT))
+                .assertNext(v -> {
+                    assertThat(v.id()).isEqualTo(6L);
+                    assertThat(v.surface()).isEqualTo("character-part");
+                    assertThat(v.subjectRef()).isEqualTo("part-42");
+                    assertThat(v.status()).isEqualTo("actioned");
+                    assertThat(v.reviewer()).isEqualTo("mod-bob");
+                    assertThat(v.domain()).isEqualTo("default");
+                })
+                .verifyComplete();
+        verify(repo).findResolvedForReconcile("character-part", 5L, 200);
+        verify(repo, never()).findResolvedForReconcileInDomain(any(), anyLong(), any(), anyInt());
+    }
+
+    @Test
+    void resolvedForReconcile_perDomain_usesDomainPinnedFinder() {
+        SystemFindingRepository repo = mock(SystemFindingRepository.class);
+        when(repo.findResolvedForReconcileInDomain("character-sticker", 0L, "default", 200))
+                .thenReturn(Flux.just(resolved(1L, "character-sticker", "sticker-7")));
+        SystemFindingService svc = new SystemFindingService(repo);
+
+        // crossDomain=false (a per-domain ADMIN) → pins to scope.domain().
+        StepVerifier.create(svc.resolvedForReconcile("character-sticker", 0L, 200, false, DEFAULT))
+                .expectNextCount(1)
+                .verifyComplete();
+        verify(repo).findResolvedForReconcileInDomain("character-sticker", 0L, "default", 200);
+        verify(repo, never()).findResolvedForReconcile(any(), anyLong(), anyInt());
+    }
+
+    @Test
+    void resolvedForReconcile_limitDefaultsWhenNonPositive_andIsCappedAtMax() {
+        SystemFindingRepository repo = mock(SystemFindingRepository.class);
+        when(repo.findResolvedForReconcile(any(), anyLong(), anyInt())).thenReturn(Flux.empty());
+        SystemFindingService svc = new SystemFindingService(repo);
+
+        // limit=0 → DEFAULT (200); a huge limit → clamped to MAX (500); negative sinceId → 0.
+        svc.resolvedForReconcile("character-part", -3L, 0, true, DEFAULT).blockLast();
+        svc.resolvedForReconcile("character-part", 9L, 99999, true, DEFAULT).blockLast();
+
+        verify(repo).findResolvedForReconcile("character-part", 0L, SystemFindingService.DEFAULT_RECONCILE_LIMIT);
+        verify(repo).findResolvedForReconcile("character-part", 9L, SystemFindingService.MAX_RECONCILE_LIMIT);
     }
 }
