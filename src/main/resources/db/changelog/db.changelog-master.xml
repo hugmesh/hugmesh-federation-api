@@ -113,6 +113,15 @@
               content-hash FETCH (/bundles/{hash}/files/{*path}) stays un-scoped by
               design (capability-by-hash). 'default' default keeps pre-existing rows +
               single-issuer clusters unchanged.
+        036 — system_findings (AUTOMATED edge-AI moderation findings; sink for the
+              pre-publish vision-moderation gate). reporter '@system' / held lifecycle /
+              domain-scoped (mirror of moderation_requests 012/026).
+        037 — system_findings.subject_ref (part-activation correlation, step 1): an
+              OPTIONAL back-reference to the EXACT source row a finding is about (a
+              character-part / sticker id) so a moderation->status reconcile loop can
+              address that row. NULL for the surface-level avatar/profile path (036),
+              which is UNAFFECTED. Adds a composite (surface, status) index that backs
+              the future reconcile query.
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -156,4 +165,5 @@
     <include file="db/changelog/034-user-modules-active-owner-unique.xml"/>
     <include file="db/changelog/035-user-modules-domain.xml"/>
     <include file="db/changelog/036-system-findings.xml"/>
+    <include file="db/changelog/037-system-findings-subject-ref.xml"/>
 </databaseChangeLog>

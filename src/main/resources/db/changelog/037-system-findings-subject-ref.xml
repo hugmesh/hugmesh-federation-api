@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        system_findings.subject_ref — OPTIONAL back-reference to the EXACT source row a
+        finding was filed about (part-activation correlation, step 1).
+
+        The existing avatar/profile finding path (036) is about a whole surface
+        ('profile-avatar') and carries no row id; it keeps passing NULL here and is
+        UNAFFECTED. A producer that files about one specific moderatable row — a
+        character-part / sticker id — stamps that id here so a later
+        moderation -> status reconcile loop can address the originating row precisely.
+
+          • subject_ref — producer-opaque id of the source row (e.g. a character-part
+            or sticker id); NULL for the surface-level avatar/profile path. Bounded
+            varchar(128) (mirrors perceptual_hash's @Size(max=128)).
+
+        Plus a composite (surface, status) index that backs the future reconcile query
+        ("held findings on the character-part surface"), complementing the single-column
+        status/domain/subject indexes from 036.
+    -->
+
+    <changeSet id="037-1-system-findings-subject-ref" author="federation">
+        <addColumn tableName="system_findings">
+            <column name="subject_ref" type="varchar(128)"/>
+        </addColumn>
+
+        <createIndex tableName="system_findings" indexName="idx_system_findings_surface_status">
+            <column name="surface"/>
+            <column name="status"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

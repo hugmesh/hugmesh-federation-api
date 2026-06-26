@@ -68,6 +68,9 @@ public class SystemFindingController {
      * @param confidence     edge-AI confidence in {@code [0,1]}; optional
      * @param policyHit      whether a policy threshold was crossed; optional
      * @param perceptualHash pHash of the image; optional
+     * @param subjectRef     OPTIONAL back-reference to the EXACT source row this finding
+     *                       is about (a character-part / sticker id) for part-activation
+     *                       correlation; null for the surface-level avatar/profile path
      */
     public record FileRequest(
             @NotBlank(message = "surface is required")
@@ -77,7 +80,8 @@ public class SystemFindingController {
             @Size(max = 32, message = "classification must be at most 32 chars") String classification,
             Double confidence,
             Boolean policyHit,
-            @Size(max = 128, message = "perceptualHash must be at most 128 chars") String perceptualHash) {}
+            @Size(max = 128, message = "perceptualHash must be at most 128 chars") String perceptualHash,
+            @Size(max = 128, message = "subjectRef must be at most 128 chars") String subjectRef) {}
 
     @Operation(summary = "File a system moderation finding about my own content (subject = JWT subject; reporter = @system).")
     @PostMapping
@@ -86,7 +90,7 @@ public class SystemFindingController {
         // subject = the authenticated JWT subject (the content owner), never the body.
         return findings.file(jwt.getSubject(), req.surface(), req.disposition(),
                 req.classification(), req.confidence(), req.policyHit(), req.perceptualHash(),
-                PrincipalDomain.resolve(jwt, domains));
+                req.subjectRef(), PrincipalDomain.resolve(jwt, domains));
     }
 
     @Operation(summary = "List system findings in my domain (SUPERADMIN: all domains). Optional ?status=held|dismissed|actioned.")

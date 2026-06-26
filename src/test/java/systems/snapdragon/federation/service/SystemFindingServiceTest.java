@@ -48,7 +48,7 @@ class SystemFindingServiceTest {
 
         SystemFindingService svc = new SystemFindingService(repo);
         StepVerifier.create(svc.file("alice", "profile-avatar", "flagged",
-                        "nsfw", 0.91, true, "ph", DEFAULT))
+                        "nsfw", 0.91, true, "ph", null, DEFAULT))
                 .expectNextCount(1)
                 .verifyComplete();
 
@@ -63,6 +63,28 @@ class SystemFindingServiceTest {
         assertThat(f.getPolicyHit()).isTrue();
         assertThat(f.getDomain()).isEqualTo("default");
         assertThat(f.getTs()).isNotNull();
+        // The avatar/profile path passes no subjectRef → stays null (UNAFFECTED by 037).
+        assertThat(f.getSubjectRef()).isNull();
+    }
+
+    @Test
+    void file_withSubjectRef_persistsTheBackReference() {
+        SystemFindingRepository repo = mock(SystemFindingRepository.class);
+        ArgumentCaptor<SystemFinding> saved = ArgumentCaptor.forClass(SystemFinding.class);
+        when(repo.save(saved.capture())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        SystemFindingService svc = new SystemFindingService(repo);
+        // A producer filing about ONE specific moderatable row (a character-part id)
+        // stamps that id as subjectRef so a later reconcile loop can address the row.
+        StepVerifier.create(svc.file("alice", "character-part", "flagged",
+                        "nsfw", 0.91, true, "ph", "part-42", DEFAULT))
+                .expectNextCount(1)
+                .verifyComplete();
+
+        SystemFinding f = saved.getValue();
+        assertThat(f.getSubjectRef()).isEqualTo("part-42");
+        assertThat(f.getSurface()).isEqualTo("character-part");
+        assertThat(f.getStatus()).isEqualTo("held");
     }
 
     @Test
@@ -70,7 +92,7 @@ class SystemFindingServiceTest {
         SystemFindingRepository repo = mock(SystemFindingRepository.class);
         SystemFindingService svc = new SystemFindingService(repo);
         StepVerifier.create(svc.file("alice", "profile-avatar", "approve",
-                        null, null, null, null, DEFAULT))
+                        null, null, null, null, null, DEFAULT))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(400))
                 .verify();
@@ -81,7 +103,7 @@ class SystemFindingServiceTest {
     void file_blankSurface_is400() {
         SystemFindingRepository repo = mock(SystemFindingRepository.class);
         SystemFindingService svc = new SystemFindingService(repo);
-        StepVerifier.create(svc.file("alice", "  ", "flagged", null, null, null, null, DEFAULT))
+        StepVerifier.create(svc.file("alice", "  ", "flagged", null, null, null, null, null, DEFAULT))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(400))
                 .verify();

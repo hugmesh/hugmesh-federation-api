@@ -59,13 +59,16 @@ public class SystemFindingService {
      * @param confidence     edge-AI confidence in {@code [0,1]}; may be null
      * @param policyHit      whether a policy threshold was crossed; may be null
      * @param perceptualHash pHash of the image; may be null
+     * @param subjectRef     OPTIONAL back-reference to the EXACT source row (a
+     *                       character-part / sticker id) for part-activation correlation;
+     *                       null for the surface-level avatar/profile path (unaffected)
      * @param scope          the producer's resolved tenant scope (stamps {@code domain})
      * @return the saved {@link SystemFinding} with {@code reporter=@system}, {@code status=held}
      * @throws ResponseStatusException 400 when {@code surface}/{@code disposition} are invalid
      */
     public Mono<SystemFinding> file(String subject, String surface, String disposition,
                                     String classification, Double confidence, Boolean policyHit,
-                                    String perceptualHash, PrincipalDomain scope) {
+                                    String perceptualHash, String subjectRef, PrincipalDomain scope) {
         if (subject == null || subject.isBlank()) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "missing subject"));
         }
@@ -85,6 +88,7 @@ public class SystemFindingService {
         f.setConfidence(confidence);
         f.setPolicyHit(policyHit);
         f.setPerceptualHash(perceptualHash);
+        f.setSubjectRef(subjectRef);
         f.setStatus("held");
         f.setDomain(domainForWrite(scope));
         f.setTs(Instant.now());

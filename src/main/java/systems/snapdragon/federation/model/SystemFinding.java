@@ -45,6 +45,14 @@ public class SystemFinding {
     private Double confidence;
     private Boolean policyHit;
     private String perceptualHash;
+    /**
+     * OPTIONAL producer-opaque back-reference to the EXACT source row this finding is
+     * about — a character-part / sticker id (part-activation correlation, step 1). NULL
+     * for the surface-level avatar/profile path (which is about a whole {@code surface},
+     * not a single row), so that path is UNAFFECTED. Lets a later moderation -> status
+     * reconcile loop address the originating row precisely. Maps to {@code subject_ref}.
+     */
+    private String subjectRef;
     /** {@code held} | {@code dismissed} | {@code actioned} — the review lifecycle. */
     private String status = "held";
     /** Casdoor subject of the mod/admin who resolved it (null while {@code held}). */
@@ -68,6 +76,7 @@ public class SystemFinding {
     public Double getConfidence() { return confidence; }
     public Boolean getPolicyHit() { return policyHit; }
     public String getPerceptualHash() { return perceptualHash; }
+    public String getSubjectRef() { return subjectRef; }
     public String getStatus() { return status; }
     public String getReviewer() { return reviewer; }
     public Instant getTs() { return ts; }
@@ -82,6 +91,7 @@ public class SystemFinding {
     public void setConfidence(Double confidence) { this.confidence = confidence; }
     public void setPolicyHit(Boolean policyHit) { this.policyHit = policyHit; }
     public void setPerceptualHash(String perceptualHash) { this.perceptualHash = perceptualHash; }
+    public void setSubjectRef(String subjectRef) { this.subjectRef = subjectRef; }
     public void setStatus(String status) { this.status = status; }
     public void setReviewer(String reviewer) { this.reviewer = reviewer; }
     public void setTs(Instant ts) { this.ts = ts; }

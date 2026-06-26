@@ -1,0 +1,78 @@
+package systems.snapdragon.federation.repository;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
+import org.springframework.context.annotation.Import;
+import reactor.test.StepVerifier;
+import systems.snapdragon.federation.config.R2dbcConvertersConfig;
+import systems.snapdragon.federation.model.SystemFinding;
+import systems.snapdragon.federation.support.TestDatabaseConfig;
+
+import java.time.Instant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * R2DBC slice for system_findings over H2 (PG-compat) + the real Liquibase changelog.
+ * Confirms the 036/037 DDL applies and that {@code subject_ref} (037) round-trips:
+ * a finding filed WITH a back-reference reads it back, the surface-level avatar/profile
+ * path (no subjectRef) reads back NULL, and resolve loads the row with subjectRef intact
+ * (so the controller resolve response echoes it). The composite (surface, status) index
+ * from 037 backs the future reconcile read; this proves the column it indexes exists.
+ */
+@DataR2dbcTest
+@Import({TestDatabaseConfig.class, R2dbcConvertersConfig.class})
+class SystemFindingRepositoryTest {
+
+    @Autowired SystemFindingRepository findings;
+
+    private static SystemFinding held(String subject, String surface, String subjectRef) {
+        SystemFinding f = new SystemFinding();
+        f.setReporter("@system");
+        f.setSubject(subject);
+        f.setSurface(surface);
+        f.setDisposition("flagged");
+        f.setStatus("held");
+        f.setSubjectRef(subjectRef);
+        f.setDomain("default");
+        f.setTs(Instant.now());
+        return f;
+    }
+
+    @Test
+    void subjectRef_roundTripsWhenSet() {
+        SystemFinding saved = findings.save(held("alice", "character-part", "part-42")).block();
+        assertThat(saved).isNotNull();
+
+        SystemFinding read = findings.findById(saved.getId()).block();
+        assertThat(read).isNotNull();
+        assertThat(read.getSubjectRef()).isEqualTo("part-42");
+        assertThat(read.getSurface()).isEqualTo("character-part");
+        assertThat(read.getStatus()).isEqualTo("held");
+    }
+
+    @Test
+    void subjectRef_isNullForAvatarPath() {
+        // The existing avatar/profile finding path passes null → column reads back NULL.
+        SystemFinding saved = findings.save(held("bob", "profile-avatar", null)).block();
+        assertThat(saved).isNotNull();
+
+        SystemFinding read = findings.findById(saved.getId()).block();
+        assertThat(read).isNotNull();
+        assertThat(read.getSubjectRef()).isNull();
+        assertThat(read.getSurface()).isEqualTo("profile-avatar");
+    }
+
+    @Test
+    void resolveLoad_carriesSubjectRefBack() {
+        // The controller resolve() returns the loaded row → subjectRef is echoed back.
+        // Prove the domain-pinned load path the service uses keeps subjectRef intact.
+        SystemFinding saved = findings.save(held("carol", "character-part", "sticker-7")).block();
+        assertThat(saved).isNotNull();
+
+        StepVerifier.create(findings.findByIdAndDomain(saved.getId(), "default"))
+                .assertNext(f -> assertThat(f.getSubjectRef()).isEqualTo("sticker-7"))
+                .verifyComplete();
+    }
+}
