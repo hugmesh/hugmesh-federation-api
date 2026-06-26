@@ -53,6 +53,12 @@ app:
   bundles:
     storage: "${APP_BUNDLES_STORAGE:filesystem}"
     dir: "${APP_BUNDLES_DIR:/var/snapdragon/federation/bundles}"
+    # Max bytes accepted for a single bundle PUT body before a 413 is returned. The
+    # body streams straight to disk (DataBufferUtils.write), which bypasses
+    # spring.codec.max-in-memory-size, so this is the ONLY ceiling on the upload —
+    # it bounds disk usage so an authenticated caller cannot exhaust the bundles
+    # volume with a multi-GB / infinite chunked octet-stream. Default 256 MiB.
+    max-bytes: "${APP_BUNDLES_MAX_BYTES:268435456}"
     s3:
       endpoint: "${APP_BUNDLES_S3_ENDPOINT:}"
       region: "${APP_BUNDLES_S3_REGION:us-east-1}"

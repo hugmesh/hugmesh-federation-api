@@ -261,6 +261,9 @@ public class BundleController {
         @ApiResponse(responseCode = "409",
             description = "The slug already has an active bundle owned by a different user "
                 + "and the caller does not hold ROLE_ADMIN."),
+        @ApiResponse(responseCode = "413",
+            description = "The uploaded body exceeds the configured app.bundles.max-bytes "
+                + "ceiling (default 256 MiB); the partial staged file is discarded."),
         @ApiResponse(responseCode = "500",
             description = "Filesystem staging, hashing, or Postgres error. Check server logs.")
     })

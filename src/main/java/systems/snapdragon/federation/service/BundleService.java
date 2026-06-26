@@ -1,5 +1,8 @@
 package systems.snapdragon.federation.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
@@ -19,10 +22,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
 import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE;
 
 /**
  * Bundle storage and lifecycle for per-user federated Angular remote-entry modules,
@@ -62,9 +68,10 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * body (Flux&lt;DataBuffer&gt;)
  *   |
  *   v
- * stageAndInstall(slug, safeEntry, body)
+ * stageAndInstall(slug, safeEntry, body)   [doOnError: delete partial staging dir]
  *   ├─ [boundedElastic] createTempDirectory("fed-stage-")
  *   ├─ writeStagedBody  ──&gt; reject if entryFile escapes staging dir (400)
+ *   │                   ──&gt; reject if body exceeds app.bundles.max-bytes (413)
  *   └─ installStagedTree
  *        ├─ [boundedElastic] sha256OfTree(staging)  ──&gt; hex hash
  *        └─ [boundedElastic] BundleStorage.installFromStaging(slug, hash, staging)
@@ -90,12 +97,40 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @Service
 public class BundleService {
 
+    private static final Logger log = LoggerFactory.getLogger(BundleService.class);
+
+    /**
+     * Default upload ceiling for a single bundle PUT: 256 MiB. A user-card / single
+     * remote-entry bundle is kilobytes-to-low-megabytes in practice, so this is an
+     * ample headroom while still bounding the streamed-to-disk body so a malicious
+     * (or runaway) caller cannot exhaust the bundles volume. Override per environment
+     * with {@code app.bundles.max-bytes}.
+     */
+    public static final long DEFAULT_MAX_BUNDLE_BYTES = 256L * 1024 * 1024;
+
     private final UserModuleRepository repo;
     private final BundleStorage storage;
+    /** Maximum number of body bytes accepted for a single PUT before a 413 is signalled. */
+    private final long maxBundleBytes;
 
-    public BundleService(UserModuleRepository repo, BundleStorage storage) {
+    /**
+     * Spring constructor. The upload ceiling is sourced from
+     * {@code app.bundles.max-bytes} (defaulting to {@link #DEFAULT_MAX_BUNDLE_BYTES})
+     * so it stays configurable per environment alongside the other
+     * {@code app.bundles.*} storage properties. Explicitly {@code @Autowired} so the
+     * container picks this constructor over the test-only two-arg convenience one.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public BundleService(UserModuleRepository repo, BundleStorage storage,
+                         @Value("${app.bundles.max-bytes:" + DEFAULT_MAX_BUNDLE_BYTES + "}") long maxBundleBytes) {
         this.repo = repo;
         this.storage = storage;
+        this.maxBundleBytes = maxBundleBytes > 0 ? maxBundleBytes : DEFAULT_MAX_BUNDLE_BYTES;
+    }
+
+    /** Convenience constructor using {@link #DEFAULT_MAX_BUNDLE_BYTES} (used by unit tests). */
+    public BundleService(UserModuleRepository repo, BundleStorage storage) {
+        this(repo, storage, DEFAULT_MAX_BUNDLE_BYTES);
     }
 
     // ----- Owner Listing and Metadata Reads -----
@@ -231,6 +266,8 @@ public class BundleService {
      *                                 the staging directory (zip-slip-style traversal)
      * @throws ResponseStatusException 409 when the slug already has an active row owned
      *                                 by a different user and the caller is not an admin
+     * @throws ResponseStatusException 413 when the uploaded body exceeds the configured
+     *                                 {@code app.bundles.max-bytes} ceiling
      * @see #stageAndInstall(String, String, Flux)
      * @see #insertNewVersion(String, String, String, String, String, boolean, PrincipalDomain, String[])
      */
@@ -369,32 +406,107 @@ public class BundleService {
      *         installation
      * @throws ResponseStatusException 400 when {@code safeEntry} resolves to a path that
      *                                 escapes the staging directory
+     * @throws ResponseStatusException 413 when the streamed body exceeds the configured
+     *                                 byte ceiling (the partial staging dir is deleted)
      */
     private Mono<String[]> stageAndInstall(String slug, String safeEntry, Flux<DataBuffer> body) {
         return Mono.fromCallable(() -> Files.createTempDirectory("fed-stage-"))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(staging -> writeStagedBody(staging, safeEntry, body)
-                        .then(installStagedTree(slug, staging)));
+                .flatMap(staging -> writeStagedBody(staging, safeEntry, body, maxBundleBytes)
+                        .then(installStagedTree(slug, staging))
+                        // On ANY staging failure (over-limit 413, traversal reject, or a
+                        // broken stream) the temp dir holds a partial/empty tree the success
+                        // path would otherwise have consumed via installFromStaging -> delete
+                        // it so a rejected upload leaves no orphaned bytes on the volume.
+                        .doOnError(e -> deleteStaging(staging)));
     }
 
     /**
      * Write the body bytes to {@code <staging>/<safeEntry>}, rejecting an entry filename
      * that would escape the staging directory (zip-slip-style traversal) before any byte
-     * is written.
+     * is written, and capping the total streamed size at {@code maxBytes}.
+     *
+     * <p>The body is a raw {@code Flux<DataBuffer>} streamed straight to disk by
+     * {@link DataBufferUtils#write(org.reactivestreams.Publisher, Path, java.nio.file.OpenOption...)},
+     * which bypasses {@code spring.codec.max-in-memory-size} entirely (that limit only
+     * bounds buffered codecs, never streaming-to-file). Without a guard, any authenticated
+     * caller could PUT a multi-gigabyte / infinite chunked octet-stream and exhaust the
+     * bundles volume. We therefore count bytes as they arrive (via the buffer's readable
+     * size, which does NOT consume the buffer) and error with 413 the moment the running
+     * total exceeds {@code maxBytes}, terminating the write before more bytes land. The
+     * partial temp file is cleaned up by {@link #stageAndInstall}'s {@code doOnError}.
      *
      * @param staging   the temporary staging directory
      * @param safeEntry the relative entry filename to write under {@code staging}
      * @param body      the reactive byte stream to write
+     * @param maxBytes  the maximum number of body bytes to accept before signalling 413
      * @return a {@code Mono<Void>} that completes when all bytes have been written
      * @throws ResponseStatusException 400 when the resolved target path escapes
      *                                 {@code staging}
+     * @throws ResponseStatusException 413 when the streamed body exceeds {@code maxBytes}
      */
-    private static Mono<Void> writeStagedBody(Path staging, String safeEntry, Flux<DataBuffer> body) {
+    private static Mono<Void> writeStagedBody(Path staging, String safeEntry, Flux<DataBuffer> body, long maxBytes) {
         Path target = staging.resolve(safeEntry).normalize();
         if (!target.startsWith(staging)) {
             return Mono.error(new ResponseStatusException(BAD_REQUEST, "entryFile escapes bundle"));
         }
-        return DataBufferUtils.write(body, target).then();
+        Flux<DataBuffer> bounded = capBodySize(body, maxBytes);
+        return DataBufferUtils.write(bounded, target).then();
+    }
+
+    /**
+     * Wrap a body stream so it errors with 413 once the cumulative readable byte count
+     * exceeds {@code maxBytes}. Reading {@link DataBuffer#readableByteCount()} inspects
+     * the buffer without advancing its read position, so the downstream
+     * {@link DataBufferUtils#write} still consumes (and releases) every buffer exactly as
+     * before. When the limit is tripped the offending buffer is released here (it never
+     * reaches {@code write}, which would otherwise own its release) and the stream errors,
+     * so no further bytes are written to disk.
+     *
+     * @param body     the raw uploaded byte stream
+     * @param maxBytes the inclusive ceiling on total body bytes
+     * @return a {@code Flux<DataBuffer>} that errors with 413 past {@code maxBytes}
+     */
+    private static Flux<DataBuffer> capBodySize(Flux<DataBuffer> body, long maxBytes) {
+        AtomicLong seen = new AtomicLong();
+        return body.handle((buffer, sink) -> {
+            long total = seen.addAndGet(buffer.readableByteCount());
+            if (total > maxBytes) {
+                DataBufferUtils.release(buffer);
+                sink.error(new ResponseStatusException(
+                        PAYLOAD_TOO_LARGE, "bundle body exceeds the " + maxBytes + "-byte limit"));
+                return;
+            }
+            sink.next(buffer);
+        });
+    }
+
+    /**
+     * Best-effort recursive delete of a rejected/failed staging directory, so a partial
+     * upload (e.g. an over-limit body cut off mid-stream) leaves no orphaned bytes on the
+     * bundles volume. Mirrors {@code FilesystemBundleStorage.deleteRecursively}; runs on
+     * {@code boundedElastic} since it touches the filesystem. Never throws — a cleanup
+     * failure is logged, not propagated (the original rejection error is the one callers see).
+     *
+     * @param staging the temp staging directory to remove (no-op when {@code null}/absent)
+     */
+    private static void deleteStaging(Path staging) {
+        Mono.fromRunnable(() -> {
+            if (staging == null || !Files.exists(staging)) {
+                return;
+            }
+            try (var stream = Files.walk(staging)) {
+                stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try {
+                        Files.deleteIfExists(p);
+                    } catch (IOException ignored) {
+                        // best effort — a single undeletable entry must not mask the rejection
+                    }
+                });
+            } catch (IOException ex) {
+                log.warn("[bundle] failed to clean up staging dir {}", staging, ex);
+            }
+        }).subscribeOn(Schedulers.boundedElastic()).subscribe();
     }
 
     /**
