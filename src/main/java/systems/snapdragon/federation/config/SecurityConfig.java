@@ -175,6 +175,13 @@ public class SecurityConfig {
         // Moderation = mod or admin (decide is narrowed to admin by @PreAuthorize).
         // SUPERADMIN added as the cross-domain infra role.
         ex.pathMatchers("/api/federation/moderation/**").hasAnyRole("MOD", "ADMIN", "SUPERADMIN");
+        // System findings (automated edge-AI moderation): any authenticated caller (a BFF
+        // on a user's session) FILES a finding about their OWN content — POST to the bare
+        // path only, subject is the JWT subject (server-derived, can't escalate). LIST +
+        // RESOLVE (and any sub-path) are MOD/ADMIN/SUPERADMIN. Most-specific (the POST
+        // file rule) declared FIRST so it is not swallowed by the mod-only /findings/** rule.
+        ex.pathMatchers(HttpMethod.POST, "/api/federation/findings").authenticated();
+        ex.pathMatchers("/api/federation/findings", "/api/federation/findings/**").hasAnyRole("MOD", "ADMIN", "SUPERADMIN");
         // Manifest read + bundle sync/serve + everything else needs a validated
         // Casdoor JWT (manifest is visibility + DOMAIN-filtered in code; bundles are
         // owner-or-admin-filtered in the service).

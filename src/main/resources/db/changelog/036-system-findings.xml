@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        system_findings — AUTOMATED edge-AI moderation findings (avatar/image vision).
+
+        Separate from moderation_requests (012, the HUMAN recommend/refer/decide flow):
+        the pre-publish vision-moderation gate (user-bff -> edge-ai-analysis
+        /v1/analyze/content/moderate) FILES a finding here when a verdict is flag/reject;
+        a human moderator then REVIEWs it (held -> dismissed | actioned).
+
+          • reporter      — always '@system' (automated origin)
+          • subject       — Casdoor subject of the content owner (server-derived)
+          • surface       — 'profile-avatar' | ...
+          • disposition   — 'flagged' (queued) | 'rejected' (blocked at upload)
+          • classification— 'safe' | 'nsfw' | 'abuse' | 'unknown' (edge-AI)
+          • status        — 'held' | 'dismissed' | 'actioned'
+          • reviewer      — Casdoor subject of the mod who resolved it
+          • domain        — brand scope (multi-tenancy, mirrors moderation_requests)
+    -->
+
+    <changeSet id="036-1-system-findings-table" author="federation">
+        <createTable tableName="system_findings">
+            <column name="id" type="bigint" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="reporter" type="${str.type}" defaultValue="@system">
+                <constraints nullable="false"/>
+            </column>
+            <column name="subject" type="${str.type}">
+                <!-- Casdoor subject of the content owner whose image was flagged. -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="surface" type="${str.type}">
+                <!-- 'profile-avatar' | ... -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="disposition" type="${str.type}">
+                <!-- 'flagged' | 'rejected' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="classification" type="${str.type}"/>
+            <!-- liquibase standard DOUBLE -> 'double precision' on Postgres, 'double' on H2
+                 (both map cleanly to the entity's Double field). -->
+            <column name="confidence" type="double"/>
+            <column name="policy_hit" type="boolean"/>
+            <column name="perceptual_hash" type="${str.type}"/>
+            <column name="status" type="${str.type}" defaultValue="held">
+                <!-- 'held' | 'dismissed' | 'actioned' -->
+                <constraints nullable="false"/>
+            </column>
+            <column name="reviewer" type="${str.type}"/>
+            <column name="ts" type="timestamp" defaultValueComputed="${now}">
+                <constraints nullable="false"/>
+            </column>
+            <column name="domain" type="${str.type}" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="system_findings" indexName="idx_system_findings_status">
+            <column name="status"/>
+        </createIndex>
+        <createIndex tableName="system_findings" indexName="idx_system_findings_domain">
+            <column name="domain"/>
+        </createIndex>
+        <createIndex tableName="system_findings" indexName="idx_system_findings_subject">
+            <column name="subject"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

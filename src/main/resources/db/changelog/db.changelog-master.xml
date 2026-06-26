@@ -155,4 +155,5 @@
     <include file="db/changelog/033-register-tube-module.xml"/>
     <include file="db/changelog/034-user-modules-active-owner-unique.xml"/>
     <include file="db/changelog/035-user-modules-domain.xml"/>
+    <include file="db/changelog/036-system-findings.xml"/>
 </databaseChangeLog>
