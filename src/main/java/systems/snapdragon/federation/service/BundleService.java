@@ -51,9 +51,9 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * GET /mine       listForOwner      own rows (any dom) own rows (own dom)   own rows (own dom)
  * GET /slug/{s}   listForSlug       all brands/owners  own brand, any owner own brand, own owner
  * GET /{hash}     byContentHash     all brands/owners  own brand, any owner own brand, own owner
- * PUT /{slug}     put               own rows (any dom) may override owner   own rows (fail-close)
- * GET /slug/{s}/body readOwnBody    any active row     any active row       own active row
- * DELETE /{slug}  deleteForOwner    any active row     any active row       own active row
+ * PUT /{slug}     put               own rows (any dom) override, own brand  own rows (fail-close)
+ * GET /slug/{s}/body readOwnBody    any active row     own-brand active row own active row
+ * DELETE /{slug}  deleteForOwner    any active row     own-brand active row own active row
  * GET /{hash}/f/* fetch             un-scoped (hash as capability)
  * </pre>
  *
@@ -284,20 +284,24 @@ public class BundleService {
      * read-my-card-body endpoint the user-bff proxies so the WYSIWYG editor can
      * pre-fill for an Edit operation. Owner-scoped: only the row owned by
      * {@code ownerUserId} is resolved unless the caller is an admin, in which case
-     * the slug's active row is returned regardless of owner.
+     * the slug's active row is returned regardless of owner — but a per-domain admin
+     * stays pinned to their OWN brand (a superadmin reads any brand), so an admin can
+     * never exfiltrate another brand's card body (see {@link #activeRowForCaller}).
      *
      * @param ownerUserId the JWT subject whose active bundle row is resolved
      * @param slug        the module slug to read the active body for
      * @param admin       {@code true} when the caller holds a per-domain admin role,
-     *                    allowing read of the active row regardless of owner
+     *                    allowing read of the active row regardless of owner (within brand)
+     * @param scope       the caller's domain context; pins the per-domain admin branch to
+     *                    the caller's brand
      * @return a {@code Mono} emitting the {@link Resource} for the entry-file bytes
      *         of the active bundle row
      * @throws ResponseStatusException 404 when the caller has no active bundle for the
      *                                 slug, or when the entry file is gone from storage
-     * @see #activeRowForCaller(String, String, boolean)
+     * @see #activeRowForCaller(String, String, boolean, PrincipalDomain)
      */
-    public Mono<Resource> readOwnBody(String ownerUserId, String slug, boolean admin) {
-        return activeRowForCaller(ownerUserId, slug, admin)
+    public Mono<Resource> readOwnBody(String ownerUserId, String slug, boolean admin, PrincipalDomain scope) {
+        return activeRowForCaller(ownerUserId, slug, admin, scope)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no body for slug: " + slug)))
                 // read the active row's entry-file bytes (or 404 if the file is gone)
                 .flatMap(m -> readEntryFileOr404(m, slug));
@@ -311,25 +315,32 @@ public class BundleService {
      * directory from {@link BundleStorage}, and stamps {@code superseded_at} on the row
      * so history stays queryable — the slug simply has no active version afterwards.
      * Owner-scoped: only the caller's own active row is touched unless the caller is an
-     * admin, in which case the slug's active row is removed regardless of owner.
+     * admin, in which case the slug's active row is removed regardless of owner — but a
+     * per-domain admin stays pinned to their OWN brand (a superadmin deletes any brand),
+     * so an admin can never destroy another brand's card (see {@link #activeRowForCaller}).
      *
      * <p>A delete of another user's card surfaces as 404 to a non-admin caller (never
      * as a cross-tenant delete), because the owner-scoped active-row finder returns
-     * empty for a row the caller does not own.
+     * empty for a row the caller does not own; a per-domain admin reaching for another
+     * BRAND's slug likewise gets 404 (the domain-pinned active finder resolves empty).
      *
      * @param ownerUserId the JWT subject whose active bundle row is resolved for deletion
      * @param slug        the module slug whose active bundle should be deleted
      * @param admin       {@code true} when the caller holds a per-domain admin role,
-     *                    allowing deletion of the active row regardless of owner
+     *                    allowing deletion of the active row regardless of owner (within brand)
+     * @param scope       the caller's domain context; pins the per-domain admin branch to
+     *                    the caller's brand
      * @return a {@code Mono<Void>} that completes when the storage version has been
      *         removed and the row has been marked superseded
      * @throws ResponseStatusException 404 when the caller has no active bundle for the
      *                                 slug (includes the case where another user owns the
-     *                                 active row and the caller is not an admin)
-     * @see #activeRowForCaller(String, String, boolean)
+     *                                 active row and the caller is not an admin, or the
+     *                                 active row lives in another brand and the caller is a
+     *                                 per-domain admin)
+     * @see #activeRowForCaller(String, String, boolean, PrincipalDomain)
      */
-    public Mono<Void> deleteForOwner(String ownerUserId, String slug, boolean admin) {
-        return activeRowForCaller(ownerUserId, slug, admin)
+    public Mono<Void> deleteForOwner(String ownerUserId, String slug, boolean admin, PrincipalDomain scope) {
+        return activeRowForCaller(ownerUserId, slug, admin, scope)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND, "no bundle for slug: " + slug)))
                 .flatMap(m -> Mono.fromRunnable(() -> storage.deleteVersion(m.getVersionDir()))
                         .subscribeOn(Schedulers.boundedElastic())
@@ -433,7 +444,7 @@ public class BundleService {
                                               PrincipalDomain scope, String[] hl) {
         String hash = hl[0];
         String locator = hl[1];
-        return supersedePriorOwned(ownerUserId, slug, admin)
+        return supersedePriorOwned(ownerUserId, slug, admin, scope)
                 // Build and persist the new UserModule version after superseding any prior owned row.
                 .then(Mono.defer(() -> repo.save(buildUserModule(ownerUserId, slug, safeEntry,
                         visibility, manifestJson, scope, hash, locator))));
@@ -459,21 +470,42 @@ public class BundleService {
     // ----- Helpers -----
 
     /**
-     * The active row the caller may read or delete: an admin gets the slug's active row
-     * regardless of owner; a normal user gets ONLY their own active row (so a non-owner
-     * sees an empty {@code Mono} which the caller converts to 404, never another user's
-     * bundle).
+     * The active row the caller may read or delete — DOMAIN-scoped on the admin branch
+     * to mirror the metadata-read three-tier cut and close the cross-tenant admin IDOR:
+     *
+     * <ul>
+     *   <li>SUPERADMIN ({@code scope.superadmin()}) — un-pinned; the slug's active row in
+     *       ANY brand.</li>
+     *   <li>per-domain ADMIN ({@code admin=true}) — the slug's active row pinned to the
+     *       caller's brand, so a same-slug active row in ANOTHER brand resolves EMPTY (404),
+     *       never a cross-tenant read/delete. (The {@code user_modules} slug namespace is
+     *       per-owner, not globally unique, so the slug-only finder would otherwise return a
+     *       foreign brand's row.)</li>
+     *   <li>per-domain non-admin — ONLY their own active row (owner = JWT subject), so a
+     *       non-owner sees an empty {@code Mono} the caller converts to 404, never another
+     *       user's bundle.</li>
+     * </ul>
      *
      * @param ownerUserId the JWT subject used as the owner filter for non-admin callers
      * @param slug        the module slug whose active row is resolved
-     * @param admin       {@code true} when the owner filter should be bypassed
+     * @param admin       {@code true} when the owner filter should be bypassed (admin/superadmin)
+     * @param scope       the caller's domain context; pins the per-domain admin branch to the
+     *                    caller's brand ({@code null} resolves to {@code "default"})
      * @return a {@code Mono} emitting the matching active {@link UserModule}, or empty
      *         when no active row exists within the caller's permitted scope
      */
-    private Mono<UserModule> activeRowForCaller(String ownerUserId, String slug, boolean admin) {
-        return admin
-                ? repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug)
-                : repo.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(slug, ownerUserId);
+    private Mono<UserModule> activeRowForCaller(String ownerUserId, String slug, boolean admin,
+                                               PrincipalDomain scope) {
+        if (scope != null && scope.superadmin()) {
+            // superadmin: un-pinned active row across all brands.
+            return repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug);
+        }
+        if (admin) {
+            // per-domain admin: pinned to the caller's brand (closes cross-tenant IDOR).
+            return repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(slug, domainOf(scope));
+        }
+        // non-admin: only the caller's own active row (owner = JWT subject).
+        return repo.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(slug, ownerUserId);
     }
 
     /**
@@ -487,22 +519,33 @@ public class BundleService {
      *       error 409 BEFORE any write, so a cross-owner PUT can never displace
      *       the victim's active card (their row is left untouched).</li>
      * </ul>
-     * The conflict check uses the slug-only active finder and compares the row's owner
+     * The conflict check uses the active-row finder and compares the row's owner
      * against the JWT subject (the same owner-equals-subject rule that read and delete
      * enforce). We do NOT rely on the owner-scoped finder alone, because a missing
      * own-row would otherwise silently fall through to a first-publish and leave a rival
      * owner's active row in place (two active rows for one slug).
      *
+     * <p>DOMAIN-scoped on the admin branch (mirrors {@link #activeRowForCaller}): a
+     * per-domain admin's prior-active lookup is pinned to the caller's brand, so a same-slug
+     * active row in ANOTHER brand is NOT visible here — the admin's PUT then sees no prior
+     * row in its own brand (a first-publish in this brand) and can never supersede/displace
+     * a foreign brand's active card. A SUPERADMIN stays un-pinned (any brand). A non-admin
+     * is pinned by the owner-equals-subject conflict check below regardless of brand
+     * (owner = JWT subject is one identity across the system).
+     *
      * @param ownerUserId the JWT subject performing the PUT
      * @param slug        the module slug whose active row is superseded
      * @param admin       {@code true} when the caller may supersede rows owned by others
+     * @param scope       the caller's domain context; pins the per-domain admin branch to
+     *                    the caller's brand
      * @return a {@code Mono<Void>} that completes when the prior active row (if any) has
      *         been stamped superseded and saved
      * @throws ResponseStatusException 409 when the slug has an active row owned by a
      *                                 different user and the caller is not an admin
      */
-    private Mono<Void> supersedePriorOwned(String ownerUserId, String slug, boolean admin) {
-        return repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug)
+    private Mono<Void> supersedePriorOwned(String ownerUserId, String slug, boolean admin,
+                                           PrincipalDomain scope) {
+        return priorActiveForSupersede(slug, admin, scope)
                 .flatMap(prior -> {
                     if (!admin && !ownerUserId.equals(prior.getOwnerUserId())) {
                         return Mono.<UserModule>error(new ResponseStatusException(
@@ -512,6 +555,29 @@ public class BundleService {
                     return repo.save(prior);
                 })
                 .then();
+    }
+
+    /**
+     * The prior active row a PUT may supersede, scoped exactly like
+     * {@link #activeRowForCaller}: a SUPERADMIN sees the slug's active row in ANY brand;
+     * a per-domain ADMIN sees only their OWN brand's active row (so a foreign brand's card
+     * is invisible and can never be displaced); a non-admin uses the slug-only active row
+     * so the owner-equals-subject conflict check can still detect and reject (409) a
+     * cross-owner displacement.
+     *
+     * @param slug  the module slug whose prior active row is resolved
+     * @param admin {@code true} when the caller holds a per-domain admin role
+     * @param scope the caller's domain context; pins the per-domain admin branch
+     * @return a {@code Mono} emitting the prior active {@link UserModule} the caller may
+     *         supersede, or empty for a first publish in the caller's permitted scope
+     */
+    private Mono<UserModule> priorActiveForSupersede(String slug, boolean admin, PrincipalDomain scope) {
+        if (admin && (scope == null || !scope.superadmin())) {
+            // per-domain admin: only its OWN brand's active row is supersedable.
+            return repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(slug, domainOf(scope));
+        }
+        // superadmin (any brand) and non-admin (owner-check below) use the slug-only finder.
+        return repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug);
     }
 
     /**

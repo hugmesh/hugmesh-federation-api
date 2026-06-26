@@ -32,7 +32,8 @@ import static org.mockito.Mockito.when;
  *       PUT supersession);</li>
  *   <li>delete of a slug the caller does not own -> 404, and NOTHING is removed
  *       from storage (no cross-tenant delete);</li>
- *   <li>an ADMIN caller reads/deletes the slug's active row regardless of owner;</li>
+ *   <li>a per-domain ADMIN reads/deletes/supersedes the slug's OWN-BRAND active row
+ *       (via the domain-pinned active finder), and a SUPERADMIN reaches any brand;</li>
  *   <li>the entry filename defaults to remoteEntry.json for legacy rows.</li>
  * </ul>
  * Fully reactive — assertions use {@link StepVerifier}, no blocking.
@@ -42,6 +43,12 @@ class BundleServiceTest {
     private static final String OWNER = "alice";
     private static final String OTHER = "bob";
     private static final String SLUG = "my-card";
+    private static final String DOMAIN = "brandx";
+
+    /** A per-domain (non-superadmin) scope for the brand the seeded rows live in. */
+    private static final PrincipalDomain SCOPE = PrincipalDomain.forDomain(DOMAIN);
+    /** The unscoped SUPERADMIN scope (reaches any brand). */
+    private static final PrincipalDomain SUPERADMIN = PrincipalDomain.superadminFor(DOMAIN);
 
     private static UserModule activeRow(String owner, String entryFile) {
         UserModule m = new UserModule();
@@ -70,7 +77,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false))
+        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false, SCOPE))
                 .assertNext(res -> assertThat(res).isSameAs(bytes))
                 .verifyComplete();
 
@@ -91,7 +98,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false))
+        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false, SCOPE))
                 .assertNext(res -> assertThat(res).isSameAs(bytes))
                 .verifyComplete();
         verify(storage).read("file:/bundles/" + SLUG + "/deadbeef", "remoteEntry.json");
@@ -107,7 +114,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, false))
+        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, false, SCOPE))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(404))
                 .verify();
@@ -116,11 +123,56 @@ class BundleServiceTest {
     }
 
     @Test
-    void readOwnBody_admin_readsSlugActiveRow_regardlessOfOwner() {
+    void readOwnBody_perDomainAdmin_readsOwnBrandSlugActiveRow_regardlessOfOwner() {
         UserModuleRepository repo = mock(UserModuleRepository.class);
         BundleStorage storage = mock(BundleStorage.class);
         UserModule aliceRow = activeRow(OWNER, "card.html");
-        // admin caller (bob with ROLE_ADMIN) reads via the slug-only finder.
+        // per-domain admin caller (bob with ROLE_ADMIN, scope brandx) reads via the
+        // DOMAIN-pinned active finder — never the brand-blind slug-only finder.
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
+                .thenReturn(Mono.just(aliceRow));
+        Resource bytes = new ByteArrayResource("x".getBytes(StandardCharsets.UTF_8));
+        when(storage.read(aliceRow.getVersionDir(), "card.html")).thenReturn(bytes);
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, true, SCOPE))
+                .assertNext(res -> assertThat(res).isSameAs(bytes))
+                .verifyComplete();
+        verify(repo).findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN);
+        // a per-domain admin must NOT reach the brand-blind slug-only finder (the IDOR vector).
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+        verify(repo, never())
+                .findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(any(), any());
+    }
+
+    @Test
+    void readOwnBody_perDomainAdmin_foreignBrandSlug_is404_neverCrossTenantBytes() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // The slug's only active row lives in brandy; a brandx admin must NOT see it.
+        // The domain-pinned finder for brandx resolves EMPTY -> 404, never the foreign row.
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
+                .thenReturn(Mono.empty());
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, true, SCOPE))
+                .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+                        .isEqualTo(404))
+                .verify();
+        // FAIL-FIRST: against the unfixed code the slug-only finder WOULD have returned the
+        // brandy row and streamed its bytes. Assert that finder is never even consulted.
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+        verify(storage, never()).read(any(), any());
+    }
+
+    @Test
+    void readOwnBody_superadmin_readsSlugActiveRow_anyBrand() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        UserModule aliceRow = activeRow(OWNER, "card.html");
+        // SUPERADMIN keeps the un-pinned slug-only finder (reaches any brand).
         when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
                 .thenReturn(Mono.just(aliceRow));
         Resource bytes = new ByteArrayResource("x".getBytes(StandardCharsets.UTF_8));
@@ -128,12 +180,12 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, true))
+        StepVerifier.create(svc.readOwnBody(OTHER, SLUG, true, SUPERADMIN))
                 .assertNext(res -> assertThat(res).isSameAs(bytes))
                 .verifyComplete();
         verify(repo).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG);
         verify(repo, never())
-                .findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(any(), any());
+                .findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(any(), any());
     }
 
     @Test
@@ -147,7 +199,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false))
+        StepVerifier.create(svc.readOwnBody(OWNER, SLUG, false, SCOPE))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(404))
                 .verify();
@@ -166,7 +218,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.deleteForOwner(OWNER, SLUG, false))
+        StepVerifier.create(svc.deleteForOwner(OWNER, SLUG, false, SCOPE))
                 .verifyComplete();
 
         // storage version removed (mirrors supersession cleanup) ...
@@ -185,7 +237,7 @@ class BundleServiceTest {
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, false))
+        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, false, SCOPE))
                 .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
                         .isEqualTo(404))
                 .verify();
@@ -195,20 +247,65 @@ class BundleServiceTest {
     }
 
     @Test
-    void deleteForOwner_admin_deletesSlugActiveRow_regardlessOfOwner() {
+    void deleteForOwner_perDomainAdmin_deletesOwnBrandSlugActiveRow_regardlessOfOwner() {
         UserModuleRepository repo = mock(UserModuleRepository.class);
         BundleStorage storage = mock(BundleStorage.class);
         UserModule aliceRow = activeRow(OWNER, "card.html");
+        // per-domain admin: deletes via the DOMAIN-pinned active finder (own brand only).
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
+                .thenReturn(Mono.just(aliceRow));
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, true, SCOPE))
+                .verifyComplete();
+        verify(storage).deleteVersion(aliceRow.getVersionDir());
+        assertThat(aliceRow.getSupersededAt()).isNotNull();
+        // never the brand-blind slug-only finder.
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+    }
+
+    @Test
+    void deleteForOwner_perDomainAdmin_foreignBrandSlug_is404_andNothingDestroyed() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // The slug's only active row lives in brandy; a brandx admin must NOT destroy it.
+        // The domain-pinned finder for brandx resolves EMPTY -> 404, victim row untouched.
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
+                .thenReturn(Mono.empty());
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, true, SCOPE))
+                .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value())
+                        .isEqualTo(404))
+                .verify();
+        // FAIL-FIRST: against the unfixed code the slug-only finder WOULD have returned the
+        // brandy row and DELETED it. No storage delete, no save, slug-only finder untouched.
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+        verify(storage, never()).deleteVersion(any());
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void deleteForOwner_superadmin_deletesSlugActiveRow_anyBrand() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        UserModule aliceRow = activeRow(OWNER, "card.html");
+        // SUPERADMIN keeps the un-pinned slug-only finder (reaches any brand).
         when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
                 .thenReturn(Mono.just(aliceRow));
         when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         BundleService svc = new BundleService(repo, storage);
 
-        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, true))
+        StepVerifier.create(svc.deleteForOwner(OTHER, SLUG, true, SUPERADMIN))
                 .verifyComplete();
         verify(storage).deleteVersion(aliceRow.getVersionDir());
         assertThat(aliceRow.getSupersededAt()).isNotNull();
+        verify(repo, never())
+                .findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(any(), any());
     }
 
     // ---------- PUT: owner-scoped supersede (BFLA / cross-owner write) ----------
@@ -274,12 +371,13 @@ class BundleServiceTest {
     }
 
     @Test
-    void put_admin_supersedesAnotherOwnersActiveRow() {
+    void put_perDomainAdmin_supersedesAnotherOwnersOwnBrandActiveRow() {
         UserModuleRepository repo = mock(UserModuleRepository.class);
         BundleStorage storage = mock(BundleStorage.class);
-        // alice's row is active; an ADMIN (bob) PUTs to the slug — allowed override.
+        // alice's row is active in brandx; a brandx ADMIN (bob) PUTs to the slug — allowed
+        // override, resolved via the DOMAIN-pinned prior-active finder (own brand only).
         UserModule aliceRow = activeRow(OWNER, "card.html");
-        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
                 .thenReturn(Mono.just(aliceRow));
         when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/adminhash");
         when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
@@ -287,11 +385,66 @@ class BundleServiceTest {
         BundleService svc = new BundleService(repo, storage);
 
         StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true,
-                        PrincipalDomain.forDomain("default"), body("<h1>admin</h1>")))
+                        SCOPE, body("<h1>admin</h1>")))
                 .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OTHER))
                 .verifyComplete();
 
         assertThat(aliceRow.getSupersededAt()).isNotNull();
+        // never the brand-blind slug-only finder.
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+    }
+
+    @Test
+    void put_perDomainAdmin_foreignBrandActiveRow_isInvisible_doesNotDisplaceVictim() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        // The slug's active row lives in brandy (owned by alice-y). A brandx ADMIN PUTs to
+        // the slug: the DOMAIN-pinned prior-active finder for brandx resolves EMPTY, so the
+        // PUT is a first-publish IN BRANDX and the brandy victim row is NEVER superseded.
+        UserModule brandYVictim = activeRow("alice-y", "card.html");
+        when(repo.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG, DOMAIN))
+                .thenReturn(Mono.empty());
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/xhash");
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true,
+                        SCOPE, body("<h1>x-admin</h1>")))
+                .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OTHER))
+                .verifyComplete();
+
+        // MUTATION-RESISTANT / FAIL-FIRST: against the unfixed slug-only supersede the
+        // brandy victim row WOULD have been stamped superseded. It must stay untouched.
+        assertThat(brandYVictim.getSupersededAt())
+                .as("a per-domain admin PUT must not supersede a foreign brand's active card")
+                .isNull();
+        verify(repo, never()).findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(any());
+        // exactly one save: the new brandx insert, never a supersede of the brandy row.
+        verify(repo, org.mockito.Mockito.times(1)).save(any(UserModule.class));
+    }
+
+    @Test
+    void put_superadmin_supersedesSlugActiveRow_anyBrand() {
+        UserModuleRepository repo = mock(UserModuleRepository.class);
+        BundleStorage storage = mock(BundleStorage.class);
+        UserModule aliceRow = activeRow(OWNER, "card.html");
+        // SUPERADMIN keeps the un-pinned slug-only prior-active finder (reaches any brand).
+        when(repo.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(SLUG))
+                .thenReturn(Mono.just(aliceRow));
+        when(storage.installFromStaging(eq(SLUG), any(), any())).thenReturn("file:/bundles/" + SLUG + "/sahash");
+        when(repo.save(any(UserModule.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        BundleService svc = new BundleService(repo, storage);
+
+        StepVerifier.create(svc.put(OTHER, SLUG, "card.html", "internal", "{}", true,
+                        SUPERADMIN, body("<h1>sa</h1>")))
+                .assertNext(saved -> assertThat(saved.getOwnerUserId()).isEqualTo(OTHER))
+                .verifyComplete();
+
+        assertThat(aliceRow.getSupersededAt()).isNotNull();
+        verify(repo, never())
+                .findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(any(), any());
     }
 
     @Test

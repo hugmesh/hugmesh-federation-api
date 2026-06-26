@@ -42,7 +42,11 @@ import java.util.Map;
  *   <li><b>Write (PUT) + Read-own-body (GET /slug/{slug}/body) + Delete</b> —
  *       owner-or-admin: the authenticated caller must be the {@code ownerUserId}
  *       (JWT subject) of the active bundle, OR hold {@code ROLE_ADMIN}. A non-owner
- *       receives 404 (cross-tenant attempt is indistinguishable from not-found).</li>
+ *       receives 404 (cross-tenant attempt is indistinguishable from not-found).
+ *       The admin override is DOMAIN-scoped: a per-domain {@code ROLE_ADMIN} reaches
+ *       only their OWN brand's active row (a foreign brand's slug 404s), and only a
+ *       {@code ROLE_SUPERADMIN} reaches any brand — so a brand admin can neither read
+ *       nor delete nor supersede another brand's card.</li>
  *   <li><b>Metadata reads (GET /mine, GET /slug/{slug}, GET /{contentHash})</b> —
  *       DOMAIN-scoped + OWNER-scoped, projected to the public-safe
  *       {@link UserModuleView} (no {@code versionDir} / {@code ownerUserId}). A
@@ -234,8 +238,11 @@ public class BundleController {
               <tr><td>ROLE_USER / ROLE_MOD</td>
                   <td>PUT own bundle for slug; 409 if slug's active row is owned by
                       another user</td></tr>
-              <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
-                  <td>PUT and supersede the slug's active row regardless of owner</td></tr>
+              <tr><td>ROLE_ADMIN</td>
+                  <td>PUT and supersede the slug's active row for any owner in OWN
+                      brand; a foreign brand's active card is never displaced</td></tr>
+              <tr><td>ROLE_SUPERADMIN</td>
+                  <td>PUT and supersede the slug's active row regardless of owner or brand</td></tr>
             </table>
 
             <p>If the slug already has an active version owned by ANOTHER user, a
@@ -293,12 +300,16 @@ public class BundleController {
               <tr><th>Caller role</th><th>Allowed action</th></tr>
               <tr><td>ROLE_USER / ROLE_MOD</td>
                   <td>Read own active bundle body; 404 if not the owner</td></tr>
-              <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
-                  <td>Read the slug's active bundle body regardless of owner</td></tr>
+              <tr><td>ROLE_ADMIN</td>
+                  <td>Read the slug's active bundle body for any owner in OWN brand;
+                      404 for another brand's slug</td></tr>
+              <tr><td>ROLE_SUPERADMIN</td>
+                  <td>Read the slug's active bundle body regardless of owner or brand</td></tr>
             </table>
 
-            <p>A non-owner gets 404 — never another user's bytes. Content-Type is
-            resolved from the bundle's entry-file extension.
+            <p>A non-owner gets 404 — never another user's bytes; a per-domain admin
+            reaching for another brand's slug also gets 404 (never cross-tenant bytes).
+            Content-Type is resolved from the bundle's entry-file extension.
             """)
     @ApiResponses({
         @ApiResponse(responseCode = "200",
@@ -318,10 +329,13 @@ public class BundleController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG,
                     message = "invalid slug") String slug) {
+        // Brand scope from the validated JWT pins a per-domain admin's read to their own
+        // brand, so an admin can never exfiltrate another brand's card body.
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         // Resolve Content-Type from the slug's extension so the caller knows what kind
         // of bundle body (JS, HTML, JSON, etc.) they are receiving.
         return adminMono()
-                .flatMap(admin -> bundles.readOwnBody(jwt.getSubject(), slug, admin))
+                .flatMap(admin -> bundles.readOwnBody(jwt.getSubject(), slug, admin, scope))
                 .map(res -> ResponseEntity.ok().contentType(mediaTypeFor(slug)).body(res));
     }
 
@@ -338,11 +352,15 @@ public class BundleController {
               <tr><th>Caller role</th><th>Allowed action</th></tr>
               <tr><td>ROLE_USER / ROLE_MOD</td>
                   <td>Delete own active bundle; 404 if not the owner</td></tr>
-              <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
-                  <td>Delete the slug's active bundle regardless of owner</td></tr>
+              <tr><td>ROLE_ADMIN</td>
+                  <td>Delete the slug's active bundle for any owner in OWN brand;
+                      404 for another brand's slug</td></tr>
+              <tr><td>ROLE_SUPERADMIN</td>
+                  <td>Delete the slug's active bundle regardless of owner or brand</td></tr>
             </table>
 
-            <p>A non-owner gets 404 — never a cross-tenant delete.
+            <p>A non-owner gets 404 — never a cross-tenant delete; a per-domain admin
+            reaching for another brand's slug also gets 404 (never a cross-tenant delete).
             """)
     @ApiResponses({
         @ApiResponse(responseCode = "204",
@@ -362,8 +380,11 @@ public class BundleController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.SLUG,
                     message = "invalid slug") String slug) {
+        // Brand scope from the validated JWT pins a per-domain admin's delete to their own
+        // brand, so an admin can never destroy another brand's card.
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         return adminMono()
-                .flatMap(admin -> bundles.deleteForOwner(jwt.getSubject(), slug, admin));
+                .flatMap(admin -> bundles.deleteForOwner(jwt.getSubject(), slug, admin, scope));
     }
 
     // -------------------------------------------------------------------------

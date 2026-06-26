@@ -36,6 +36,14 @@ class BundleControllerTest {
 
     private static final String SLUG = "my-card";
 
+    /** Matcher for the {@link systems.snapdragon.commons.security.PrincipalDomain} scope
+     *  arg the controller resolves from the JWT (the per-domain admin pin is tested in
+     *  BundleServiceTest); here we only assert owner/admin forwarding. */
+    private static systems.snapdragon.commons.security.PrincipalDomain anyScope() {
+        return org.mockito.ArgumentMatchers
+                .<systems.snapdragon.commons.security.PrincipalDomain>any();
+    }
+
     private static Jwt jwtFor(String subject) {
         return Jwt.withTokenValue("t")
                 .header("alg", "none")
@@ -71,7 +79,7 @@ class BundleControllerTest {
     void readBody_forwardsSubjectAsOwner_nonAdmin_returnsBytes() {
         BundleService svc = mock(BundleService.class);
         Resource bytes = new ByteArrayResource("<h1>hi</h1>".getBytes(StandardCharsets.UTF_8));
-        when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false))).thenReturn(Mono.just(bytes));
+        when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false), anyScope())).thenReturn(Mono.just(bytes));
         BundleController c = controller(svc);
 
         StepVerifier.create(c.readBody(jwtFor("alice"), SLUG)
@@ -83,14 +91,14 @@ class BundleControllerTest {
                 })
                 .verifyComplete();
 
-        verify(svc).readOwnBody("alice", SLUG, false);
+        verify(svc).readOwnBody(eq("alice"), eq(SLUG), eq(false), anyScope());
     }
 
     @Test
     void readBody_adminFlag_isResolvedFromSecurityContext() {
         BundleService svc = mock(BundleService.class);
         Resource bytes = new ByteArrayResource("x".getBytes(StandardCharsets.UTF_8));
-        when(svc.readOwnBody(eq("root"), eq(SLUG), eq(true))).thenReturn(Mono.just(bytes));
+        when(svc.readOwnBody(eq("root"), eq(SLUG), eq(true), anyScope())).thenReturn(Mono.just(bytes));
         BundleController c = controller(svc);
 
         StepVerifier.create(c.readBody(jwtFor("root"), SLUG)
@@ -99,13 +107,13 @@ class BundleControllerTest {
                 .assertNext(resp -> assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK))
                 .verifyComplete();
 
-        verify(svc).readOwnBody("root", SLUG, true);
+        verify(svc).readOwnBody(eq("root"), eq(SLUG), eq(true), anyScope());
     }
 
     @Test
     void readBody_propagatesServiceNotFound() {
         BundleService svc = mock(BundleService.class);
-        when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false)))
+        when(svc.readOwnBody(eq("alice"), eq(SLUG), eq(false), anyScope()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no body")));
         BundleController c = controller(svc);
 
@@ -122,7 +130,7 @@ class BundleControllerTest {
     @Test
     void delete_forwardsSubjectAsOwner_nonAdmin() {
         BundleService svc = mock(BundleService.class);
-        when(svc.deleteForOwner(eq("alice"), eq(SLUG), eq(false))).thenReturn(Mono.empty());
+        when(svc.deleteForOwner(eq("alice"), eq(SLUG), eq(false), anyScope())).thenReturn(Mono.empty());
         BundleController c = controller(svc);
 
         StepVerifier.create(c.delete(jwtFor("alice"), SLUG)
@@ -130,13 +138,13 @@ class BundleControllerTest {
                                 Mono.just(ctx("alice", "ROLE_USER")))))
                 .verifyComplete();
 
-        verify(svc).deleteForOwner("alice", SLUG, false);
+        verify(svc).deleteForOwner(eq("alice"), eq(SLUG), eq(false), anyScope());
     }
 
     @Test
     void delete_adminFlag_isResolvedFromSecurityContext() {
         BundleService svc = mock(BundleService.class);
-        when(svc.deleteForOwner(eq("root"), eq(SLUG), eq(true))).thenReturn(Mono.empty());
+        when(svc.deleteForOwner(eq("root"), eq(SLUG), eq(true), anyScope())).thenReturn(Mono.empty());
         BundleController c = controller(svc);
 
         StepVerifier.create(c.delete(jwtFor("root"), SLUG)
@@ -144,13 +152,13 @@ class BundleControllerTest {
                                 Mono.just(ctx("root", "ROLE_USER", "ROLE_ADMIN")))))
                 .verifyComplete();
 
-        verify(svc).deleteForOwner("root", SLUG, true);
+        verify(svc).deleteForOwner(eq("root"), eq(SLUG), eq(true), anyScope());
     }
 
     @Test
     void delete_propagatesServiceForbiddenAsNotFound() {
         BundleService svc = mock(BundleService.class);
-        when(svc.deleteForOwner(eq("bob"), eq(SLUG), eq(false)))
+        when(svc.deleteForOwner(eq("bob"), eq(SLUG), eq(false), anyScope()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no bundle for slug")));
         BundleController c = controller(svc);
 

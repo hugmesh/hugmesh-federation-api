@@ -40,9 +40,27 @@ public interface UserModuleRepository extends ReactiveCrudRepository<UserModule,
     Mono<UserModule> findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(String slug);
 
     /**
+     * DOMAIN-scoped active-row finder (multi-tenancy): the slug's current
+     * (non-superseded) bundle row pinned to the caller's {@code domain}. The owner-or-admin
+     * MUTATE + read-own-body paths ({@code DELETE /{slug}}, the {@code PUT} supersede step,
+     * and {@code GET /slug/{slug}/body}) use this for a PER-DOMAIN admin so the active row of
+     * a slug that lives in ANOTHER brand resolves EMPTY (404) — closing the cross-tenant
+     * admin IDOR on the bundle mutate/body surface. The {@code user_modules} slug namespace
+     * is per-owner (not globally unique across brands, see
+     * {@code UserModuleActiveOwnerUniqueTest}), so the un-pinned
+     * {@link #findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc} could otherwise
+     * return a foreign brand's active row to a brand-X admin. SUPERADMIN
+     * ({@code scope.superadmin()}) keeps the un-pinned finder (all brands). Mirrors the
+     * METADATA-read three-tier cut ({@link #findBySlugAndDomainOrderByCreatedAtDesc}).
+     */
+    Mono<UserModule> findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(
+            String slug, String domain);
+
+    /**
      * The CALLER'S OWN current (non-superseded) bundle for a slug — the owner-scoped
      * read/delete anchor. Owner = JWT subject; an admin override is handled in the
-     * service by falling back to the slug-only active finder above.
+     * service by falling back to the domain-scoped (per-domain admin) or slug-only
+     * (superadmin) active finder above.
      */
     Mono<UserModule> findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(
             String slug, String ownerUserId);
