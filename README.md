@@ -621,10 +621,16 @@ Intentionally NOT implemented in the scaffold:
 - ~~**S3 / MinIO storage** is a stub that throws 501.~~ **No longer deferred — ✅
   shipped on `main`.** `S3BundleStorage` is fully implemented (AWS S3 in prod,
   MinIO in dev/CI). See *Bundle storage*.
-- **Auto-applying an approved `moderation_request` as a `federation_override`.**
-  Kept as two auditable steps (decide, then apply); wire
-  `ModerationService.decide(approve)` → `OverrideService.apply` when the policy is
-  finalised.
+- ~~**Auto-applying an approved `moderation_request` as a `federation_override`.**~~
+  **No longer deferred — ✅ shipped on `main`.** `ModerationService.decide` now
+  auto-applies an **approved `user-removal`** as an ACTIVE scope=user override via
+  `OverrideService.applyUserScope` (action `unpublish`, domain = the decided row's
+  own brand), tagged `reason='moderation_request:<id>'` so the decision row and the
+  override row stay independently auditable; a **denied** re-decision rearms ONLY
+  that request's own row(s) via `clearScopeBySource`. An **approved
+  `instance-block` stays decision-only** (honest): this catalogue has no
+  remote-instance surface — the approved row is the auditable authorisation signal
+  for the homeserver-level block executed by the mod/admin surfaces.
 - **`scope=role` is a *content-declared* cut.** It suppresses modules whose
   declared `metadata.requiresRole` equals the target role. There is **no module
   role column** and **no user→role table** in this service (roles live only in the

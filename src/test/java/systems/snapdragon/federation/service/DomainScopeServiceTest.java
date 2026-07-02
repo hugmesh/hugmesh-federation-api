@@ -273,7 +273,9 @@ class DomainScopeServiceTest {
     class Moderation {
 
         private final ModerationRequestRepository repo = mock(ModerationRequestRepository.class);
-        private final ModerationService svc = new ModerationService(repo);
+        // The decide→apply chain is exercised in ModerationServiceTest; the domain-cut
+        // tests here decide rows with no kind, so the mocked OverrideService is inert.
+        private final ModerationService svc = new ModerationService(repo, mock(OverrideService.class));
 
         // USER-SITUATIONAL: a per-domain mod lists only their brand's requests.
         @Test

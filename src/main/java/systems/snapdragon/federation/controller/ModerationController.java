@@ -35,10 +35,13 @@ import systems.snapdragon.federation.web.ValidationPatterns;
  *       (status {@code approved} / {@code denied}).</li>
  * </ol>
  *
- * <p>An {@code approved} request is the authorisation for an
- * {@link systems.snapdragon.federation.service.OverrideService#apply kill-switch
- * action}; the wiring of auto-application is left as a documented follow-up so the
- * decision and the action remain separately auditable.
+ * <p>An {@code approved} {@code user-removal} decision is AUTO-APPLIED by
+ * {@link ModerationService#decide} as an active scope=user kill-switch override
+ * (tagged {@code moderation_request:<id>}); a {@code denied} re-decision rearms
+ * only that request's own row(s). The decision row and the override row are
+ * recorded separately so both legs stay independently auditable. An
+ * {@code approved} {@code instance-block} remains decision-only (no
+ * remote-instance surface exists in this catalogue; nothing is faked).
  *
  * <h2>Security gating</h2>
  * <p>All paths under {@code /api/federation/moderation/**} require
@@ -257,9 +260,16 @@ public class ModerationController {
                   <td>Decide any request across all brands</td></tr>
             </table>
 
-            <p>An <code>approved</code> decision is the authorisation for a subsequent
-            kill-switch action via <code>POST /api/federation/overrides</code>; the
-            two steps are kept separate for auditability.
+            <p>An <code>approved</code> <b>user-removal</b> decision is auto-applied
+            as an active scope=user kill-switch override (action
+            <code>unpublish</code>, tagged <code>moderation_request:&lt;id&gt;</code>):
+            the target's modules drop from the manifest render and their vanity
+            profile is suppressed. A <code>denied</code> re-decision rearms only the
+            row(s) this request applied. The decision row and the override row are
+            recorded separately for auditability. An <code>approved</code>
+            <b>instance-block</b> remains decision-only — the federation catalogue
+            has no remote-instance surface; the approved row authorises the
+            homeserver-level block executed elsewhere.
             """)
     @ApiResponses({
         @ApiResponse(responseCode = "200",

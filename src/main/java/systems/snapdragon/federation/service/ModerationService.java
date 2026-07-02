@@ -37,10 +37,17 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  *       {@code approved} or {@code denied}.</li>
  * </ol>
  *
- * <p>An {@code approved} request is the authorisation signal for an
- * {@link OverrideService#apply} kill-switch action.  The wiring that automatically
- * triggers that application on approval is a documented follow-up (see README) so
- * the decision and the action remain auditable as separate steps.
+ * <p>An {@code approved} {@code user-removal} decision is AUTO-APPLIED as a
+ * scope=user {@link systems.snapdragon.federation.model.FederationOverride} via
+ * {@link OverrideService#applyUserScope(String, String, String, String, PrincipalDomain)},
+ * tagged {@code reason='moderation_request:<id>'} so the two steps remain
+ * independently auditable (the decision row AND the override row) and so a
+ * subsequent {@code denied} re-decision rearms ONLY the row(s) this request
+ * applied (via {@link OverrideService#clearScopeBySource(String, PrincipalDomain)}).
+ * An {@code approved} {@code instance-block} stays decision-only: the federation
+ * catalogue has no remote-instance surface, so there is nothing here to apply the
+ * block TO — the approved row is the auditable authorisation signal for the
+ * homeserver-level block executed by the mod/admin surfaces (never faked here).
  *
  * <h2>Caller-role access matrix</h2>
  *
@@ -65,10 +72,23 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @Service
 public class ModerationService {
 
-    private final ModerationRequestRepository repo;
+    /**
+     * Prefix of the SOURCE tag stamped on the {@code federation_override} row an
+     * approved {@code user-removal} decision applies ({@code reason} column):
+     * {@code moderation_request:<id>}. The tag is what keeps the auto-application
+     * auditable AND reversible per-request — a later {@code denied} re-decision
+     * clears ONLY rows carrying this request's own tag, never a manual kill or
+     * another request's row (mirrors the access-suspension
+     * {@code 'access_suspension:<id>'} convention).
+     */
+    static final String DECISION_SOURCE_PREFIX = "moderation_request:";
 
-    public ModerationService(ModerationRequestRepository repo) {
+    private final ModerationRequestRepository repo;
+    private final OverrideService overrides;
+
+    public ModerationService(ModerationRequestRepository repo, OverrideService overrides) {
         this.repo = repo;
+        this.overrides = overrides;
     }
 
     // ----- Listing -----
@@ -199,10 +219,28 @@ public class ModerationService {
      * request — a cross-domain id resolves to empty and surfaces as a 404.
      * ROLE_SUPERADMIN may decide any request regardless of domain.
      *
-     * <p>An {@code approved} decision is the authorisation signal for a subsequent
-     * {@link OverrideService#apply} call.  The two steps are kept separate so the
-     * decision and the kill-switch action each appear in the audit trail
-     * independently.
+     * <p><b>Decision application (the decide→apply chain).</b> An {@code approved}
+     * {@code user-removal} decision is auto-applied as an ACTIVE scope=user
+     * {@code federation_override} row via
+     * {@link OverrideService#applyUserScope(String, String, String, String, PrincipalDomain)}
+     * (action {@code unpublish}: the owner's modules drop from the manifest render
+     * and their vanity profile is suppressed — matching the access-suspension ban
+     * path).  The override row is stamped with the DECIDED REQUEST's own domain
+     * (not the decider's — relevant for a SUPERADMIN deciding a brand row) and
+     * tagged {@code reason='moderation_request:<id>'}, so the decision row and the
+     * override row each appear in the audit trail independently.  A {@code denied}
+     * decision of a {@code user-removal} clears (rearms) any active override row(s)
+     * previously applied by THIS request's tag — count zero for a first-time deny —
+     * so flipping a mistaken approve restores the target without touching manual
+     * kills.  An {@code approved} {@code instance-block} stays decision-only (no
+     * remote-instance surface exists in this catalogue; nothing is faked).
+     *
+     * <p>The returned {@code Mono} completes ONLY after both the decision row and
+     * the override application (when one is due) have landed; an override-store
+     * failure surfaces as the call's error — the decide NEVER reports success on a
+     * half-applied chain.  (The decision row may already be persisted in that
+     * failure case; re-issuing the decide is safe: it re-saves the same status and
+     * re-applies the override idempotently by source tag.)
      *
      * @param id           the primary-key id of the request to decide
      * @param approve      {@code true} to advance status to {@code approved};
@@ -213,11 +251,12 @@ public class ModerationService {
      *                     to the correct brand
      * @return a {@code Mono} emitting the updated {@link ModerationRequest} with
      *         {@code status = approved | denied} and {@code ts} refreshed to the
-     *         current instant
+     *         current instant, after any due override application/clear completed
      * @throws ResponseStatusException with status {@code 404 NOT_FOUND} when no
      *                                 request with the given id exists in scope, or
      *                                 when it belongs to another brand
-     * @see OverrideService#apply
+     * @see OverrideService#applyUserScope(String, String, String, String, PrincipalDomain)
+     * @see OverrideService#clearScopeBySource(String, PrincipalDomain)
      */
     public Mono<ModerationRequest> decide(Long id, boolean approve, String adminDecider, PrincipalDomain scope) {
         return load(id, scope)
@@ -226,7 +265,47 @@ public class ModerationService {
                     r.setAdminDecider(adminDecider);
                     r.setTs(Instant.now());
                     return repo.save(r);
-                });
+                })
+                .flatMap(saved -> applyDecision(saved, approve, adminDecider));
+    }
+
+    /**
+     * Applies the side-effect of a decision to the kill-switch surface (the
+     * decide→apply chain).  Only {@code user-removal} requests have an applicable
+     * federation surface (the owner's modules + vanity profile, keyed on
+     * {@code owner_user_id = target}):
+     *
+     * <ul>
+     *   <li>{@code approved} — write the ACTIVE scope=user override row (action
+     *       {@code unpublish}) tagged with this request's source.</li>
+     *   <li>{@code denied} — clear any active row(s) carrying this request's source
+     *       tag (rearm after a flipped approve; zero rows on a first-time deny).</li>
+     * </ul>
+     *
+     * <p>{@code instance-block} (and any row with no kind, defensively) passes
+     * through untouched — decision-only, honestly.  The override lands in the
+     * REQUEST row's own domain so a SUPERADMIN decision of a brand-X request
+     * suppresses brand-X's render, not a phantom {@code "default"}.
+     *
+     * @param saved        the just-saved decision row
+     * @param approve      the decision that was applied to the row
+     * @param adminDecider the deciding admin's Casdoor subject (stamped as the
+     *                     override row's {@code set_by})
+     * @return a {@code Mono} emitting {@code saved} after the side-effect completes
+     */
+    private Mono<ModerationRequest> applyDecision(ModerationRequest saved, boolean approve, String adminDecider) {
+        if (!"user-removal".equals(saved.getKind())) {
+            return Mono.just(saved);
+        }
+        String source = DECISION_SOURCE_PREFIX + saved.getId();
+        // The override is scoped to the DECIDED ROW's brand (the load already proved
+        // the caller may act on it); a NULL domain (pre-026 data) lands in "default".
+        PrincipalDomain rowScope = PrincipalDomain.forDomain(
+                saved.getDomain() == null ? "default" : saved.getDomain());
+        Mono<?> effect = approve
+                ? overrides.applyUserScope(saved.getTarget(), "unpublish", adminDecider, source, rowScope)
+                : overrides.clearScopeBySource(source, rowScope);
+        return effect.thenReturn(saved);
     }
 
     // ----- Helpers -----
