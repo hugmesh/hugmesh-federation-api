@@ -77,6 +77,31 @@ This service is the **read/write source of truth for "what UI modules exist,
 which are serveable, and to whom"** — the rest of the platform (gateway routing,
 host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 
+```mermaid
+flowchart TB
+    subgraph Callers["Upstream callers"]
+        HostShell["Angular host shells\n(manifest / capabilities / vanity)"]
+        RemoteFragment["snapdragon-remote-fragment\nsync fleet (bundle fetch)"]
+        RegMint["Registration mint paths\nuser-bff / actions\n(username check, bundle upload)"]
+        ModAdmin["mod-bff / admin-bff\n(moderation + kill-switch)"]
+    end
+
+    Gateway["fe-gateway\n(validates JWT, swaps bff_ → Casdoor JWT)"]
+
+    FedAPI["snapdragon-federation-api\n(this service)"]
+
+    subgraph Downstream["Downstream"]
+        PG["PostgreSQL\n(R2DBC runtime + JDBC Liquibase)"]
+        Cassandra["Cassandra\n(optional manifest cache)"]
+        BundleStore["Bundle store\n(filesystem or S3/MinIO)"]
+    end
+
+    Callers --> Gateway --> FedAPI
+    FedAPI --> PG
+    FedAPI --> Cassandra
+    FedAPI --> BundleStore
+```
+
 ## Stack
 
 - Spring Boot **4.0.7** / Spring Cloud **2025.1.2** (Spring Framework 7 / Spring
@@ -247,6 +272,18 @@ federation engine's `FederationController.manifest()` (`findAllByEnabledTrue →
    are dropped by the enabled+circuit DB finder, so they are **not** in the active
    scope set (no regression).
 
+```mermaid
+flowchart TB
+    A["Incoming request\n(JWT authorities + domain)"] --> B["1. DB query\nenabled=true AND circuit_state='closed'\nAND domain = caller's DOMAIN_x"]
+    B --> C["2. Visibility filter\npublic → all callers\ninternal → ADMIN / INTERNAL / SUPERADMIN only"]
+    C --> D["3. Active scope overrides\n(cleared_at IS NULL)\nscope=all / user / role"]
+    D --> E["Rendered manifest\n{generatedAt, remotes[]}"]
+    E --> F{"Cassandra cache\navailable?"}
+    F -- "yes (public-safe view only)" --> G["Write-through cache\n(default-domain, no internal rows)"]
+    F -- "no / miss / failure" --> H["Serve from Postgres directly"]
+    G --> H
+```
+
 The rendered manifest is best-effort write-through cached — but **only the
 public-safe default-domain view** (no internal rows, no superadmin cross-domain
 superset, not a brand-specific view) so a cache poller without a token never sees
@@ -286,22 +323,29 @@ no JWT. The manifest / override read paths are untouched — this is purely addi
 A user can serve their PUBLIC profile at `https://<username>.snapdragon.systems`.
 The federation API owns the **resolve** step.
 
-```
-wildcard DNS *.<domain>  ─►  backend ingress  ─►  fe-gateway
-   (Host: alice.<domain>)                          │
-   the fe-gateway Host=*.<domain> route is ORDERED AFTER the apex + the reserved
-   service hosts (id. api. matrix. mastodon. forum. wiki. owncast. tube. scale.
-   headscale. www., … — the full set is ReservedNames.RESERVED_LABELS), so the
-   reserved subdomains are matched first and never captured by the wildcard
-                                                    │
-                              GET /api/federation/vanity  (Host: alice.<domain>)
-                                                    ▼
-   federation-api: first DNS label `alice` ─► VanityService.resolve("alice")
-       SELECT … WHERE slug='profile-alice' AND kind='fragment'
-                   AND visibility='public' AND enabled AND circuit_state='closed'
-   ─► VanityProfileDto { remoteEntryUrl, contentHash, /_fragments/profile-alice/<hash>/ }
-                                                    ▼
-   the vanity host renders that fragment (remote-fragment serves the bytes)
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant DNS as Wildcard DNS *.<domain>
+    participant Ingress as Backend ingress
+    participant GW as fe-gateway
+    participant FedAPI as federation-api
+    participant DB as PostgreSQL
+
+    Browser->>DNS: GET https://alice.<domain>/
+    DNS->>Ingress: (wildcard match)
+    Ingress->>GW: Host: alice.<domain>
+    Note over GW: The fe-gateway Host=*.<domain> route is ORDERED AFTER<br/>the apex + reserved service hosts (id. api. matrix. …<br/>the full set is ReservedNames.RESERVED_LABELS), so<br/>reserved subdomains are matched first and never<br/>captured by the wildcard.
+    GW->>FedAPI: GET /api/federation/vanity<br/>(Host: alice.<domain>)
+    FedAPI->>FedAPI: Extract first DNS label → "alice"
+    FedAPI->>DB: SELECT WHERE slug='profile-alice'<br/>AND kind='fragment' AND visibility='public'<br/>AND enabled AND circuit_state='closed'
+    DB-->>FedAPI: row (or empty)
+    alt fragment found
+        FedAPI-->>GW: VanityProfileDto<br/>{ remoteEntryUrl, contentHash,<br/>/_fragments/profile-alice/<hash>/ }
+        GW-->>Browser: render fragment (remote-fragment serves bytes)
+    else not found / suspended / disabled
+        FedAPI-->>GW: 404
+    end
 ```
 
 **username ↔ fragment association (the chosen convention).** A user's public
@@ -344,6 +388,28 @@ the gateway route order already prevents most of these):
 The platform's access-suspension foundation (admin-bff / mod-bff) bans a USER's
 public profile through this service — via the **read** path (vanity / manifest)
 and a direct **write** path on `OverrideService`:
+
+```mermaid
+sequenceDiagram
+    participant AdminBff as admin-bff / mod-bff
+    participant FedAPI as federation-api
+    participant DB as PostgreSQL (federation_override)
+    participant Cache as ManifestCache
+
+    AdminBff->>FedAPI: applyUserScope(ownerUsername, action, setBy, source)
+    FedAPI->>DB: INSERT scope='user', target=ownerUsername,\nreason='access_suspension:<id>'
+    Note over DB: Row exists even if user never published.\nDrops all owned modules from manifest render\nand blocks vanity resolve.
+    FedAPI->>Cache: invalidate() — evict stale cached manifest
+
+    Note over AdminBff,Cache: On every subsequent request:
+    FedAPI->>DB: findByScopeAndTargetAndClearedAtIsNull('user', owner)
+    DB-->>FedAPI: active override row found
+    FedAPI-->>FedAPI: return empty Mono → 404\n(even if fragment is public + enabled + circuit-closed)
+
+    AdminBff->>FedAPI: clearScopeBySource(source) — lift suspension
+    FedAPI->>DB: UPDATE cleared_at = now()\nWHERE reason = source (only this suspension's rows)
+    Note over DB: A different manual scope=user kill\n(NULL or different reason) is not touched.
+```
 
 - **`OverrideService.applyUserScope(ownerUsername, action, setBy, source)`** writes
   a `scope='user'` `federation_override` row **directly via the repository** — no
@@ -404,6 +470,24 @@ cryptographically-validated **issuer** (`iss`) is the trustworthy tenant
 discriminator. Domain scoping is the canonical, adversarially-verified gateway
 code copied verbatim (package-adjusted) into this BFF so it derives a token's
 brand **the exact same way the gateway does**:
+
+```mermaid
+flowchart TB
+    JWT["Incoming JWT\n(already signature-validated by gateway)"] --> CA["CasdoorAuthorities converter"]
+    CA --> R1["ROLE_USER floor"]
+    CA --> R2["roles[] → ROLE_UPPER"]
+    CA --> R3["permissions[] verbatim\n(EXCEPT entries starting with\nROLE_ or DOMAIN_ are dropped\n→ authority-injection defence)"]
+    CA --> R4["isAdmin=true → ROLE_ADMIN\n(legacy claim)"]
+    CA --> R5["iss → DomainRegistry\n→ exactly one DOMAIN_x"]
+
+    R5 --> DR["DomainRegistry\niss→domain map\n(single-issuer: DOMAIN_default\nmulti-brand: app.tenancy.issuers CSV)"]
+    DR -- "unknown iss" --> REJECT["401 (fail-closed)\nbefore any authority emitted"]
+    DR -- "known iss" --> DS["DomainScope\nper-request predicate"]
+
+    DS -- "SUPERADMIN" --> ALL["No predicate → cross-domain\n(sees/mutates all brands)"]
+    DS -- "normal principal" --> PIN["Pinned to issuer-derived domain\n(DB finders WHERE domain = DOMAIN_x)"]
+    DS -- "unresolvable iss" --> ND["NO_DOMAIN sentinel\n(matches no row → fail-closed)"]
+```
 
 - **`CasdoorAuthorities`** (single converter shared by the single-issuer and the
   multi-issuer decoder paths) emits: `ROLE_USER` floor + `roles → ROLE_<UPPER>` +

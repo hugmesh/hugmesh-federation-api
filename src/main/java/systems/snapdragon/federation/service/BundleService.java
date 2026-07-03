@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
@@ -708,7 +709,7 @@ public class BundleService {
     private Mono<Resource> readEntryFileOr404(UserModule m, String slug) {
         String entry = (m.getEntryFile() == null || m.getEntryFile().isBlank())
                 ? "remoteEntry.json" : m.getEntryFile();
-        return Mono.fromCallable(() -> java.util.Optional.ofNullable(storage.read(m.getVersionDir(), entry)))
+        return Mono.fromCallable(() -> Optional.ofNullable(storage.read(m.getVersionDir(), entry)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(opt -> opt
                         .<Mono<Resource>>map(Mono::just)

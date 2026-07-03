@@ -147,9 +147,15 @@ public class S3BundleStorage implements BundleStorage {
         if (dir == null || !Files.exists(dir)) return;
         try (var stream = Files.walk(dir)) {
             stream.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try { Files.deleteIfExists(p); }
-                catch (IOException ignored) {}
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    log.debug("[bundle-storage:s3] failed to delete temp path {} during recursive cleanup: {}",
+                            p, e.toString());
+                }
             });
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            log.debug("[bundle-storage:s3] failed to walk temp dir {} during recursive cleanup: {}", dir, e.toString());
+        }
     }
 }
