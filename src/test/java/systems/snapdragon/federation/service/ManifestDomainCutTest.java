@@ -53,7 +53,7 @@ class ManifestDomainCutTest {
 
     private static ManifestCache noopCache() {
         ManifestCache cache = mock(ManifestCache.class);
-        when(cache.put(any())).thenReturn(Mono.empty());
+        when(cache.put(any(), any())).thenReturn(Mono.empty());
         return cache;
     }
 
@@ -116,10 +116,11 @@ class ManifestDomainCutTest {
                 .containsExactly("admin");
     }
 
-    // CROSS-USER: the cache write-through is suppressed for a NON-default domain so a
-    // brand-X render never poisons the canonical default public cache.
+    // CROSS-USER (per-brand cache key): a NON-default domain's public-safe render
+    // DOES write through, but ONLY under its OWN brandx key — never brand-agnostic,
+    // never the default key.
     @Test
-    void nonDefaultDomain_doesNotWriteThroughCache() {
+    void nonDefaultDomain_writesThroughCache_underItsOwnDomainKey() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
         FederationOverrideRepository ovr = mock(FederationOverrideRepository.class);
         when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", "brandx"))
@@ -130,12 +131,13 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, cache);
         svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("brandx")).block();
-        verify(cache, never()).put(any());
+        verify(cache).put(eq("brandx"), any());
+        verify(cache, never()).put(eq("default"), any());
     }
 
-    // The DEFAULT-domain public render still writes through (back-compat cache rule).
+    // The DEFAULT-domain public render still writes through, under the "default" key.
     @Test
-    void defaultDomain_publicRender_writesThroughCache() {
+    void defaultDomain_publicRender_writesThroughCache_underTheDefaultKey() {
         FederationModuleRepository repo = mock(FederationModuleRepository.class);
         FederationOverrideRepository ovr = mock(FederationOverrideRepository.class);
         when(repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", "default"))
@@ -146,7 +148,7 @@ class ManifestDomainCutTest {
 
         ManifestService svc = new ManifestService(repo, ovr, cache);
         svc.render(Set.of("ROLE_USER"), PrincipalDomain.forDomain("default")).block();
-        verify(cache).put(any());
+        verify(cache).put(eq("default"), any());
     }
 
     // CROSS-USER: the internal-visibility cut is ORTHOGONAL to the domain cut — a

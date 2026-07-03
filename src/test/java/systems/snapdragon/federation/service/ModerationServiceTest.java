@@ -53,7 +53,7 @@ class ModerationServiceTest {
     private final ManifestCache cache = mock(ManifestCache.class);
 
     private ModerationService service() {
-        when(cache.invalidate()).thenReturn(Mono.empty());
+        when(cache.invalidate(any())).thenReturn(Mono.empty());
         return new ModerationService(requests, new OverrideService(overrideRepo, moduleRepo, cache));
     }
 
@@ -92,8 +92,9 @@ class ModerationServiceTest {
         assertThat(row.getReason()).isEqualTo("moderation_request:7"); // per-request source tag
         assertThat(row.getDomain()).isEqualTo("brandx");              // the decided row's brand
         assertThat(row.getClearedAt()).isNull();                      // ACTIVE
-        // The just-removed user's modules must never be served stale.
-        verify(cache).invalidate();
+        // The just-removed user's modules must never be served stale -- scoped to
+        // the decided row's OWN domain (per-brand cache key), never another brand's.
+        verify(cache).invalidate("brandx");
         // Direct scope write — no module lookup / mutation (works when the target
         // never published a module).
         verifyNoInteractions(moduleRepo);

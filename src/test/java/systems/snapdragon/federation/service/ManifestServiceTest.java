@@ -84,7 +84,7 @@ class ManifestServiceTest {
     @SuppressWarnings("unchecked")
     private static ManifestCache noopCache() {
         ManifestCache cache = mock(ManifestCache.class);
-        when(cache.put(any())).thenReturn(Mono.empty());
+        when(cache.put(any(), any())).thenReturn(Mono.empty());
         return cache;
     }
 
@@ -156,7 +156,7 @@ class ManifestServiceTest {
         ManifestService svc = new ManifestService(repo, noScopeOverrides(), cache);
         // Non-admin (public) render writes through.
         svc.render(Set.of("ROLE_USER")).block();
-        verify(cache).put(any());
+        verify(cache).put(eq("default"), any());
     }
 
     /**
@@ -323,7 +323,7 @@ class ManifestServiceTest {
 
         // The cache contract holds: the public render still writes through, and the
         // cached body is the empty (scope-filtered) public-safe view.
-        verify(cache).put(any());
+        verify(cache).put(eq("default"), any());
     }
 
     @Test
@@ -338,7 +338,7 @@ class ManifestServiceTest {
         FederationManifestDto manifest = svc.render(Set.of("ROLE_ADMIN")).block();
         assertThat(manifest.remotes()).isEmpty();
         // Admin render does NOT write through (unchanged cache rule).
-        verify(cache, never()).put(any());
+        verify(cache, never()).put(any(), any());
     }
 
     @Test

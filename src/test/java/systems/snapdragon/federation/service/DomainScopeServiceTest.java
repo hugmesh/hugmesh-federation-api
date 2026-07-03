@@ -169,7 +169,7 @@ class DomainScopeServiceTest {
         private final FederationModuleRepository modules = mock(FederationModuleRepository.class);
         private final ManifestCache cache = mock(ManifestCache.class);
         private OverrideService svc() {
-            when(cache.invalidate()).thenReturn(Mono.empty());
+            when(cache.invalidate(any())).thenReturn(Mono.empty());
             return new OverrideService(overrides, modules, cache);
         }
 

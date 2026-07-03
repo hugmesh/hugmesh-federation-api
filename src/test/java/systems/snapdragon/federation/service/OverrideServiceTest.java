@@ -43,8 +43,8 @@ class OverrideServiceTest {
     /** A ManifestCache stub whose invalidate()/put() are best-effort no-ops. */
     private static ManifestCache noopCache() {
         ManifestCache cache = mock(ManifestCache.class);
-        when(cache.invalidate()).thenReturn(Mono.empty());
-        when(cache.put(any())).thenReturn(Mono.empty());
+        when(cache.invalidate(any())).thenReturn(Mono.empty());
+        when(cache.put(any(), any())).thenReturn(Mono.empty());
         return cache;
     }
 
@@ -230,8 +230,9 @@ class OverrideServiceTest {
         assertThat(row.getClearedAt()).isNull();                 // ACTIVE
         assertThat(row.getTs()).isNotNull();
 
-        // The just-banned profile must never be served stale -> cache invalidated.
-        verify(cache).invalidate();
+        // The just-banned profile must never be served stale -> cache invalidated,
+        // scoped to the saved row's OWN domain (the back-compat overload lands in "default").
+        verify(cache).invalidate("default");
     }
 
     @Test
@@ -272,7 +273,8 @@ class OverrideServiceTest {
         verify(overrides).findByReasonAndClearedAtIsNull("access_suspension:42");
         verify(overrides, never()).findByScopeAndTargetAndClearedAtIsNull(any(), any());
         assertThat(saved.getValue().getClearedAt()).isNotNull(); // rearmed
-        verify(cache).invalidate();
+        // mine carries no explicit domain (legacy row) -> normalises to "default".
+        verify(cache).invalidate("default");
     }
 
     @Test
@@ -333,7 +335,8 @@ class OverrideServiceTest {
         verify(overrides).findByReasonAndClearedAtIsNullAndDomain("access_suspension:42", "brand-a");
         verify(overrides, never()).findByReasonAndClearedAtIsNull(any());
         assertThat(saved.getValue().getClearedAt()).isNotNull(); // rearmed
-        verify(cache).invalidate();
+        // The cleared row carries domain="brand-a" -> invalidate ONLY brand-a's key.
+        verify(cache).invalidate("brand-a");
     }
 
     @Test

@@ -107,11 +107,13 @@ import java.util.Set;
  *                                         │  FederationManifestDto
  *                                         ▼
  *  ┌─ cacheIfPublicSafe ─────────────────────────────────────────────────────┐
- *  │  write-through to ManifestCache ONLY when all three hold:              │
+ *  │  write-through to ManifestCache, KEYED BY domain, ONLY when both hold:  │
  *  │    · !canSeeInternal  (no internal rows in the result)                 │
  *  │    · !superadmin      (not the cross-domain SUPERADMIN superset)       │
- *  │    · domain = "default"  (the canonical single-brand / legacy view)   │
- *  │  Any other render is returned directly — cache is never touched.       │
+ *  │  Any brand's public-safe render is cacheable — under ITS OWN key — not  │
+ *  │  just "default" (per-brand cache key). Any other render (internal-      │
+ *  │  bearing or the SUPERADMIN superset) is returned directly — cache is    │
+ *  │  never touched.                                                         │
  *  └──────────────────────────────────────┬──────────────────────────────────┘
  *                                         │
  *                                         ▼
@@ -125,12 +127,13 @@ import java.util.Set;
  * {@link systems.snapdragon.federation.cache.CassandraManifestCache
  * CassandraManifestCache} or a no-op) so remote-fragment pods and CDN edge
  * pollers can serve a stale-but-valid view during a brief Postgres blip.
- * Only the <em>public-safe DEFAULT-domain</em> view is ever cached; internal
- * rows, the SUPERADMIN cross-brand superset, and non-default-brand renders
- * bypass the cache entirely, so an anonymous poller can never be served
- * elevated or cross-brand content from a stale hit. Cache failure is swallowed
- * (implementation contract: best-effort, never throws); the authoritative
- * Postgres render is always returned.
+ * <b>Per-brand cache key:</b> ANY brand's <em>public-safe</em> view is cached,
+ * but ONLY under that brand's own {@code domain} key — a brand-B poller can
+ * never be served brand-A's cached body. Internal rows and the SUPERADMIN
+ * cross-brand superset bypass the cache entirely (under any key), so an
+ * anonymous poller can never be served elevated or cross-brand content from a
+ * stale hit. Cache failure is swallowed (implementation contract: best-effort,
+ * never throws); the authoritative Postgres render is always returned.
  *
  * <h2>Scope-override honest limitation ({@code scope=role})</h2>
  *
@@ -254,20 +257,21 @@ public class ManifestService {
                 ? repo.findAllByEnabledTrueAndCircuitStateOrderByKindAscSlugAsc("closed")
                 : repo.findAllByEnabledTrueAndCircuitStateAndDomainOrderByKindAscSlugAsc("closed", domain);
 
-        // Whether THIS render may be written through to the shared cache: only the
-        // public-safe DEFAULT-domain view (no internal rows, no cross-domain superset)
+        // Whether THIS render may be written through to the shared cache: only a
+        // public-safe view (no internal rows, no cross-domain SUPERADMIN superset)
         // is cacheable, so a tokenless poller never receives internal or cross-brand
-        // remotes.
-        boolean cacheable = isPublicSafeDefaultRender(canSeeInternal, superadmin, domain);
+        // remotes. ANY brand qualifies — see the per-brand cache key on cacheIfPublicSafe.
+        boolean cacheable = isPublicSafeRender(canSeeInternal, superadmin);
 
         // Linear pipeline:
         //   1. load the active scope-override set once,
         //   2. filter + assemble modules into a manifest against it,
-        //   3. write-through the cache only when this render is public-safe.
+        //   3. write-through the cache (keyed by domain) only when this render is
+        //      public-safe.
         return activeScope
                 .collectList()
                 .flatMap(active -> assembleManifest(modules, active, canSeeInternal))
-                .flatMap(manifest -> cacheIfPublicSafe(manifest, cacheable));
+                .flatMap(manifest -> cacheIfPublicSafe(manifest, cacheable, domain));
     }
 
     // -------------------------------------------------------------------------
@@ -319,26 +323,30 @@ public class ManifestService {
     }
 
     /**
-     * Best-effort write-through: a public-safe DEFAULT-domain render is stored so
-     * a tokenless poller / CDN edge can serve it.  Every other render —
-     * internal-bearing, SUPERADMIN cross-domain, or a brand-specific view — is
-     * returned WITHOUT touching the cache so it can never leak privileged or
-     * cross-brand content.
+     * Best-effort write-through: a public-safe render for {@code domain} is stored
+     * UNDER THAT DOMAIN'S OWN cache key so a tokenless poller / CDN edge can serve
+     * it. Every other render — internal-bearing or the SUPERADMIN cross-domain
+     * superset — is returned WITHOUT touching the cache so it can never leak
+     * privileged or cross-brand content.
      *
-     * <p>A per-brand cache key is a later enhancement; until then only the
-     * canonical default public view is ever cached.  Cache failure is swallowed
+     * <p>Per-brand cache key: {@code domain} is threaded straight into
+     * {@link ManifestCache#put}, so brand-A and brand-B renders occupy distinct
+     * cache rows and can never shadow one another. Cache failure is swallowed
      * inside {@link ManifestCache} (implementation contract: best-effort, never
      * throws), so a cache outage never breaks the read path.
      *
      * @param manifest  the freshly rendered manifest to (maybe) cache
      * @param cacheable {@code true} iff this render is public-safe (see
-     *                  {@link #isPublicSafeDefaultRender})
+     *                  {@link #isPublicSafeRender})
+     * @param domain    the resolved domain this render targeted — the cache key
+     *                  when {@code cacheable}
      * @return a {@code Mono} emitting {@code manifest} after the optional cache
      *         write completes, or immediately when not cacheable
      */
-    private Mono<FederationManifestDto> cacheIfPublicSafe(FederationManifestDto manifest, boolean cacheable) {
+    private Mono<FederationManifestDto> cacheIfPublicSafe(FederationManifestDto manifest, boolean cacheable,
+                                                           String domain) {
         if (cacheable) {
-            return cache.put(manifest).thenReturn(manifest);
+            return cache.put(domain, manifest).thenReturn(manifest);
         }
         return Mono.just(manifest);
     }
@@ -348,29 +356,28 @@ public class ManifestService {
     // -------------------------------------------------------------------------
 
     /**
-     * Returns {@code true} iff this render may be written to the shared cache.
+     * Returns {@code true} iff this render may be written to the shared cache
+     * (under its own domain's key — see {@link #cacheIfPublicSafe}).
      * A render is public-safe when:
      * <ul>
      *   <li>it carries no {@code visibility='internal'} rows
-     *       ({@code !canSeeInternal}),</li>
+     *       ({@code !canSeeInternal}), and</li>
      *   <li>it is not the SUPERADMIN cross-domain superset
-     *       ({@code !superadmin}), and</li>
-     *   <li>it targets the canonical DEFAULT domain.</li>
+     *       ({@code !superadmin}).</li>
      * </ul>
-     * Violating any condition risks poisoning the cache for anonymous pollers
-     * with elevated or cross-brand content.
+     * ANY brand's domain qualifies — the per-brand cache key means a brand-B
+     * public render can be cached under brand-B's own row without ever being
+     * confused with brand-A's. Violating either condition risks poisoning the
+     * cache for anonymous pollers with elevated or cross-brand content.
      *
      * @param canSeeInternal {@code true} when the caller holds {@code ROLE_ADMIN},
      *                       {@code ROLE_INTERNAL}, or {@code ROLE_SUPERADMIN}
      * @param superadmin     {@code true} when the caller is the cross-domain
      *                       infra role
-     * @param domain         the resolved domain for this render
      * @return {@code true} iff the rendered manifest is safe to cache publicly
      */
-    private static boolean isPublicSafeDefaultRender(boolean canSeeInternal, boolean superadmin, String domain) {
-        return !canSeeInternal
-                && !superadmin
-                && PrincipalDomain.forDomain("default").domain().equals(domain);
+    private static boolean isPublicSafeRender(boolean canSeeInternal, boolean superadmin) {
+        return !canSeeInternal && !superadmin;
     }
 
     /**

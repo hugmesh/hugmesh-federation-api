@@ -89,8 +89,11 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  *       (called when the suspension lifts/expires) rearms ONLY the row(s) that
  *       suspension wrote — never an unrelated manual scope=user kill an admin
  *       applied separately (which carries a NULL / different reason).</li>
- *   <li><b>Cache invalidation.</b> Both mutate {@link ManifestCache#invalidate()}
- *       so a just-banned profile is never served from a stale cached manifest.</li>
+ *   <li><b>Cache invalidation.</b> Both invalidate {@link ManifestCache} scoped to
+ *       the AFFECTED domain's OWN key (per-brand cache key — see
+ *       {@link ManifestCache#invalidate}) so a just-banned profile is never served
+ *       from a stale cached manifest, without touching any other brand's cache
+ *       row.</li>
  *   <li><b>Fail-fast.</b> Both wrap the direct-repo write in
  *       {@code @CircuitBreaker(name = "federationOverride")}; the durable row is
  *       the source of truth, so the read path converges once it lands — the breaker
@@ -528,8 +531,10 @@ public class OverrideService {
         return overrides.save(o)
                 // Invalidate AFTER the durable row lands so the next manifest poll
                 // re-renders from Postgres (which now excludes the banned owner's
-                // modules) instead of serving a stale cached body.
-                .flatMap(saved -> cache.invalidate().thenReturn(saved));
+                // modules) instead of serving a stale cached body. Scoped to the
+                // SAVED row's own domain (per-brand cache key) so a brand-B ban
+                // never touches brand-A's cached manifest.
+                .flatMap(saved -> cache.invalidate(saved.getDomain()).thenReturn(saved));
     }
 
     /**
@@ -613,10 +618,16 @@ public class OverrideService {
                     o.setClearedAt(now);
                     return overrides.save(o);
                 })
-                .count()
-                // Only touch the cache when we actually cleared something, but the
-                // invalidate is cheap + best-effort either way.
-                .flatMap(n -> cache.invalidate().thenReturn(n));
+                .collectList()
+                // Invalidate ONLY the domain(s) actually touched (per-brand cache key) —
+                // a SUPERADMIN-wide clear that only matched brand-B rows must never
+                // invalidate brand-A's still-valid cached manifest. A pre-026 NULL
+                // domain (legacy row) normalises to "default", mirroring matchesDomain.
+                .flatMap(saved -> Flux.fromIterable(saved)
+                        .map(o -> o.getDomain() == null ? "default" : o.getDomain())
+                        .distinct()
+                        .flatMap(cache::invalidate)
+                        .then(Mono.just((long) saved.size())));
     }
 
     // ----- Helpers -----

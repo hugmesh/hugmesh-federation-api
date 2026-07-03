@@ -497,18 +497,34 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   from the publishing principal's issuer-derived `DOMAIN_<x>` at write time
   (`BundleService.put`); SUPERADMIN un-pinned.
 
-### A note on the JSON columns (honest constraint)
+### A note on the JSON columns (honest constraint — corrected)
 
-Spring Data R2DBC ships no JSONB codec, so — exactly as the reference federation
-engine does — `metadata` / `manifest_json` are mapped to **String** entity fields.
-The changelog uses a `${json.type}` property: **`jsonb` on Postgres**, **`clob` on
-the H2 slice-test DB** (r2dbc-h2 returns a real `jsonb` column as a `byte[]`, which
-would break the String mapping; `clob` reads back as String on both). Likewise
-`${str.type}` is `text` on Postgres but `varchar(1024)` on H2 (H2 refuses to
-index/UNIQUE a `CLOB`). The same changelog therefore applies on real Postgres and
-on the H2 PG-compat test DB. To move `metadata` to true `jsonb` semantics in prod
-later, wire a `byte[]`/`Json`→String R2DBC reading converter and
-`ALTER COLUMN … TYPE jsonb USING …::jsonb`.
+Spring Data R2DBC ships no first-class JSONB Java type, so — exactly as the
+reference federation engine does — `metadata` / `manifest_json` are mapped to
+**String** entity fields. The changelog uses a `${json.type}` property:
+**`jsonb` on Postgres**, **`clob` on the H2 slice-test DB** (H2 has no `jsonb`
+type; `clob` reads back as String on both, and matches how the H2 PG-compat
+profile behaves). Likewise `${str.type}` is `text` on Postgres but
+`varchar(1024)` on H2 (H2 refuses to index/UNIQUE a `CLOB`). The same changelog
+therefore applies on real Postgres and on the H2 PG-compat test DB.
+
+**The `metadata` / `manifest_json` columns are ALREADY real `jsonb` on
+Postgres — not `text`.** `${json.type}` has resolved to `jsonb` since the very
+first changeset that creates these columns (`010-federation-modules.xml`,
+`011-user-modules.xml`); there is no pending `ALTER COLUMN … TYPE jsonb`. The
+reading side needs no bespoke converter either: `R2dbcConvertersConfig` builds
+its custom-conversions list from `dialect.getConverters()`, and Spring Data
+R2DBC's `PostgresDialect` ships a `Json→String` reading converter out of the
+box, so a `jsonb` column decodes straight to the entity's `String` field with
+zero extra code here. The write side round-trips correctly too — PostgreSQL's
+extended query protocol infers an unspecified bind parameter's type from the
+target column (`jsonb`), so a plain `String` write binds without an explicit
+cast or `io.r2dbc.postgresql.codec.Json` wrapper. **Live-verified** against the
+running `federation-db` container's real Postgres (not just the H2 slice
+tests): `\d federation_modules` shows `metadata | jsonb`, and a parameterized
+insert/read-back round-trip of a JSON string through an unspecified-type bind
+parameter (mirroring R2DBC's own binding semantics) confirmed the write path
+works with no explicit cast.
 
 ## Security
 
@@ -565,6 +581,16 @@ admin-bff's `CassandraRouteMirror`): lazy/gated `CqlSession`, blocking calls on
 (`app.manifest-cache.cassandra.enabled=false`) → the `NoopManifestCache` wins and
 the read path always renders from Postgres. Cassandra auto-config is excluded so
 startup never depends on a reachable cluster.
+
+**Per-brand cache key.** ✅ **Shipped.** Every `ManifestCache` operation
+(`put`/`get`/`invalidate`) is keyed by `domain` — `CassandraManifestCache` stores
+each brand's manifest under its own Cassandra partition key
+(`"manifest:" + domain`, see `CassandraManifestCache.key`). `ManifestService`
+write-throughs ANY brand's public-safe render (no internal rows, not the
+SUPERADMIN cross-domain superset) under that brand's OWN key — not just the
+`"default"` domain as before — so a brand-B poller can never be served brand-A's
+cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
+`clearScopeBySource`) invalidates only brand-B's row.
 
 ## Build & test
 
@@ -640,9 +666,10 @@ Intentionally NOT implemented in the scaffold:
   rejected because the cached manifest stores a single public-safe view that
   per-caller filtering would poison. Consequence: a module with no `requiresRole`
   is unaffected by a `scope=role` kill.
-- **Per-brand manifest cache key.** Only the canonical public-safe default-domain
-  view is cached; a brand-specific / superadmin cross-domain render always reads
-  Postgres. A per-domain cache key is a later enhancement.
+- ~~**Per-brand manifest cache key.**~~ **No longer deferred — ✅ shipped.**
+  `ManifestCache` is keyed by `domain`; any brand's public-safe render is cached
+  under its own key (the SUPERADMIN cross-domain superset is still never
+  cached, under any key). See *Manifest cache*.
 - **Cassandra cache schema bootstrap.** The cache assumes
   `<keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)`
   exists (created by the cluster init CQL); the service does not create it.
@@ -693,10 +720,13 @@ Within this repo (detail in *Deferred / stubbed*):
   `slug=profile-<username>` fragment row from their own bundle. The vanity
   *resolve* is shipped; the cross-service *publish* trigger (user-bff
   `ProfileService.save`) is not wired.
-- 🔭 **Per-brand manifest cache key** and a **true JSONB `metadata` column**
-  (`ALTER COLUMN … TYPE jsonb` + an R2DBC reading converter). Today only the
-  public-safe default-domain manifest view is cached; brand-specific / superadmin
-  renders always read Postgres.
+- ~~🔭 Per-brand manifest cache key and a true JSONB `metadata` column~~ **No
+  longer roadmap — ✅ both shipped / already true.** The cache is now keyed by
+  `domain` (see *Manifest cache*). The JSONB half of this bullet was stale
+  documentation: `metadata` / `manifest_json` have been real Postgres `jsonb`
+  columns since their first changeset, with the R2DBC reading conversion
+  already covered by `PostgresDialect`'s built-in converter — see *A note on
+  the JSON columns* (corrected).
 
 Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
 

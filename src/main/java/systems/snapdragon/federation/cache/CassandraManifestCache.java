@@ -31,9 +31,10 @@ import java.security.KeyStore;
  * path.
  *
  * <p>Active ONLY when {@code app.manifest-cache.cassandra.enabled=true} (default
- * false). The rendered manifest is stored as a single JSON blob under a fixed
- * partition key in
- * {@code <keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)}.
+ * false). The rendered manifest is stored as a single JSON blob under a
+ * PER-DOMAIN partition key ({@code "manifest:" + domain}, see {@link #key}) in
+ * {@code <keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)},
+ * so each brand's public-safe render is cached under its own row.
  *
  * <p><b>Ships-dark CQL auth + TLS (HELD until the Cassandra cluster is secured).</b>
  * Two NESTED flags, each defaulting OFF, layer credentials and SSL onto the
@@ -62,7 +63,10 @@ import java.security.KeyStore;
 public class CassandraManifestCache implements ManifestCache {
 
     private static final Logger log = LoggerFactory.getLogger(CassandraManifestCache.class);
-    private static final String KEY = "current";
+
+    /** Fixed prefix so the per-domain partition key can never collide with a
+     *  differently-shaped row a future table co-tenant might add. */
+    private static final String KEY_PREFIX = "manifest:";
 
     private final String contactPoint;
     private final String localDc;
@@ -207,60 +211,69 @@ public class CassandraManifestCache implements ManifestCache {
     }
 
     @Override
-    public Mono<Void> put(FederationManifestDto manifest) {
+    public Mono<Void> put(String domain, FederationManifestDto manifest) {
         // Offload the blocking Cassandra write to boundedElastic; swallow failures so
         // a missing Cassandra never blocks the Postgres-served manifest read path.
-        return Mono.<Void>fromRunnable(() -> executePut(manifest))
+        return Mono.<Void>fromRunnable(() -> executePut(domain, manifest))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorResume(e -> {
-                    log.warn("[manifest-cache] best-effort put failed: {} (read path still serves from Postgres)",
-                            e.toString());
+                    log.warn("[manifest-cache] best-effort put({}) failed: {} (read path still serves from Postgres)",
+                            domain, e.toString());
                     return Mono.empty();
                 }).then();
     }
 
-    /** Serialize {@code manifest} to JSON and upsert it into Cassandra synchronously. */
-    private void executePut(FederationManifestDto manifest) {
+    /** Serialize {@code manifest} to JSON and upsert it into Cassandra under {@code domain}'s
+     *  partition key, synchronously. */
+    private void executePut(String domain, FederationManifestDto manifest) {
         try {
             String body = mapper.writeValueAsString(manifest);
             session().execute(SimpleStatement.builder(
                     "INSERT INTO federation_manifest (id, body, updated_at) "
                     + "VALUES (?, ?, toTimestamp(now()))")
-                    .addPositionalValues(KEY, body).build());
+                    .addPositionalValues(key(domain), body).build());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     @Override
-    public Mono<FederationManifestDto> get() {
+    public Mono<FederationManifestDto> get(String domain) {
         return Mono.fromCallable(() -> {
             Row row = session().execute(SimpleStatement.builder(
                     "SELECT body FROM federation_manifest WHERE id = ?")
-                    .addPositionalValue(KEY).build()).one();
+                    .addPositionalValue(key(domain)).build()).one();
             if (row == null) return null;
             String body = row.getString("body");
             if (body == null || body.isBlank()) return null;
             return mapper.readValue(body, FederationManifestDto.class);
         }).subscribeOn(Schedulers.boundedElastic())
           .onErrorResume(e -> {
-              log.warn("[manifest-cache] best-effort get failed: {} (rendering from Postgres)", e.toString());
+              log.warn("[manifest-cache] best-effort get({}) failed: {} (rendering from Postgres)",
+                      domain, e.toString());
               return Mono.empty();
           });
     }
 
     @Override
-    public Mono<Void> invalidate() {
+    public Mono<Void> invalidate(String domain) {
         return Mono.<Void>fromRunnable(() ->
                 session().execute(SimpleStatement.builder(
                         "DELETE FROM federation_manifest WHERE id = ?")
-                        .addPositionalValue(KEY).build()))
+                        .addPositionalValue(key(domain)).build()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorResume(e -> {
-                    log.warn("[manifest-cache] best-effort invalidate failed: {} "
-                            + "(Postgres render already excludes the banned modules)", e.toString());
+                    log.warn("[manifest-cache] best-effort invalidate({}) failed: {} "
+                            + "(Postgres render already excludes the banned modules)", domain, e.toString());
                     return Mono.empty();
                 }).then();
+    }
+
+    /** The per-domain Cassandra partition key. A null/blank domain falls back to
+     *  {@code "default"} — mirrors {@code PrincipalDomain.forDomain}'s own
+     *  null-safety so a caller can never accidentally key onto a blank partition. */
+    static String key(String domain) {
+        return KEY_PREFIX + (domain == null || domain.isBlank() ? "default" : domain);
     }
 
     @Override
