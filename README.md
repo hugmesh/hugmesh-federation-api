@@ -192,6 +192,8 @@ privileged surface in every brand.
 | `/capabilities` | GET | **public (no JWT)** | **Public install-state projection** — `{slug, installed, mountAt, requiresRole}` per registered module. The list a logged-out / non-admin host reads to grey-out optional services. Narrow + caller-independent (no internal locator/detail). |
 | `/vanity/{username}` | GET | **public (no JWT)** | **Vanity-subdomain resolve.** Returns the user's PUBLIC profile-fragment descriptor (`remoteEntryUrl`, `contentHash`, `/_fragments/<slug>/<hash>/` path) iff a `slug=profile-<username>`, `kind=fragment`, `visibility=public`, enabled, circuit-closed, **non-suspended** module exists; else **404**. Never returns internal fragments. |
 | `/vanity` (+ `Host:` header) | GET | **public (no JWT)** | Same resolve, but the username is the **first DNS label** of the `Host` header (`alice.<domain>` → `alice`) so the gateway can forward the vanity host verbatim. |
+| `/vanity/{username}` | PUT | authenticated (owner-or-admin) | **Self-publish.** Upserts the caller's `profile-<username>` fragment (`visibility=public, enabled=true`) FROM their own already-uploaded `PUT /bundles/profile-<username>` bundle — `remoteEntryUrl`/`contentHash` are always derived server-side, never accepted from the request. 404 if no bundle is uploaded yet; 403 if `username` != caller's own JWT subject and the caller is not ROLE_ADMIN/SUPERADMIN; 400 if `username` is reserved/confusable. |
+| `/vanity/{username}` | DELETE | authenticated (owner-or-admin) | **Self-unpublish.** Flips the caller's fragment to `visibility=internal, enabled=false` (never deletes the row). Idempotent — a no-op if never published. |
 | `/username/{candidate}/availability` | GET | **ROLE_SERVICE / ADMIN (INTERNAL)** | Registration gate: collision / reserved / confusable check. An enumeration oracle (`matchedWith` names the colliding label) — **never public**. |
 | `/username/check` | POST | ROLE_SERVICE / ADMIN | Same check by request body. |
 | `/username/{candidate}/confusables` | GET | ROLE_ADMIN | Admin debug: the computed skeleton (+ any reserved match), no DB scan. |
@@ -609,6 +611,15 @@ Representative tests:
 - `CapabilityServiceTest` / `CapabilityEndpointTest` — the public projection.
 - `VanityServiceTest` / `VanityControllerTest` — the public profile resolve + the
   suspension 404.
+- `VanityPublishServiceTest` — the owner-scoped self-publish/unpublish WRITE path:
+  owner-or-admin gating, reserved/confusable rejection, the no-uploaded-bundle 404
+  (never a fabricated success), the upsert deriving `remoteEntryUrl`/`contentHash`
+  from the caller's own bundle, an existing circuit-break surviving a republish,
+  unpublish flipping to `internal`/disabled without deleting the row, AND a
+  republish refusing (409, never a silent re-enable) to override the admin
+  per-module kill-switch (`OverrideController` `action=unpublish`, which sets only
+  `enabled=false` and leaves `visibility=public`) — recovery from that state is
+  admin-only, via `POST /api/federation/overrides/{moduleSlug}/rearm`.
 - `UsernameAvailabilityServiceTest` / `UsernameSkeletonServiceTest` — the
   confusable gate.
 - `FederationModuleRepositoryTest`, `UserModuleRepositoryTest`,
@@ -673,25 +684,23 @@ Intentionally NOT implemented in the scaffold:
 - **Cassandra cache schema bootstrap.** The cache assumes
   `<keyspace>.federation_manifest (id text PRIMARY KEY, body text, updated_at timestamp)`
   exists (created by the cluster init CQL); the service does not create it.
-- **Vanity PUBLISH path (cross-service).** The vanity *resolve* (this repo) is
-  complete and gates on `visibility='public'`. What is **not** wired is the step
-  that *creates/marks* a user's `slug=profile-<username>`, `kind=fragment`,
-  `visibility=public` module when the user opts in:
-  - `snapdragon-user-bff-api` `ProfileService.save` persists
-    `user_profile.visibility` + `vanity_subdomain_enabled` but makes **no**
-    federation call — flipping those flags does **not** register/publish a fragment.
-  - `FederationApiClient` (user-bff-api) can already `PUT /bundles/{slug}` (a
-    `user_modules` bundle row), but a `user_modules` bundle row is **not** a
-    `federation_modules` registry row; registering one is `ROLE_ADMIN`-gated.
-
-  **The missing link:** on `ProfileService.save` when `visibility='public' &&
-  vanitySubdomainEnabled`, (1) publish the fragment bytes, then (2) **upsert the
-  `federation_modules` row** (`slug=profile-<username>`, `kind=fragment`,
-  `owner_user_id=<username>`, `visibility=public`, `content_hash`). Recommended:
-  add an **owner-scoped self-publish-profile** endpoint to federation (e.g. owner-
-  gated `PUT /vanity/{username}`) that upserts the module from the caller's own
-  bundle — keeps the admin registry CRUD admin-only. Symmetrically flip to
-  `visibility='internal'` / `enabled=false` when the user disables vanity.
+- ✅ **Vanity PUBLISH path (cross-service) — SHIPPED.** `VanityPublishService` +
+  `VanityController`'s `PUT`/`DELETE /vanity/{username}` are the owner-scoped
+  self-publish/unpublish write path: `PUT` upserts the caller's
+  `slug=profile-<username>`, `kind=fragment`, `visibility=public` module FROM
+  their own already-uploaded `user_modules` bundle for the same slug
+  (`remoteEntryUrl`/`contentHash` always derived server-side — never accepted
+  from the request, so a caller can never register a fragment pointing at bytes
+  they did not upload); `DELETE` symmetrically flips `visibility='internal'` /
+  `enabled=false` (never deletes the row). `PUT` fails closed with `409` instead
+  of silently re-enabling a row the admin per-module kill-switch
+  (`OverrideController` `action=unpublish`) suppressed — that state (row still
+  `visibility=public` but `enabled=false`, distinct from THIS service's own
+  unpublish which always moves `visibility` to `internal` in the same write) is
+  admin-recoverable ONLY, via `POST /api/federation/overrides/{moduleSlug}/rearm`.
+  See `VanityPublishServiceTest`.
+  `snapdragon-user-bff-api`'s `ProfileService.save` now calls this endpoint (via
+  `FederationApiClient`) when the user opts in/out — see that repo's README.
 - **Vanity SERVING.** The resolved `VanityProfileDto.fragmentPath`
   (`/_fragments/profile-<username>/<contentHash>/`) is served by the existing
   `snapdragon-remote-fragment` fleet (its sidecar polls `GET /manifest`, filters
@@ -715,11 +724,12 @@ Intentionally NOT implemented in the scaffold:
 
 Within this repo (detail in *Deferred / stubbed*):
 
-- 🔭 **Vanity PUBLISH path.** An owner-scoped self-publish-profile endpoint (e.g.
-  owner-gated `PUT /vanity/{username}`) that upserts a user's
-  `slug=profile-<username>` fragment row from their own bundle. The vanity
-  *resolve* is shipped; the cross-service *publish* trigger (user-bff
-  `ProfileService.save`) is not wired.
+- ~~🔭 Vanity PUBLISH path~~ **No longer roadmap — ✅ shipped.** An owner-scoped
+  `PUT /vanity/{username}` (+ unpublish) upserts a user's
+  `slug=profile-<username>` fragment row from their own bundle, republish
+  never silently clears an admin per-module kill-switch, and user-bff's
+  `ProfileService.save` wires the cross-service publish/unpublish trigger —
+  see *Vanity PUBLISH* above.
 - ~~🔭 Per-brand manifest cache key and a true JSONB `metadata` column~~ **No
   longer roadmap — ✅ both shipped / already true.** The cache is now keyed by
   `domain` (see *Manifest cache*). The JSONB half of this bullet was stale

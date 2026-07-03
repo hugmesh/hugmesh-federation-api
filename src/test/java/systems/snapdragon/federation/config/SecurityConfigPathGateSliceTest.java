@@ -98,6 +98,16 @@ class SecurityConfigPathGateSliceTest extends SecuritySliceSupport {
         client.get().uri("/api/federation/bundles/some-bundle").exchange().expectStatus().isUnauthorized();
     }
 
+    @Test
+    void anonymous_deniedOn_vanityPublish_writeMethods() {
+        // The vanity path rule (commonRoutes) is scoped to HttpMethod.GET ONLY —
+        // PUT (publish) and DELETE (unpublish) on the SAME path fall through to the
+        // anyExchange().authenticated() floor, so an anonymous caller can never
+        // publish/unpublish a vanity profile even though the GET resolve is public.
+        client.put().uri("/api/federation/vanity/alice").exchange().expectStatus().isUnauthorized();
+        client.delete().uri("/api/federation/vanity/alice").exchange().expectStatus().isUnauthorized();
+    }
+
     // ── UNKNOWN-ISSUER FAIL-CLOSED END-TO-END (PrincipalDomain never reached) ──────
 
     @Test

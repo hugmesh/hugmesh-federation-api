@@ -5,17 +5,28 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
+import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.VanityProfileDto;
+import systems.snapdragon.commons.security.DomainRegistry;
+import systems.snapdragon.commons.security.PrincipalDomain;
 import systems.snapdragon.federation.service.UsernameSkeletonService;
+import systems.snapdragon.federation.service.VanityPublishService;
 import systems.snapdragon.federation.service.VanityService;
 import systems.snapdragon.federation.web.ValidationPatterns;
 
@@ -94,9 +105,25 @@ public class VanityController {
      */
     private final UsernameSkeletonService skeletons;
 
-    public VanityController(VanityService vanity, UsernameSkeletonService skeletons) {
+    /**
+     * The owner-scoped self-publish/unpublish write service — backs
+     * {@code PUT}/{@code DELETE /api/federation/vanity/{username}} (see the
+     * <em>Vanity PUBLISH path</em> section of the README). Distinct from
+     * {@link #vanity} (the public READ service) so the public GET surface's
+     * security reasoning stays untouched by the authenticated write path.
+     */
+    private final VanityPublishService publish;
+
+    /** Resolves the caller's tenant scope from the validated JWT issuer, mirroring
+     *  every other authenticated write controller in this service. */
+    private final DomainRegistry domains;
+
+    public VanityController(VanityService vanity, UsernameSkeletonService skeletons,
+                            VanityPublishService publish, DomainRegistry domains) {
         this.vanity = vanity;
         this.skeletons = skeletons;
+        this.publish = publish;
+        this.domains = domains;
     }
 
     // -------------------------------------------------------------------------
@@ -185,6 +212,130 @@ public class VanityController {
                     HttpStatus.NOT_FOUND, "no vanity username in host: " + host));
         }
         return resolveLabel(label);
+    }
+
+    // -------------------------------------------------------------------------
+    // Owner-scoped self-publish / unpublish (AUTHENTICATED write path)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Optional request body for {@link #publish}. {@code displayName} is the only
+     * client-suppliable field — {@code remoteEntryUrl} / {@code contentHash} are
+     * ALWAYS derived server-side from the caller's own active bundle (see
+     * {@link VanityPublishService}), never accepted from the request, so a caller
+     * can never register a fragment pointing at bytes they did not upload.
+     */
+    public record PublishRequest(
+            @Size(max = 1024, message = "displayName must be at most 1024 chars") String displayName) {
+    }
+
+    @Operation(
+        summary = "Publish (or refresh) the CALLER'S OWN vanity profile fragment.",
+        description = """
+            Owner-scoped write: upserts the caller's <code>profile-&lt;username&gt;</code>
+            <code>federation_modules</code> row (<code>visibility=public,
+            enabled=true</code>) FROM their own already-uploaded
+            <code>user_modules</code> bundle for the same slug
+            (<code>PUT /api/federation/bundles/profile-&lt;username&gt;</code> —
+            upload the bundle bytes FIRST). <code>remoteEntryUrl</code> and
+            <code>contentHash</code> are always derived from that bundle server-side.
+
+            <h4>Caller-role access matrix</h4>
+            <table>
+              <tr><th>Caller</th><th>Result</th></tr>
+              <tr><td>Authenticated caller, <code>username</code> == own JWT subject</td>
+                  <td>Publishes/refreshes own profile fragment</td></tr>
+              <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
+                  <td>May publish on behalf of any username</td></tr>
+              <tr><td>Any other authenticated caller</td><td>403</td></tr>
+            </table>
+            """)
+    @ApiResponses({
+        @ApiResponse(responseCode = "200",
+            description = "Profile fragment published/refreshed and returned."),
+        @ApiResponse(responseCode = "400",
+            description = "username fails the DNS-label-token pattern, is a reserved platform "
+                + "name, or is confusable with one."),
+        @ApiResponse(responseCode = "401",
+            description = "Missing, expired, or invalid Casdoor JWT."),
+        @ApiResponse(responseCode = "403",
+            description = "username does not match the caller's own JWT subject and the caller "
+                + "does not hold ROLE_ADMIN or ROLE_SUPERADMIN."),
+        @ApiResponse(responseCode = "404",
+            description = "No active bundle uploaded yet for profile-<username> — "
+                + "PUT /api/federation/bundles/profile-<username> first."),
+        @ApiResponse(responseCode = "409",
+            description = "The existing profile-<username> fragment was administratively "
+                + "unpublished (admin kill-switch, enabled=false with visibility still public) — "
+                + "only an admin can restore it, via POST "
+                + "/api/federation/overrides/profile-<username>/rearm."),
+        @ApiResponse(responseCode = "500",
+            description = "Postgres error during the publish. Check server logs.")
+    })
+    @PutMapping("/{username}")
+    public Mono<FederationModule> publish(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable @Pattern(regexp = ValidationPatterns.USERNAME,
+                    message = "username must be a DNS-label token") String username,
+            @RequestBody(required = false) PublishRequest body) {
+        PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
+        String displayName = body == null ? null : body.displayName();
+        return adminMono().flatMap(admin ->
+                publish.publish(jwt.getSubject(), admin, username, displayName, scope));
+    }
+
+    @Operation(
+        summary = "Unpublish the CALLER'S OWN vanity profile fragment.",
+        description = """
+            Owner-scoped write: flips the caller's <code>profile-&lt;username&gt;</code>
+            fragment (if any) to <code>visibility=internal, enabled=false</code> — the
+            profile immediately stops resolving at the vanity host. The row is never
+            deleted (history + the confusable-skeleton grant survive for a future
+            republish). Idempotent: unpublishing a profile that was never published
+            is a no-op, not an error.
+
+            <h4>Caller-role access matrix</h4>
+            <table>
+              <tr><th>Caller</th><th>Result</th></tr>
+              <tr><td>Authenticated caller, <code>username</code> == own JWT subject</td>
+                  <td>Unpublishes own profile fragment</td></tr>
+              <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
+                  <td>May unpublish on behalf of any username</td></tr>
+              <tr><td>Any other authenticated caller</td><td>403</td></tr>
+            </table>
+            """)
+    @ApiResponses({
+        @ApiResponse(responseCode = "204",
+            description = "Profile fragment unpublished (or was never published); no body returned."),
+        @ApiResponse(responseCode = "401",
+            description = "Missing, expired, or invalid Casdoor JWT."),
+        @ApiResponse(responseCode = "403",
+            description = "username does not match the caller's own JWT subject and the caller "
+                + "does not hold ROLE_ADMIN or ROLE_SUPERADMIN."),
+        @ApiResponse(responseCode = "500",
+            description = "Postgres error during the unpublish. Check server logs.")
+    })
+    @DeleteMapping("/{username}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public Mono<Void> unpublish(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable @Pattern(regexp = ValidationPatterns.USERNAME,
+                    message = "username must be a DNS-label token") String username) {
+        return adminMono().flatMap(admin -> publish.unpublish(jwt.getSubject(), admin, username));
+    }
+
+    /**
+     * Whether the current caller holds {@code ROLE_ADMIN} or {@code ROLE_SUPERADMIN}
+     * (mirrors {@code BundleController#adminMono}, duplicated per-controller by this
+     * codebase's existing convention). Reads the reactive security context so it is
+     * safe to call on the WebFlux event loop without blocking.
+     */
+    private static Mono<Boolean> adminMono() {
+        return org.springframework.security.core.context.ReactiveSecurityContextHolder.getContext()
+                .map(ctx -> ctx.getAuthentication().getAuthorities().stream()
+                        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority())
+                                || "ROLE_SUPERADMIN".equals(a.getAuthority())))
+                .defaultIfEmpty(false);
     }
 
     // -------------------------------------------------------------------------
