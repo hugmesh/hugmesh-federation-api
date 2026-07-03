@@ -29,8 +29,11 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * <p>Every request moves through a fixed lifecycle:
  *
  * <ol>
- *   <li>{@link #submit} — a mod (or admin, or superadmin) opens a request; the
- *       row lands with {@code status = recommended}.</li>
+ *   <li>{@link #submit} — a mod (or admin, or superadmin) opens a request via
+ *       {@code POST /}; OR a plain platform participant (ROLE_MATRIX/MASTODON)
+ *       files an instance-block recommendation via the narrower, self-service
+ *       {@code POST /recommend-instance-block} (kind hardcoded there); either way
+ *       the row lands with {@code status = recommended}.</li>
  *   <li>{@link #refer}  — a mod escalates it to admins; {@code status} advances to
  *       {@code referred}.</li>
  *   <li>{@link #decide} — an admin (or superadmin) closes it with either
@@ -56,12 +59,16 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * and operates across all brands without a domain predicate.
  *
  * <pre>
- *  Role              │ list        │ submit      │ refer       │ decide
- *  ──────────────────┼─────────────┼─────────────┼─────────────┼──────────────
- *  ROLE_MOD          │ own domain  │ own domain  │ own domain  │ —
- *  ROLE_ADMIN        │ own domain  │ own domain  │ own domain  │ own domain
- *  ROLE_SUPERADMIN   │ ALL domains │ ALL domains │ ALL domains │ ALL domains
+ *  Role                  │ list        │ submit      │ refer       │ decide
+ *  ──────────────────────┼─────────────┼─────────────┼─────────────┼──────────────
+ *  ROLE_MOD              │ own domain  │ own domain  │ own domain  │ —
+ *  ROLE_ADMIN            │ own domain  │ own domain  │ own domain  │ own domain
+ *  ROLE_SUPERADMIN       │ ALL domains │ ALL domains │ ALL domains │ ALL domains
+ *  ROLE_MATRIX/MASTODON  │ —           │ own domain* │ —           │ —
  * </pre>
+ * <p>* ROLE_MATRIX/MASTODON's "submit" is NOT the {@code POST /} surface above — it
+ * is the separate, narrower {@code POST /recommend-instance-block} self-service
+ * path, {@code kind=instance-block} ONLY (server-hardcoded, never caller-chosen).
  *
  * @see systems.snapdragon.federation.controller.ModerationController
  * @see ModerationRequestRepository
@@ -141,12 +148,20 @@ public class ModerationService {
      * Opens a new moderation request in the caller's domain with
      * {@code status = recommended}.
      *
-     * <p>ROLE_MOD, ROLE_ADMIN, or ROLE_SUPERADMIN may submit.  The {@code domain}
-     * column is stamped from the caller's authenticated scope — never from the
-     * request body — so the row is visible only to staff of the same brand.  A
-     * ROLE_SUPERADMIN submit (no brand in scope) lands in {@code "default"}.
+     * <p>ROLE_MOD, ROLE_ADMIN, or ROLE_SUPERADMIN may submit via {@code POST /}; a
+     * plain platform participant (ROLE_MATRIX/ROLE_MASTODON) may ALSO reach this
+     * method via the narrower {@code POST /recommend-instance-block} self-service
+     * surface (kind hardcoded to {@code instance-block} there — see
+     * {@link systems.snapdragon.federation.controller.ModerationController#recommendInstanceBlock}).
+     * This method itself is role-agnostic; the caller-class gate lives entirely at
+     * the two API boundaries. The {@code domain} column is stamped from the
+     * caller's authenticated scope — never from the request body — so the row is
+     * visible only to staff of the same brand.  A ROLE_SUPERADMIN submit (no brand
+     * in scope) lands in {@code "default"}.
      *
-     * @param requester the mod's (or admin's) Casdoor subject, recorded as the
+     * @param requester the submitting principal's Casdoor subject (a mod/admin via
+     *                  {@code POST /}, or a plain platform participant via
+     *                  {@code POST /recommend-instance-block}), recorded as the
      *                  originator of the request
      * @param kind      the requested action vocabulary; must be
      *                  {@code instance-block} or {@code user-removal}

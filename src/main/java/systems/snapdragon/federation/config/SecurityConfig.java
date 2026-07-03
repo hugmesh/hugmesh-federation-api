@@ -61,7 +61,13 @@ import systems.snapdragon.commons.security.DomainRegistry;
  *   <li>module-write ({@code /api/federation/modules/**}), overrides
  *       ({@code /api/federation/overrides/**}) = ROLE_ADMIN or ROLE_SUPERADMIN;</li>
  *   <li>moderation ({@code /api/federation/moderation/**}) = ROLE_MOD/ADMIN/SUPERADMIN
- *       (method-security narrows decide to ROLE_ADMIN/SUPERADMIN);</li>
+ *       (method-security narrows decide to ROLE_ADMIN/SUPERADMIN); the self-service
+ *       sub-path ({@code POST /api/federation/moderation/recommend-instance-block})
+ *       is instead ROLE_MATRIX/MASTODON ONLY (no MOD/ADMIN/SUPERADMIN, no hierarchy
+ *       admits them here) — a plain platform participant FILING a recommendation,
+ *       never list/refer/decide. Declared BEFORE the mod-only catch-all so the more
+ *       specific rule wins (mirrors the {@code POST /findings} vs. {@code /findings/**}
+ *       ordering below);</li>
  *   <li>findings file ({@code POST /api/federation/findings}) = authenticated (a BFF
  *       files about the JWT subject's OWN content); findings reconcile read
  *       ({@code GET /api/federation/findings/resolved}) = ROLE_SERVICE/ADMIN/SUPERADMIN
@@ -177,6 +183,22 @@ public class SecurityConfig {
         // sees all — is enforced in the service/query layer, not here).
         ex.pathMatchers("/api/federation/modules/**").hasAnyRole("ADMIN", "SUPERADMIN");
         ex.pathMatchers("/api/federation/overrides/**").hasAnyRole("ADMIN", "SUPERADMIN");
+        // Self-service instance-block recommendation (the USER->MOD->ADMIN chain's
+        // FIRST hop): a plain platform participant (ROLE_MATRIX or ROLE_MASTODON —
+        // NOT a mod/admin) may FILE a recommendation through this ONE narrow
+        // sub-path. This is deliberately NOT hasAnyRole("MOD","ADMIN","SUPERADMIN")
+        // — staff already reach the general submit surface below, and there is no
+        // RoleHierarchy edge from MATRIX/MASTODON up to MOD, so widening the general
+        // /moderation/** gate itself would have been the wrong fix (it would also
+        // hand a plain platform user list/refer/decide on the mod queue). Declared
+        // BEFORE the mod-only catch-all (most-specific-first, mirrors the
+        // POST /findings vs. /findings/** ordering just below) so a MATRIX/MASTODON
+        // caller is not swallowed by the coarser rule. Method-security
+        // (@PreAuthorize on ModerationController.recommendInstanceBlock) re-checks
+        // the SAME two roles — defence-in-depth, same convention as decide's
+        // ADMIN/SUPERADMIN narrowing.
+        ex.pathMatchers(HttpMethod.POST, "/api/federation/moderation/recommend-instance-block")
+                .hasAnyRole("MATRIX", "MASTODON");
         // Moderation = mod or admin (decide is narrowed to admin by @PreAuthorize).
         // SUPERADMIN added as the cross-domain infra role.
         ex.pathMatchers("/api/federation/moderation/**").hasAnyRole("MOD", "ADMIN", "SUPERADMIN");

@@ -168,6 +168,50 @@ class SecurityConfigPathGateSliceTest extends SecuritySliceSupport {
         as(List.of("mod"), "/api/federation/moderation").exchange().expectStatus().isOk();
     }
 
+    // ── recommend-instance-block: the narrower MATRIX/MASTODON self-service path ──
+    // (root-cause fix: user-bff-api's POST /bff/user/recommend-instance-block used
+    // to forward a plain user's own JWT to the MOD-only submit surface above, which
+    // no RoleHierarchy edge could ever admit — see SecurityConfig's javadoc.)
+
+    private WebTestClient.RequestHeadersSpec<?> postAs(List<String> roles, String path) {
+        String token = brandX.mint("p-" + String.join("-", roles), roles);
+        return client.post().uri(path).header("Authorization", "Bearer " + token);
+    }
+
+    @Test
+    void matrix_allowedOn_recommendInstanceBlock() {
+        postAs(List.of("matrix"), "/api/federation/moderation/recommend-instance-block")
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void mastodon_allowedOn_recommendInstanceBlock() {
+        postAs(List.of("mastodon"), "/api/federation/moderation/recommend-instance-block")
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void user_forbiddenOn_recommendInstanceBlock() {
+        // A plain user (no platform role) never reaches even this narrower surface.
+        postAs(List.of("user"), "/api/federation/moderation/recommend-instance-block")
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void mod_forbiddenOn_recommendInstanceBlock_gateIsExactlyMatrixMastodon() {
+        // FAIL-CLOSED: proves the new path rule is EXACTLY ROLE_MATRIX/MASTODON, no
+        // wider — a MOD (who freely reaches the general /moderation/** surface) does
+        // NOT get an extra route in via this narrower one. Staff use POST / instead.
+        postAs(List.of("mod"), "/api/federation/moderation/recommend-instance-block")
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void anonymous_forbiddenOn_recommendInstanceBlock() {
+        client.post().uri("/api/federation/moderation/recommend-instance-block")
+                .exchange().expectStatus().isUnauthorized();
+    }
+
     @Test
     void admin_allowedOn_modules() {
         as(List.of("admin"), "/api/federation/modules").exchange().expectStatus().isOk();
@@ -230,6 +274,7 @@ class SecurityConfigPathGateSliceTest extends SecuritySliceSupport {
                 "/api/federation/vanity", "/api/federation/vanity/alice",
                 "/api/federation/modules", "/api/federation/overrides",
                 "/api/federation/moderation",
+                "/api/federation/moderation/recommend-instance-block",
                 "/api/federation/username/alice/availability",
                 "/api/federation/bundles/some-bundle",
         })

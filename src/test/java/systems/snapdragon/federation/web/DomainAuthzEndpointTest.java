@@ -10,6 +10,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import systems.snapdragon.federation.model.FederationModule;
 import systems.snapdragon.federation.model.FederationOverride;
 import systems.snapdragon.federation.model.ModerationRequest;
@@ -88,6 +89,90 @@ class DomainAuthzEndpointTest extends PostgresTestSupport {
     void mod_listsModeration_200() {
         stubReads();
         as("MOD").get().uri("/api/federation/moderation").exchange().expectStatus().isOk();
+    }
+
+    // ── recommend-instance-block: the narrower MATRIX/MASTODON self-service path ──
+    // (root-cause fix — see SecurityConfig / ModerationController javadoc: this used
+    // to be the ONLY route user-bff-api's recommend-instance-block feature had, and
+    // the mod-only submit surface's gate made it end-to-end unreachable.)
+
+    @Test
+    void matrix_recommendsInstanceBlock_200() {
+        when(moderation.submit(any(), any(), any(), any(), any())).thenReturn(Mono.just(new ModerationRequest()));
+        as("MATRIX").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\",\"reason\":\"spam\"}")
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void mastodon_recommendsInstanceBlock_200() {
+        when(moderation.submit(any(), any(), any(), any(), any())).thenReturn(Mono.just(new ModerationRequest()));
+        as("MASTODON").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\",\"reason\":\"spam\"}")
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void matrix_recommendInstanceBlock_kindIsHardcoded_neverCallerSupplied() {
+        // FAIL-CLOSED: even if a malicious/confused caller sneaks a "kind" field into
+        // the body, RecommendInstanceBlockRequest has no kind field to bind it to —
+        // the controller always calls submit(..., "instance-block", ...). Prove the
+        // service is invoked with the literal "instance-block" kind regardless.
+        when(moderation.submit(any(), any(), any(), any(), any())).thenReturn(Mono.just(new ModerationRequest()));
+        as("MATRIX").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\",\"reason\":\"spam\",\"kind\":\"user-removal\"}")
+                .exchange()
+                .expectStatus().isOk();
+        org.mockito.Mockito.verify(moderation).submit(any(), org.mockito.ArgumentMatchers.eq("instance-block"),
+                org.mockito.ArgumentMatchers.eq("evil.example"), any(), any());
+    }
+
+    @Test
+    void user_isDeniedRecommendInstanceBlock_403() {
+        // A plain USER (no platform role) never reaches even this narrower surface.
+        as("USER").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\"}")
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void mod_isDeniedRecommendInstanceBlock_403_gateIsExactlyMatrixMastodon() {
+        // FAIL-CLOSED: a MOD (who freely reaches the general moderation surface) does
+        // NOT get an extra route in via this narrower, platform-participant-only path.
+        as("MOD").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\"}")
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void admin_isDeniedRecommendInstanceBlock_403_gateIsExactlyMatrixMastodon() {
+        as("ADMIN").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\"}")
+                .exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void superadmin_isDeniedRecommendInstanceBlock_403_noHierarchyEdgeToPlatformRoles() {
+        // SUPERADMIN's RoleHierarchy edges only reach ADMIN/MOD/USER — NOT
+        // MATRIX/MASTODON (those are platform-participation flags, not a privilege
+        // tier) — so even the cross-domain infra role does not get an extra route in
+        // here. SUPERADMIN already has the general submit surface for this purpose.
+        as("SUPERADMIN").post().uri("/api/federation/moderation/recommend-instance-block")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"target\":\"evil.example\"}")
+                .exchange()
+                .expectStatus().isForbidden();
     }
 
     // ── SUPERADMIN: the cross-domain infra role reaches every privileged surface ──

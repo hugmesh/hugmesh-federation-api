@@ -51,6 +51,24 @@ import systems.snapdragon.federation.web.ValidationPatterns;
  * {@code ROLE_ADMIN} or {@code ROLE_SUPERADMIN}. This is defence-in-depth: both
  * gates must be passed.
  *
+ * <p><b>Exception — {@code POST /recommend-instance-block}</b>: this ONE sub-path is
+ * a narrower, self-service surface for a plain platform participant ({@code
+ * ROLE_MATRIX} or {@code ROLE_MASTODON}) — NOT a mod/admin — to FILE an
+ * instance-block recommendation (the chain's first hop: USER files -> MOD refers ->
+ * ADMIN decides). It is a distinct, more specific path/method rule (and a distinct
+ * {@code @PreAuthorize}) from the {@code hasAnyRole('MOD','ADMIN','SUPERADMIN')}
+ * gate that governs {@code submit}/{@code list}/{@code refer}/{@code decide} above.
+ * {@code kind} is HARDCODED server-side to {@code instance-block} on that path
+ * (never caller-supplied), so a platform-only caller can never use it to file a
+ * {@code user-removal} request, and it grants no list/refer/decide capability. See
+ * {@link #recommendInstanceBlock} and
+ * {@link systems.snapdragon.federation.config.SecurityConfig} for the full
+ * root-cause writeup: {@code snapdragon-user-bff-api}'s {@code POST
+ * /bff/user/recommend-instance-block} used to forward a plain user's own JWT
+ * straight into the mod-only {@code submit} surface, which no role hierarchy could
+ * ever admit — so the feature was end-to-end unreachable until this dedicated
+ * endpoint was added.
+ *
  * <h2>Domain scoping</h2>
  * <p>Every operation is DOMAIN-scoped from the validated JWT issuer via
  * {@link PrincipalDomain#resolve}. A per-domain mod/admin sees and acts ONLY on
@@ -95,6 +113,23 @@ public class ModerationController {
             @NotBlank(message = "kind is required")
             @Pattern(regexp = ValidationPatterns.MODERATION_KIND,
                     message = "kind must be instance-block|user-removal") String kind,
+            @NotBlank(message = "target is required")
+            @Size(max = 1024, message = "target must be at most 1024 chars") String target,
+            @Size(max = 1024, message = "reason must be at most 1024 chars") String reason) {}
+
+    /**
+     * Body for {@code POST /recommend-instance-block} (self-service platform-user
+     * recommendation). Deliberately has NO {@code kind} field — unlike
+     * {@link SubmitRequest} — because the kind is HARDCODED server-side to
+     * {@code instance-block} in {@link #recommendInstanceBlock}, so a plain
+     * platform-only caller can never use this narrower surface to file a
+     * {@code user-removal} request.
+     *
+     * @param target the homeserver/instance domain being recommended for a block
+     *               (max 1 024 chars)
+     * @param reason optional free-text context (max 1 024 chars)
+     */
+    public record RecommendInstanceBlockRequest(
             @NotBlank(message = "target is required")
             @Size(max = 1024, message = "target must be at most 1024 chars") String target,
             @Size(max = 1024, message = "reason must be at most 1024 chars") String reason) {}
@@ -189,6 +224,67 @@ public class ModerationController {
         // The requester identity comes from the validated JWT subject, not from the
         // request body, so it cannot be spoofed.
         return moderation.submit(jwt.getSubject(), req.kind(), req.target(), req.reason(),
+                PrincipalDomain.resolve(jwt, domains));
+    }
+
+    // -------------------------------------------------------------------------
+    // Recommend (self-service, platform-user only) — the chain's FIRST hop
+    // -------------------------------------------------------------------------
+
+    @Operation(
+        summary = "Self-service: recommend an instance block (USER->MOD->ADMIN chain start). "
+                + "Requires a platform role, NOT mod/admin.",
+        description = """
+            Opens a new moderation request stamped <code>kind=instance-block</code>,
+            <code>status=recommended</code>, in the caller's domain. UNLIKE
+            <code>POST /</code> (the mod/admin submit surface above), this narrower
+            endpoint accepts a plain platform participant &mdash; <code>ROLE_MATRIX</code>
+            or <code>ROLE_MASTODON</code> &mdash; and REJECTS a mod/admin/superadmin that
+            holds neither platform role. <code>kind</code> is HARDCODED server-side
+            (there is no <code>kind</code> field on the request body), so this surface
+            can never be used to file a <code>user-removal</code> request, and it grants
+            no list/refer/decide capability &mdash; only "file one recommendation".
+
+            <p>This is the transport <code>snapdragon-user-bff-api</code>'s
+            <code>POST /bff/user/recommend-instance-block</code> forwards to (the
+            caller's own bearer, unmodified).
+
+            <h4>Caller-role access matrix</h4>
+            <table>
+              <tr><th>Caller role</th><th>Result</th></tr>
+              <tr><td>ROLE_MATRIX / ROLE_MASTODON</td>
+                  <td>Request created in caller's domain, kind=instance-block,
+                      status=recommended</td></tr>
+              <tr><td>ROLE_MOD / ROLE_ADMIN / ROLE_SUPERADMIN (no platform role)</td>
+                  <td>403 &mdash; this surface is for platform participants; staff use
+                      <code>POST /</code> instead</td></tr>
+            </table>
+            """)
+    @ApiResponses({
+        @ApiResponse(responseCode = "200",
+            description = "Moderation request created and returned with status=recommended, "
+                + "kind=instance-block."),
+        @ApiResponse(responseCode = "400",
+            description = "Missing target, or target / reason exceed their maximum length."),
+        @ApiResponse(responseCode = "401",
+            description = "Missing, expired, or invalid Casdoor JWT."),
+        @ApiResponse(responseCode = "403",
+            description = "Caller does not hold ROLE_MATRIX or ROLE_MASTODON."),
+        @ApiResponse(responseCode = "500",
+            description = "Postgres error while saving the request. Check server logs.")
+    })
+    @PostMapping("/recommend-instance-block")
+    @PreAuthorize("hasAnyRole('MATRIX','MASTODON')")
+    public Mono<ModerationRequest> recommendInstanceBlock(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody RecommendInstanceBlockRequest req) {
+        // kind is HARDCODED to instance-block — NEVER taken from the caller — so a
+        // platform-only principal can never file a user-removal request through this
+        // narrower self-service surface. requester is the caller's own JWT subject
+        // (a plain user here, not a mod) — ModerationService.submit is role-agnostic
+        // about who the requester is; the role gate lives entirely at the API
+        // boundary (path rule + this @PreAuthorize).
+        return moderation.submit(jwt.getSubject(), "instance-block", req.target(), req.reason(),
                 PrincipalDomain.resolve(jwt, domains));
     }
 
