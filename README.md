@@ -399,7 +399,7 @@ sequenceDiagram
     AdminBff->>FedAPI: applyUserScope(ownerUsername, action, setBy, source)
     FedAPI->>DB: INSERT scope='user', target=ownerUsername,\nreason='access_suspension:<id>'
     Note over DB: Row exists even if user never published.\nDrops all owned modules from manifest render\nand blocks vanity resolve.
-    FedAPI->>Cache: invalidate() — evict stale cached manifest
+    FedAPI->>Cache: invalidate(domain) — evict this brand's cached manifest
 
     Note over AdminBff,Cache: On every subsequent request:
     FedAPI->>DB: findByScopeAndTargetAndClearedAtIsNull('user', owner)
