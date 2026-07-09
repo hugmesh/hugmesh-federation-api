@@ -65,18 +65,31 @@ public final class ReservedNames {
             // /superadmin/service-catalog/** on the superadmin-gateway — a dedicated
             // first-segment route prefix (canonical reserved-prefixes.yaml).
             "superadmin",
+            // character-studio: the Character Studio (VN) micro-frontend remote is
+            // served at /character-studio/** on the fe-gateway — a dedicated
+            // first-segment route prefix (canonical reserved-prefixes.yaml rev 4).
+            "character-studio",
             // --- be-gateway route prefixes / publicly-routable homeserver surfaces ---
             // _synapse + media: PUBLICLY-ROUTABLE homeserver client surfaces the
             // route-access seed deploys — /_synapse/** (Matrix Synapse-compat,
             // matrix-host-scoped) and /media/** (Mastodon media). Real first-segment
             // route prefixes, so a vanity username equal to either would shadow them.
             "api", "_matrix", "_synapse", "media", "oauth",
+            // v1: the edge-AI analysis API is served at /v1/analyze/** on the
+            // be-gateway — a dedicated first-segment route prefix (canonical
+            // reserved-prefixes.yaml rev 4).
+            "v1",
             // --- reserved subdomains (snapdragon.systems) ---
             // forum/phpbb: the phpBB community forum surfaces; owncast/wiki/tube:
             // optional video/wiki/streaming services — all reserved so a vanity
             // subdomain can never collide (canonical reserved-prefixes.yaml).
             "id", "matrix", "mastodon", "pleroma", "forum", "phpbb", "wiki",
             "owncast", "tube", "scale", "headscale", "www",
+            // ai: the edge-AI inference tier is served on its own host
+            // ai.snapdragon.systems (the raw model API plus the more specific
+            // /v1/analyze/** analysis API) — a dedicated reserved host (canonical
+            // reserved-prefixes.yaml rev 6).
+            "ai",
             // --- snapdragon.GAMES app route prefixes (derived: nginx /_remotes/<slug>/
             //     + location prefixes + <service>.snapdragon.games subdomains) ---
             "games", "play", "wasm", "producer", "publisher", "banned",
@@ -87,7 +100,13 @@ public final class ReservedNames {
             "root", "static", "assets", "public", "health", "healthz", "actuator",
             "metrics", "well-known", "favicon", "robots", "sitemap", "status",
             "support", "help", "social", "auth", "logout", "oauth2", "fragments",
-            "users", "gm", "pki", "vault", "argocd", "gitlab", "registry");
+            "users", "gm", "pki", "vault", "argocd", "gitlab", "registry",
+            // index.html, favicon.ico, importmap.json, remoteEntry.json: the exact
+            // webroot filenames the fe-gateway anonymous-SPA-shell route-access rows
+            // reference as literal first-segment url_patterns — distinct literal
+            // segments from the already-reserved bare favicon label above (canonical
+            // reserved-prefixes.yaml rev 5).
+            "index.html", "favicon.ico", "importmap.json", "remoteEntry.json");
 
     /** Whether a candidate first-label / username is reserved (case-insensitive). */
     public static boolean isReserved(String label) {
