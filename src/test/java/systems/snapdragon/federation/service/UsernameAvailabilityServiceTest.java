@@ -50,7 +50,7 @@ class UsernameAvailabilityServiceTest {
                 .verifyComplete();
     }
 
-    // ── reason=reserved (tier b/c/d) — checked BEFORE user collision, no DB hit ──
+    // ── reason=reserved (EXACT tier b only) — checked BEFORE user collision, no DB hit ──
 
     @Test
     void reserved_confusable_isReason_reserved_andSkipsDb() {
@@ -64,6 +64,57 @@ class UsernameAvailabilityServiceTest {
 
         // Reserved short-circuits BEFORE the DB collision scan.
         verify(repo, never()).findBySkeleton(anyString());
+    }
+
+    @Test
+    void exactReservedSkeleton_staysReserved_andIsNeverOverridable() {
+        // Regression for the tier split: the EXACT reserved-skeleton tier (b) — a
+        // genuine confusable like "4dmin ~ admin" — must remain reason=reserved and
+        // survive an admin override=confusable (never freed).
+        StepVerifier.create(svc.check("4dmin", null))
+                .assertNext(r -> {
+                    assertThat(r.reason()).isEqualTo("reserved");
+                    assertThat(UsernameAvailabilityService
+                            .applyConfusableOverride(r).available()).isFalse();
+                })
+                .verifyComplete();
+    }
+
+    // ── reason=confusable (FUZZY typo-squat / affix tiers c/d) — ADMIN-overridable ──
+    // The service used to label these "reserved" too, so a legitimate name that merely
+    // resembled a reserved label (e.g. "administrator", "admin01") was permanently
+    // unregisterable with NO admin escape hatch. The fuzzy tiers are heuristic, so the
+    // documented contract makes them reason=confusable (ROLE_ADMIN-overridable).
+
+    @Test
+    void fuzzyReservedTypoSquat_isReason_confusable_overridable_andSkipsDb() {
+        // "administrator" is NOT an exact reserved-skeleton; it matches "admin" via the
+        // length-scaled edit-distance typo-squat tier (c).
+        StepVerifier.create(svc.check("administrator", null))
+                .assertNext(r -> {
+                    assertThat(r.available()).isFalse();
+                    assertThat(r.reason()).isEqualTo("confusable");
+                    assertThat(r.matchedWith()).isEqualTo("admin");
+                    // the admin escape hatch now works (the whole point of the fix):
+                    assertThat(UsernameAvailabilityService
+                            .applyConfusableOverride(r).available()).isTrue();
+                })
+                .verifyComplete();
+        // Reserved tiers still short-circuit BEFORE the DB collision scan.
+        verify(repo, never()).findBySkeleton(anyString());
+    }
+
+    @Test
+    void fuzzyReservedAffix_isReason_confusable_andOverridable() {
+        // "admin01" matches "admin" via the affix anti-impersonation tier (d).
+        StepVerifier.create(svc.check("admin01", null))
+                .assertNext(r -> {
+                    assertThat(r.reason()).isEqualTo("confusable");
+                    assertThat(r.matchedWith()).isEqualTo("admin");
+                    assertThat(UsernameAvailabilityService
+                            .applyConfusableOverride(r).available()).isTrue();
+                })
+                .verifyComplete();
     }
 
     // ── reason=exact (homoglyph/leet collision with an existing username) ─────────

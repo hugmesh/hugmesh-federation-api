@@ -181,33 +181,62 @@ public class UsernameSkeletonService {
     }
 
     /**
-     * The reserved label whose skeleton a candidate collides with via the
-     * anti-impersonation tiers (exact reserved skeleton, the length-scaled
-     * typo-squat distance, or the affix rule), or {@code null} if the candidate is
-     * clear of the reserved set. Used for {@code reason=reserved + matchedWith}.
-     * Returns {@code null} (not an exception) on a non-foldable candidate — the
-     * caller invokes {@link #skeleton} first to surface the hard rejection.
+     * A reserved-set match tagged with the TIER that produced it — so the caller can
+     * apply the correct override policy:
+     * <ul>
+     *   <li>{@code exact=true} — the candidate's skeleton IS a reserved-label skeleton
+     *       (tier b, e.g. {@code 4dmin ~ admin}, {@code v4ult ~ vault}). A genuine
+     *       confusable of a reserved label; NEVER overridable ({@code reason=reserved}).</li>
+     *   <li>{@code exact=false} — a fuzzy length-scaled typo-squat or affix
+     *       anti-impersonation match (tiers c/d, e.g. {@code administrator},
+     *       {@code admin01}). Heuristic and prone to false positives on legitimate
+     *       names, so ROLE_ADMIN-overridable ({@code reason=confusable}).</li>
+     * </ul>
+     * {@code label} is the reserved label matched.
      */
-    public String matchedReserved(String candidate) {
+    public record ReservedMatch(String label, boolean exact) {}
+
+    /**
+     * The reserved label a candidate collides with, tagged with WHICH tier matched
+     * (see {@link ReservedMatch}), or {@code null} if the candidate is clear of the
+     * reserved set. The exact reserved-skeleton tier (b) is never overridable; the
+     * fuzzy typo-squat / affix tiers (c/d) are ROLE_ADMIN-overridable. Returns
+     * {@code null} (not an exception) on a non-foldable candidate — the caller invokes
+     * {@link #skeleton} first to surface the hard rejection.
+     */
+    public ReservedMatch matchReserved(String candidate) {
         String skel = skeletonOrNull(candidate);
         if (skel == null || skel.isBlank()) {
             return null;
         }
-        // (b) exact reserved-skeleton membership.
+        // (b) exact reserved-skeleton membership — a genuine confusable, never overridable.
         String exact = reservedSkeletonToLabel.get(skel);
         if (exact != null) {
-            return exact;
+            return new ReservedMatch(exact, true);
         }
         // (c) length-scaled typo-squat distance vs the reserved-skeleton set +
         // (d) the affix anti-impersonation rule, both against the curated set only.
+        // Heuristic tiers -> overridable (reason=confusable), per the controller contract.
         int budget = typoBudget(skel.length());
         for (Map.Entry<String, String> e : reservedSkeletonToLabel.entrySet()) {
             String reservedSkel = e.getKey();
             if (affixImpersonates(skel, reservedSkel) || EDIT.apply(skel, reservedSkel) <= budget) {
-                return e.getValue();
+                return new ReservedMatch(e.getValue(), false);
             }
         }
         return null;
+    }
+
+    /**
+     * The reserved label whose skeleton a candidate collides with via ANY
+     * anti-impersonation tier (exact reserved skeleton, the length-scaled typo-squat
+     * distance, or the affix rule), or {@code null} if the candidate is clear of the
+     * reserved set. Back-compat string view of {@link #matchReserved} (drops the tier
+     * tag); prefer {@code matchReserved} when the override policy depends on the tier.
+     */
+    public String matchedReserved(String candidate) {
+        ReservedMatch m = matchReserved(candidate);
+        return m == null ? null : m.label();
     }
 
     /** Whether two non-null skeletons are an EXACT confusable match (the user-vs-user

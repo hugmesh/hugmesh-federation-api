@@ -22,10 +22,13 @@ import java.util.Locale;
  *       Self-exclusion is by EXACT username only — a different-but-confusable owner
  *       stays flagged.</li>
  *   <li>{@code skeleton(candidate)} is in the precomputed reserved-skeleton set
- *       ({@code 4dmin ~ admin}, {@code v4ult ~ vault}). NEVER overridable.</li>
+ *       ({@code 4dmin ~ admin}, {@code v4ult ~ vault}). {@code reason=reserved} —
+ *       a genuine confusable of a reserved label, NEVER overridable.</li>
  *   <li>the length-scaled Damerau / edit-distance typo-squat tier vs the reserved
  *       set (and the affix anti-impersonation rule) — both in
- *       {@link UsernameSkeletonService#matchedReserved}.</li>
+ *       {@link UsernameSkeletonService#matchReserved}. Heuristic, so a match here is
+ *       {@code reason=confusable} (ROLE_ADMIN-overridable) — NOT {@code reason=reserved}
+ *       — so a false-positive legitimate name keeps an admin escape hatch.</li>
  * </ol>
  *
  * <h2>Hard rejects (reason {@code mixed-script} / {@code zero-width} / {@code empty})</h2>
@@ -69,12 +72,19 @@ public class UsernameAvailabilityService {
             return Mono.just(UsernameAvailabilityDto.reject(raw, ex.reason()));
         }
 
-        // (b)+(c)+(d) reserved tiers — computed off the precomputed set, no DB hit.
-        // Reserved is checked BEFORE the user collision so a reserved-confusable is
-        // always reason=reserved (and never overridable).
-        String reservedMatch = skeletons.matchedReserved(raw);
-        if (reservedMatch != null) {
-            return Mono.just(UsernameAvailabilityDto.collide(raw, "reserved", reservedMatch, skel));
+        // (b)+(c)+(d) reserved tiers — computed off the precomputed set, no DB hit,
+        // checked BEFORE the user collision. The EXACT reserved-skeleton tier (b) is a
+        // genuine confusable of a reserved label -> reason=reserved (NEVER overridable).
+        // The fuzzy typo-squat / affix tiers (c/d) are heuristic and can false-positive
+        // legitimate names (e.g. "administrator", "admin01") -> reason=confusable
+        // (ROLE_ADMIN-overridable), matching the documented controller contract +
+        // applyConfusableOverride below. Collapsing all three to reason=reserved (the
+        // prior behaviour) left those false positives permanently unregisterable with
+        // no admin escape hatch.
+        UsernameSkeletonService.ReservedMatch reserved = skeletons.matchReserved(raw);
+        if (reserved != null) {
+            String reason = reserved.exact() ? "reserved" : "confusable";
+            return Mono.just(UsernameAvailabilityDto.collide(raw, reason, reserved.label(), skel));
         }
 
         // (a) EXACT-skeleton collision vs existing usernames (indexed equality).
