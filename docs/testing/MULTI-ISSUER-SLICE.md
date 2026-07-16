@@ -89,5 +89,5 @@ The per-issuer resolver's allowlist is exactly `DomainRegistry.trustedIssuers()`
 `JwtIssuerReactiveAuthenticationManagerResolver` surfaces a 401 **before any authority
 is emitted** — there is no fallback "default" manager that could accept an unlisted
 brand. Scenario (b) is the regression guard that keeps it that way, and it is the
-end-to-end proof that `DomainScope.resolve(...)` is **never reached** for an untrusted
-issuer (the request dies at the decoder).
+end-to-end proof that `PrincipalDomain.resolve(...)` is **never reached** for an
+untrusted issuer (the request dies at the decoder).

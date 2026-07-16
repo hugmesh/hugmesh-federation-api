@@ -58,28 +58,34 @@ existing tests run unchanged. `client-auth` maps to Netty's `ClientAuth`:
 `none → NONE`, `want → OPTIONAL`, `need → REQUIRE`. WebFlux/Netty reads these
 properties directly; no custom `SslContext`/`HttpServer` bean is needed.
 
-## Deployment requirement (owned by snapdragon-generator)
+## Deployment requirement ✅ wired
 
-The deployment manifest for this API lives in `snapdragon-generator`
-(`specs/cluster/manifests/federation-api/deployment.yaml`), not in this repo. To
-turn enforcement on, that deployment must (a) add the keystore initContainer +
-`pki` (from `snapdragon-federation-api-mtls`) and `stores` (tmpfs) volumes —
-exactly as `charts/snapdragon-gateway/templates/deployment.yaml` does — and (b) set:
+The **authoritative** deployment manifest for this API lives in
+`snapdragon-generator` (`specs/cluster/manifests/federation-api/deployment.yaml`);
+this repo's own [`deploy/deployment.yaml`](deploy/deployment.yaml) is a verbatim,
+kept-in-sync mirror of it, staged for the (not-yet-active) Forgejo/ArgoCD
+`snapdragon-deploy.yaml` catalog cutover — see that file's own header comment for
+the dual-home rationale. Both copies already carry the enforcement wiring: a
+`build-keystore` initContainer assembles `keystore.p12` (this pod's Vault-PKI
+identity, from the ESO-synced `snapdragon-federation-api-mtls` Secret) +
+`truststore.p12` (the cluster CA) into a `Memory`-backed `stores` `emptyDir`
+(store password generated in-pod, never in git/a Secret/the pod spec), and the
+container env sets:
 
 ```
 SSL_ENABLED=true
 SSL_CLIENT_AUTH=need
 SSL_KEY_STORE=/stores/keystore.p12
 SSL_KEY_STORE_TYPE=PKCS12
-SSL_KEY_STORE_PASSWORD=<in-pod generated>
 SSL_TRUST_STORE=/stores/truststore.p12
 SSL_TRUST_STORE_TYPE=PKCS12
-SSL_TRUST_STORE_PASSWORD=<in-pod generated>
 ```
 
-The readiness/liveness probes must switch to HTTPS (`scheme: HTTPS`) once
-`SSL_ENABLED=true`, and the be-gateway must present its client cert AND call this
-API over `https://` for the route to keep working.
+(`SSL_KEY_STORE_PASSWORD` / `SSL_TRUST_STORE_PASSWORD` come from the in-pod
+generated `/stores/application-tls.properties`, loaded via
+`SPRING_CONFIG_ADDITIONAL_LOCATION` — never set directly in the env block.) The
+readiness/liveness probes are already HTTPS `exec` `curl` calls presenting this
+pod's own client cert, matching `SSL_CLIENT_AUTH=need`.
 
 ## Continuous security testing (CI) ✅ shipped
 
@@ -87,10 +93,13 @@ In addition to the two runtime auth layers above, this repo participates in the
 platform **continuous-OWASP pen-test standard** as a **CI-pipeline control** (a
 dev/CI stage — NOT a deployed CronJob and NOT a runtime/UI trigger).
 
-`.gitlab-ci.yml` runs `stages: [security, dast, pentest, build]`. The `pentest:*`
-jobs `extends:` the canonical, org-wide template `include`d from
-`snapdragon-generator` (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`), the
-single source of truth, so the full harness runs:
+`.gitlab-ci.yml` runs `stages: [security, dast, pentest, test, build]` (the `test`
+stage runs the real JUnit suite, incl. the full-context `@SpringBootTest`s against
+a Testcontainers-provisioned Postgres, and — unlike the advisory pen-test stage
+below — actually gates `build:image`). The `pentest:*` jobs `extends:` the
+canonical, org-wide template `include`d from `snapdragon-generator`
+(`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`), the single source of truth, so
+the full harness runs:
 
 - **OWASP Dependency-Check (SCA)** — flags known-vulnerable dependencies;
 - **ZAP API DAST** — the authenticated baseline scan with the custom

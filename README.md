@@ -26,7 +26,8 @@ patterns.
 
 ## Current State
 
-> Snapshot as of 2026-06-25. ✅ shipped (merged to `main`) · 🚧 in-flight · 🔭 planned.
+> Snapshot as of 2026-07-16 (through PR #81). ✅ shipped (merged to `main`) ·
+> 🚧 in-flight · 🔭 planned.
 
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
   Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
@@ -46,21 +47,32 @@ patterns.
   browser holds only an **opaque `bff_` session**; the gateway swaps `bff_` → the
   internal custody JWT *before* the request reaches a resource server, so by the
   time a token arrives here it is an ordinary, already-validated Casdoor JWT. We
-  re-validate it and map claims with the commons converter.
+  re-validate it and map claims with the commons converter (explicit `jwk-set-uri`
+  so the in-container resource server fetches keys without doing OIDC discovery
+  against a possibly browser-only `issuer-uri`).
 - ✅ **Multi-tenancy (domain scoping) shipped.** Tenant is keyed on the
   cryptographically-validated issuer (`iss` → one `DOMAIN_<x>`); per-domain finders
   + `SUPERADMIN` cross-domain bypass enforced in code + the QUERY (changeset `026`).
+  A `RoleHierarchy` bean (`SUPERADMIN > ADMIN`/`MOD`/`USER`) is wired into method
+  security so `@PreAuthorize` gates (e.g. the username-availability controller) admit
+  `SUPERADMIN` the same way the path-level rules already do.
 - ✅ **The federation surface is feature-complete for the scaffold's scope:** the
   manifest read path + kill-switch, the public `/capabilities` projection, vanity
-  resolve (+ suspension 404), owner-scoped bundle storage (filesystem + S3/MinIO),
-  the internal username/confusable gate, moderation, and the optional-service +
-  static-union module seeds. MFA_SATISFIED authority parity is inherited from the
-  commons converter, but **no federation route gates on it** today.
+  resolve + owner-scoped self-publish/unpublish (+ suspension 404), owner-scoped
+  bundle storage (filesystem + S3/MinIO, upload size capped/413'd), the internal
+  username/confusable gate (with a ROLE_ADMIN override escape hatch on the
+  heuristic-match tiers), the human moderation workflow (recommend/refer/decide,
+  plus a narrower ROLE_MATRIX/MASTODON self-service instance-block filing path),
+  an automated system-findings queue for edge-AI content moderation, and the
+  optional-service + static-union module seeds. MFA_SATISFIED authority parity is
+  inherited from the commons converter, but **no federation route gates on it**
+  today.
 - ✅ **GitLab CI only** (`.gitlab-ci.yml`) — the continuous-OWASP pen-test stages
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
   from `snapdragon-generator`. **No GitHub Actions anywhere.**
 - 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
-  PUBLISH trigger is the headline cross-service gap; the resolve half is shipped).
+  PUBLISH trigger and moderation auto-apply are both shipped now; the remaining
+  cross-service gap is the gateway `PUBLIC_PATHS` allowlist entry).
 
 ## Where it sits in the architecture
 
@@ -189,9 +201,14 @@ Package Registry. Two resolution paths, **no secrets in git**:
 
 ### Security CI (GitLab) ✅ shipped
 
-`.gitlab-ci.yml` runs the platform **continuous-OWASP pen-test** stages
-(`stages: [security, dast, pentest, build]`):
+`.gitlab-ci.yml` runs the platform **continuous-OWASP pen-test** stages plus a
+real test-gated build (`stages: [security, dast, pentest, test, build]`):
 
+- **`test:mvn`** runs the actual JUnit suite (`./mvnw -B -s settings.xml test`,
+  incl. the full-context `@SpringBootTest`s against a **real Postgres** via
+  Testcontainers/`docker:dind`) on the default branch and every merge request,
+  publishing a JUnit report; `build:image` only runs after it (this stage is
+  **not** advisory — a failing test blocks the image build).
 - the `pentest:sca` / `pentest:dast` jobs `extends:` the **canonical, org-wide**
   pen-test template `include`d from `snapdragon-generator`
   (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`) so there is ONE source of
@@ -199,8 +216,8 @@ Package Registry. Two resolution paths, **no secrets in git**:
   (with the custom escalation/DoS probes) + **nuclei**. These REPLACE the earlier
   inline `dependency-check` / `zap-api-scan` jobs (migrated into the template — no
   duplicate scan path).
-- the stage is **advisory** (`allow_failure: true`) — it reports but never gates
-  the `build:image` job, and runs on the default branch + merge requests.
+- the pen-test stage is **advisory** (`allow_failure: true`) — it reports but
+  never gates `build:image`, and runs on the default branch + merge requests.
 - this is a **dev/CI-pipeline control**, NOT a deployed CronJob or a runtime/UI
   trigger, consistent with the platform pen-test standard.
 
@@ -213,7 +230,7 @@ privileged surface in every brand.
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
-| `/manifest` | GET | authenticated | Runtime manifest: enabled + circuit-closed + visibility-permitted + **domain-scoped** remotes, `{generatedAt, remotes[]}`. Visibility/role/domain filtered **in code**; Cassandra write-through cached (public-safe default view only). |
+| `/manifest` | GET | authenticated | Runtime manifest: enabled + circuit-closed + visibility-permitted + **domain-scoped** remotes, `{generatedAt, remotes[]}`. Visibility/role/domain filtered **in code**; Cassandra write-through cached (public-safe view only, keyed per-domain — see *The manifest read path*). |
 | `/capabilities` | GET | **public (no JWT)** | **Public install-state projection** — `{slug, installed, mountAt, requiresRole}` per registered module. The list a logged-out / non-admin host reads to grey-out optional services. Narrow + caller-independent (no internal locator/detail). |
 | `/vanity/{username}` | GET | **public (no JWT)** | **Vanity-subdomain resolve.** Returns the user's PUBLIC profile-fragment descriptor (`remoteEntryUrl`, `contentHash`, `/_fragments/<slug>/<hash>/` path) iff a `slug=profile-<username>`, `kind=fragment`, `visibility=public`, enabled, circuit-closed, **non-suspended** module exists; else **404**. Never returns internal fragments. |
 | `/vanity` (+ `Host:` header) | GET | **public (no JWT)** | Same resolve, but the username is the **first DNS label** of the `Host` header (`alice.<domain>` → `alice`) so the gateway can forward the vanity host verbatim. |
@@ -230,12 +247,17 @@ privileged surface in every brand.
 | `/bundles/slug/{slug}/body` | GET | authenticated (owner) | Read my card body (the entry file) by slug. |
 | `/bundles/{hash}/files/{*path}` | GET | authenticated | **FETCH a bundle file by content-hash** — the remote-fragment SYNC read. |
 | `/moderation` | GET/POST | ROLE_MOD / ADMIN | Recommend / list moderation requests, domain-scoped. |
+| `/moderation/recommend-instance-block` | POST | ROLE_MATRIX / MASTODON | **Self-service** instance-block filing — the USER→MOD→ADMIN chain's first hop for a plain platform participant (not mod/admin). `kind` is hardcoded server-side to `instance-block`; grants no list/refer/decide capability. |
 | `/moderation/{id}/refer` | POST | ROLE_MOD / ADMIN | Refer a request up to admins. |
-| `/moderation/{id}/decide` | POST | ROLE_ADMIN | Approve / deny. |
+| `/moderation/{id}/decide` | POST | ROLE_ADMIN | Approve / deny. An approved `user-removal` auto-applies as an active `scope=user` override (see *Account-states profile-ban*); an approved `instance-block` stays decision-only. |
 | `/overrides` | GET/POST | ROLE_ADMIN | Kill-switch: list / apply (`circuit-break` \| `unpublish` \| `remove`), domain-scoped. |
 | `/overrides/{slug}/rearm` | POST | ROLE_ADMIN | Recover a circuit-broken module (per-slug). |
 | `/overrides/clear` | POST | ROLE_ADMIN | Rearm an active scope override (`{scope,target}`; stamps `cleared_at`). |
 | `/overrides/clear-source` | POST | ROLE_ADMIN / SUPERADMIN | Lift/expire a suspension by source tag: stamps `cleared_at` on **only** the `federation_override` rows whose `reason` equals the supplied `source` — so an expiring access-suspension never rearms an unrelated manual scope override (`OverrideController.clearSource` → `OverrideService.clearScopeBySource`). |
+| `/findings` | POST | authenticated | File a system moderation finding about the caller's **own** content (`subject` = JWT subject, never a body field; `reporter` always `@system`). See *System findings*. |
+| `/findings` | GET | ROLE_MOD / ADMIN | List findings in the caller's domain (SUPERADMIN: all domains); optional `?status=held\|dismissed\|actioned`. |
+| `/findings/{id}/resolve` | POST | ROLE_MOD / ADMIN | Resolve a held finding (`?actioned=true` actions it, `false` dismisses it); cross-domain id → 404. |
+| `/findings/resolved` | GET | ROLE_SERVICE / ADMIN (INTERNAL) | Cursor-paged read of resolved findings (`id > sinceId`, `subjectRef` present) on a `surface`, for the moderation → activation reconciler poll. SERVICE/SUPERADMIN read cross-domain; a per-domain ADMIN stays pinned to its own brand. |
 
 ## The manifest read path (the keystone)
 
@@ -279,16 +301,19 @@ flowchart TB
     C --> D["3. Active scope overrides\n(cleared_at IS NULL)\nscope=all / user / role"]
     D --> E["Rendered manifest\n{generatedAt, remotes[]}"]
     E --> F{"Cassandra cache\navailable?"}
-    F -- "yes (public-safe view only)" --> G["Write-through cache\n(default-domain, no internal rows)"]
+    F -- "yes (public-safe view only)" --> G["Write-through cache\n(keyed by caller's own domain, no internal rows)"]
     F -- "no / miss / failure" --> H["Serve from Postgres directly"]
     G --> H
 ```
 
 The rendered manifest is best-effort write-through cached — but **only the
-public-safe default-domain view** (no internal rows, no superadmin cross-domain
-superset, not a brand-specific view) so a cache poller without a token never sees
-internal remotes nor another brand's remotes. A cache miss / failure always
-renders from Postgres.
+public-safe view, and only under the render's own domain's cache key**
+(no internal rows, no superadmin cross-domain superset are ever cached, under
+any key) so a cache poller without a token never sees internal remotes, and a
+brand-B poller can never be served brand-A's cached body — each brand's
+public-safe render occupies its own row (per-domain cache key; see
+`ManifestService`'s `cacheIfPublicSafe`). A cache miss / failure always renders
+from Postgres.
 
 ## Public capabilities (greying-out optional services)
 
@@ -458,10 +483,47 @@ label), so the whole controller is gated to an internal service credential
   available and writes an AUDIT line; it NEVER overrides `reserved` or a hard
   reject.
 
+## System findings (automated edge-AI moderation queue)
+
+`POST /api/federation/findings` + `GET /api/federation/findings` +
+`POST /api/federation/findings/{id}/resolve` + `GET /api/federation/findings/resolved`
+are a queue for **automated** moderation findings — a separate surface from
+`ModerationController`'s **human** recommend/refer/decide workflow above.
+
+- **Producer.** The pre-publish edge-AI vision-moderation gate (`user-bff` →
+  `POST /v1/analyze/content/moderate`) FILES a finding here when a check comes
+  back `flag`/`reject`. `reporter` is always `@system`; `subject` (the content
+  owner) is the producer's authenticated JWT subject — **never** a request body
+  field, so a caller can only ever file about their own content.
+- **Row shape** (`system_findings`, changesets `036`/`037`): `surface`
+  (`profile-avatar`, ...), `disposition` (`flagged` queued | `rejected` blocked at
+  upload), `classification`/`confidence`/`policyHit`/`perceptualHash` (the edge-AI
+  verdict), an optional `subjectRef` (a producer-opaque back-reference to the
+  exact source row — e.g. a character-part/sticker id — for part-activation
+  correlation; NULL for the surface-level avatar/profile path), `status`
+  (`held` → `dismissed` | `actioned`), and the usual `domain` multi-tenancy column.
+- **Consumers.** `ROLE_MOD`/`ADMIN`/`SUPERADMIN` list + resolve findings in their
+  own domain (SUPERADMIN spans all brands). `GET /findings/resolved` is a
+  separate, **internal** (`ROLE_SERVICE`/`ADMIN`/`SUPERADMIN`) cursor-paged read
+  (`id > sinceId`, `id`-ASC watermark, capped page size) for the admin-bff
+  moderation → activation reconciler — a `ROLE_SERVICE` or `SUPERADMIN` caller
+  reads cross-domain (it must close the activation loop for every brand); a
+  per-domain `ROLE_ADMIN` stays pinned to its own brand.
+- **Relationship to `ModerationController`.** The two workflows are independent
+  and do not write each other's tables: a system finding never becomes a
+  `moderation_requests` row automatically, and resolving a finding never touches
+  `federation_override`. Both are DOMAIN-scoped from the validated JWT issuer via
+  the same `PrincipalDomain.resolve` convention.
+
+See `SystemFindingService`, `SystemFindingController`, `SystemFindingRepositoryTest`,
+`SystemFindingResolvedEndpointTest`.
+
 ## Multi-tenancy (domain scoping)
 
-> Status: **✅ shipped on `main`** (changeset `026` + the `DomainScope`
-> service-layer cut; merged via PR #14 `feat/domain-foundation`). The
+> Status: **✅ shipped on `main`** (changeset `026` + the per-request domain-scope
+> service-layer cut — shipped as this repo's own `DomainScope` via PR #14
+> `feat/domain-foundation`, later migrated to the shared commons artifact as
+> `commons.security.PrincipalDomain`; see *Shared commons library*). The
 > capability/vanity public projections and the owner==JWT-subject bundle paths are
 > untouched by it. This is the platform's multi-brand contract, enforced in code.
 
@@ -482,7 +544,7 @@ flowchart TB
 
     R5 --> DR["DomainRegistry\niss→domain map\n(single-issuer: DOMAIN_default\nmulti-brand: app.tenancy.issuers CSV)"]
     DR -- "unknown iss" --> REJECT["401 (fail-closed)\nbefore any authority emitted"]
-    DR -- "known iss" --> DS["DomainScope\nper-request predicate"]
+    DR -- "known iss" --> DS["PrincipalDomain (commons)\nper-request predicate"]
 
     DS -- "SUPERADMIN" --> ALL["No predicate → cross-domain\n(sees/mutates all brands)"]
     DS -- "normal principal" --> PIN["Pinned to issuer-derived domain\n(DB finders WHERE domain = DOMAIN_x)"]
@@ -503,11 +565,13 @@ flowchart TB
   Multi-brand mode is **fail-closed**: an issuer not in the map yields `null` and
   the multi-issuer decoder (`TenancyResourceServerConfig`, config-gated on a real
   `=`-bearing CSV) 401s an unknown `iss` before any authority is emitted.
-- **`DomainScope`** is the per-request domain predicate threaded into the
-  services. `SUPERADMIN` → no predicate (cross-domain, sees/mutates all). A normal
-  principal → pinned to their issuer-derived domain. An unresolvable issuer →
-  `NO_DOMAIN` sentinel that **matches no row** (fail-closed, never silently
-  cross-domain).
+- **`PrincipalDomain`** (`commons.security.PrincipalDomain`, resolved via
+  `PrincipalDomain.resolve(jwt, domainRegistry)` — the canonical replacement for
+  this repo's original local `DomainScope`, see *Shared commons library*) is the
+  per-request domain predicate threaded into the services. `SUPERADMIN` → no
+  predicate (cross-domain, sees/mutates all). A normal principal → pinned to
+  their issuer-derived domain. An unresolvable issuer → `NO_DOMAIN` sentinel that
+  **matches no row** (fail-closed, never silently cross-domain).
 - **`Roles`** helpers (`isSuperadmin` / `isImageBuilder` / `domainOf`,
   fail-closed) drive the least-privilege cascade
   **SUPERADMIN → ADMIN → MOD → USER** plus the orthogonal `ROLE_IMAGE_BUILDER`
@@ -582,6 +646,15 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   where a brand-X caller could enumerate another brand's bundle metadata. Stamped
   from the publishing principal's issuer-derived `DOMAIN_<x>` at write time
   (`BundleService.put`); SUPERADMIN un-pinned.
+- **`036` `system_findings`** — the automated edge-AI moderation queue (see
+  *System findings*): `reporter`/`subject`/`surface`/`disposition`/
+  `classification`/`confidence`/`policy_hit`/`perceptual_hash`/`status`/
+  `reviewer`/`ts`/`domain`, indexed on `status`, `domain`, `subject`.
+- **`037`** — adds `system_findings.subject_ref` (optional producer-opaque
+  back-reference to the exact source row a finding is about — a character-part /
+  sticker id — for part-activation correlation; NULL for the surface-level
+  avatar/profile path) plus a composite `(surface, status)` index backing the
+  reconcile query.
 
 ### A note on the JSON columns (honest constraint — corrected)
 
@@ -624,9 +697,20 @@ works with no explicit cast.
 - Path rules (all declared before the `anyExchange().authenticated()` catch-all):
   vanity + capabilities = **permitAll** (public reads); username = **ROLE_SERVICE
   / ADMIN** (internal oracle); modules + overrides = **ROLE_ADMIN**; moderation =
-  **ROLE_MOD / ADMIN** (decide narrowed to ADMIN); manifest + bundles =
-  **authenticated** (bundle owner = JWT subject, enforced in the service).
-  `SUPERADMIN` is added to the privileged gates.
+  **ROLE_MOD / ADMIN** (decide narrowed to ADMIN; the self-service
+  `recommend-instance-block` sub-path is instead **ROLE_MATRIX / MASTODON only**,
+  declared before the mod-only catch-all); findings = **authenticated** to file
+  (about the caller's own content), **ROLE_MOD / ADMIN** to list/resolve,
+  **ROLE_SERVICE / ADMIN** for the internal `resolved` reconcile read; manifest +
+  bundles = **authenticated** (bundle owner = JWT subject, enforced in the
+  service). `SUPERADMIN` is added to every privileged gate.
+- A **`RoleHierarchy`** bean (`SUPERADMIN > ADMIN`, `SUPERADMIN > MOD`,
+  `SUPERADMIN > USER`) is wired into `@EnableReactiveMethodSecurity` so
+  `@PreAuthorize` gates expand the same way the path-level `hasAnyRole(...)` rules
+  already do — without it, `@PreAuthorize`-only controllers (e.g.
+  `UsernameAvailabilityController`) would wrongly 403 a SUPERADMIN caller even
+  though the path rule and the OpenAPI contract admit it. SUPERADMIN does **not**
+  imply ADMIN⇄MOD (siblings); only the top-down edges are declared.
 - **API↔API mTLS (server side).** Disabled by default (`server.ssl.enabled=false`,
   `client-auth=none`) so local/dev/CI run plaintext. In-cluster, the deployment
   mounts the PKCS12 keystore (Vault-PKI identity) + truststore (cluster CA) and
@@ -705,12 +789,23 @@ Representative tests:
   `enabled=false` and leaves `visibility=public`) — recovery from that state is
   admin-only, via `POST /api/federation/overrides/{moduleSlug}/rearm`.
 - `UsernameAvailabilityServiceTest` / `UsernameSkeletonServiceTest` — the
-  confusable gate.
+  confusable gate, incl. the exact-vs-fuzzy reserved-match tiers (`reason=reserved`
+  never overridable vs `reason=confusable` ROLE_ADMIN-overridable).
+- `SystemFindingServiceTest` / `SystemFindingRepositoryTest` /
+  `SystemFindingResolvedEndpointTest` — the automated findings queue: file/list/
+  resolve, domain scoping, and the cursor-paged `resolved` reconcile read
+  (cross-domain for SERVICE/SUPERADMIN, own-brand for a per-domain ADMIN).
+- `ModerationRecommendInstanceBlockRoleGateTest` / `ModerationDecideEscalationTest`
+  — the self-service ROLE_MATRIX/MASTODON filing path (fail-closed: no MOD/ADMIN/
+  SUPERADMIN hierarchy edge admits it) and the MOD-vs-decide method-security
+  boundary.
 - `FederationModuleRepositoryTest`, `UserModuleRepositoryTest`,
   `ModerationAndOverrideRepositoryTest`, `DomainScopedRepositoryTest` — R2DBC
   slices over the real changelog (incl. the `026` domain-pinned finders).
-- `SecurityConfigConverterTest` / `DomainAuthzEndpointTest` — the Casdoor authority
-  mapping (incl. the authority-injection regressions) + HTTP authz per role.
+- `MultiIssuerSecuritySliceTest` / `SecurityConfigPathGateSliceTest` (see
+  `docs/testing/MULTI-ISSUER-SLICE.md`) / `DomainAuthzEndpointTest` — the Casdoor
+  authority mapping (incl. the authority-injection regressions), the multi-issuer
+  fail-closed decoder, and HTTP authz per role.
 - `FederationApplicationContextTest` — full-context boot with degraded defaults.
 
 ## Configuration (env)
@@ -723,6 +818,7 @@ Representative tests:
 | `SPRING_LIQUIBASE_URL` / `_USER` / `_PASSWORD` | …`/federation` | migration DB |
 | `APP_BUNDLES_STORAGE` | `filesystem` | `filesystem` \| `s3` |
 | `APP_BUNDLES_DIR` | `/var/snapdragon/federation/bundles` | filesystem root |
+| `APP_BUNDLES_MAX_BYTES` | `268435456` (256 MiB) | max bytes accepted on a single `PUT /bundles/{slug}` before a 413 (streamed cap, staged file cleaned up) |
 | `APP_BUNDLES_S3_BUCKET` | `snapdragon-federation` | S3 bucket (when `storage=s3`) |
 | `APP_BUNDLES_S3_ENDPOINT` | (empty) | S3 endpoint override (point at MinIO in dev/CI) |
 | `APP_BUNDLES_S3_REGION` | `us-east-1` | S3 region |
@@ -752,6 +848,16 @@ Intentionally NOT implemented in the scaffold:
   `instance-block` stays decision-only** (honest): this catalogue has no
   remote-instance surface — the approved row is the auditable authorisation signal
   for the homeserver-level block executed by the mod/admin surfaces.
+- ~~**`recommend-instance-block` unreachable for its only real caller.**~~ **No
+  longer deferred — ✅ shipped.** `user-bff-api`'s
+  `POST /bff/user/recommend-instance-block` forwards a plain platform participant's
+  own JWT (ROLE_MATRIX/MASTODON) straight through — but the general
+  `POST /api/federation/moderation` submit surface is MOD/ADMIN/SUPERADMIN-only,
+  and no `RoleHierarchy` edge runs MATRIX/MASTODON → MOD, so that caller could
+  never reach it (the feature was end-to-end unreachable). Fixed by adding the
+  dedicated, narrower `POST /api/federation/moderation/recommend-instance-block`
+  (`kind` hardcoded server-side, no list/refer/decide capability) rather than
+  widening the general gate. See `ModerationRecommendInstanceBlockRoleGateTest`.
 - **`scope=role` is a *content-declared* cut.** It suppresses modules whose
   declared `metadata.requiresRole` equals the target role. There is **no module
   role column** and **no user→role table** in this service (roles live only in the
