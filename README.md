@@ -26,7 +26,8 @@ patterns.
 
 ## Current State
 
-> Snapshot as of 2026-07-16 (through PR #81). ✅ shipped (merged to `main`) ·
+> Snapshot as of 2026-07-22 (through PR #83, the HugMesh naming rebrand — code-level
+> only, no functional change). ✅ shipped (merged to `main`) ·
 > 🚧 in-flight · 🔭 planned.
 
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
