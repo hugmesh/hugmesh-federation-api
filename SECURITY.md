@@ -1,4 +1,4 @@
-# Security — snapdragon-federation-api
+# Security — hugmesh-federation-api
 
 ## Authentication layers
 
@@ -19,9 +19,9 @@ This API is defended in depth by two independent layers:
 
 ## How the mTLS layer is wired
 
-The cluster CA is the offline root from `snapdragon-generator/scripts/gen-keystores.sh`.
+The cluster CA is the offline root from `hugmesh-generator/scripts/gen-keystores.sh`.
 In-cluster, Vault PKI imports that CA and issues a short-lived leaf cert per app;
-External Secrets Operator (ESO) syncs it into the `snapdragon-federation-api-mtls`
+External Secrets Operator (ESO) syncs it into the `hugmesh-federation-api-mtls`
 `kubernetes.io/tls` Secret (`tls.crt` / `tls.key` / `ca.crt`). A keystore
 initContainer (the equivalent of the gateway chart's `build-keystore`) assembles:
 
@@ -33,8 +33,8 @@ a Secret, or Vault). The deployment then sets the env below so the running pod
 enforces client-cert verification. Because every in-cluster leaf chains to the same
 cluster CA, the truststore validates them; ESO rotates the cert before expiry.
 
-The gateway (`snapdragon-be-gateway`) is the legitimate caller: it presents its own
-ESO-issued client cert (`snapdragon-be-gateway-mtls`) when proxying to this API, so
+The gateway (`hugmesh-be-gateway`) is the legitimate caller: it presents its own
+ESO-issued client cert (`hugmesh-be-gateway-mtls`) when proxying to this API, so
 its handshake succeeds while everyone else's fails.
 
 ## Configuration (parameterized — safe by default)
@@ -61,13 +61,13 @@ properties directly; no custom `SslContext`/`HttpServer` bean is needed.
 ## Deployment requirement ✅ wired
 
 The **authoritative** deployment manifest for this API lives in
-`snapdragon-generator` (`specs/cluster/manifests/federation-api/deployment.yaml`);
+`hugmesh-generator` (`specs/cluster/manifests/federation-api/deployment.yaml`);
 this repo's own [`deploy/deployment.yaml`](deploy/deployment.yaml) is a verbatim,
 kept-in-sync mirror of it, staged for the (not-yet-active) Forgejo/ArgoCD
-`snapdragon-deploy.yaml` catalog cutover — see that file's own header comment for
+`hugmesh-deploy.yaml` catalog cutover — see that file's own header comment for
 the dual-home rationale. Both copies already carry the enforcement wiring: a
 `build-keystore` initContainer assembles `keystore.p12` (this pod's Vault-PKI
-identity, from the ESO-synced `snapdragon-federation-api-mtls` Secret) +
+identity, from the ESO-synced `hugmesh-federation-api-mtls` Secret) +
 `truststore.p12` (the cluster CA) into a `Memory`-backed `stores` `emptyDir`
 (store password generated in-pod, never in git/a Secret/the pod spec), and the
 container env sets:
@@ -97,7 +97,7 @@ dev/CI stage — NOT a deployed CronJob and NOT a runtime/UI trigger).
 stage runs the real JUnit suite, incl. the full-context `@SpringBootTest`s against
 a Testcontainers-provisioned Postgres, and — unlike the advisory pen-test stage
 below — actually gates `build:image`). The `pentest:*` jobs `extends:` the
-canonical, org-wide template `include`d from `snapdragon-generator`
+canonical, org-wide template `include`d from `hugmesh-generator`
 (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`), the single source of truth, so
 the full harness runs:
 

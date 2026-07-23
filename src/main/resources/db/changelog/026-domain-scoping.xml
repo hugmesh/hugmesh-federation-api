@@ -15,8 +15,8 @@
         The domain a row belongs to is the principal's domain at WRITE time, derived
         from the cryptographically-validated token ISSUER (per-brand Casdoor =>
         distinct iss) via DomainRegistry — NEVER a user-settable claim. See
-        systems.snapdragon.federation.config.CasdoorAuthorities (DOMAIN_<x>) +
-        systems.snapdragon.federation.security.Roles.domainOf(jwt, registry).
+        systems.hugmesh.federation.config.CasdoorAuthorities (DOMAIN_<x>) +
+        systems.hugmesh.federation.security.Roles.domainOf(jwt, registry).
 
         BACKWARD-COMPATIBLE: the column DEFAULTS to 'default' and is NOT NULL, so
           • every PRE-EXISTING row (the 010-2 seed topology, the 015/022/023/024/025

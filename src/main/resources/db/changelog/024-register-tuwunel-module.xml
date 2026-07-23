@@ -17,7 +17,7 @@
         missing. This changeset gives it a row so its install-state is a first-class,
         toggleable fact (enabled / circuit_state / scope-override drive presence).
 
-        snapdragon-matrix-ui is an Angular native-federation REMOTE (kind
+        hugmesh-matrix-ui is an Angular native-federation REMOTE (kind
         = 'remote-shell', exactly like the forum/mastodon rows), served at the apex
         PATH /social/matrix (NOT a subdomain — the vanity wildcard would swallow
         matrix.<domain>). Mirrors 022-forum field-for-field:
@@ -41,7 +41,7 @@
         'matrix' slug is absent, so re-running over an existing DB is a no-op
         (matches the 022 forum / 010-2 / 015-1 seed-guard style). The
         remote_entry_url is a placeholder wired by the deployment's
-        snapdragon-matrix-ui Service. The ${json.type} clob/jsonb column round-trips
+        hugmesh-matrix-ui Service. The ${json.type} clob/jsonb column round-trips
         as a String over r2dbc (same harness as 022).
     -->
 

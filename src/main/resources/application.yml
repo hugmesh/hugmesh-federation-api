@@ -1,6 +1,6 @@
 spring:
   application:
-    name: snapdragon-federation-api
+    name: hugmesh-federation-api
 
   # The spring-boot-starter-data-cassandra-reactive starter is on the classpath
   # ONLY for the best-effort manifest write-through cache (CassandraManifestCache),
@@ -31,7 +31,7 @@ spring:
           issuer-uri: "${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}"
           # Explicit JWKS so the resource server does NOT do OIDC discovery against issuer-uri
           # (unreachable in-container when issuer-uri is the browser-facing localhost:8000, which
-          # 500s every authenticated call). Mirrors snapdragon-actions + the gateway; compose sets
+          # 500s every authenticated call). Mirrors hugmesh-actions + the gateway; compose sets
           # CASDOOR_JWKS_URI=http://casdoor:8000/.well-known/jwks. iss is still validated via issuer-uri.
           jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}/.well-known/jwks}"
 
@@ -57,7 +57,7 @@ app:
   # fully-implemented S3/MinIO strategy (S3BundleStorage — AWS S3 in prod, MinIO in dev/CI; see README Bundle storage).
   bundles:
     storage: "${APP_BUNDLES_STORAGE:filesystem}"
-    dir: "${APP_BUNDLES_DIR:/var/snapdragon/federation/bundles}"
+    dir: "${APP_BUNDLES_DIR:/var/hugmesh/federation/bundles}"
     # Max bytes accepted for a single bundle PUT body before a 413 is returned. The
     # body streams straight to disk (DataBufferUtils.write), which bypasses
     # spring.codec.max-in-memory-size, so this is the ONLY ceiling on the upload —
@@ -115,13 +115,13 @@ springdoc:
   # Force JSON as the default produced media type. Without this, springdoc emits
   # `*/*` for endpoints with no explicit `produces`, which ng-openapi-gen maps to a
   # `Blob` response type — breaking JSON parsing in the generated typed clients.
-  # Mirrors snapdragon-admin-bff-api / snapdragon-mod-bff-api.
+  # Mirrors hugmesh-admin-bff-api / hugmesh-mod-bff-api.
   default-produces-media-type: application/json
   api-docs:
     enabled: true
     path: /v3/api-docs
     # Emit OpenAPI 3.0.1 (not springdoc-3.x's new 3.1.0 default). The Boot-4 upgrade
-    # put this service on springdoc 3.x (via snapdragon-parent), which silently
+    # put this service on springdoc 3.x (via hugmesh-parent), which silently
     # switched the dumped spec to 3.1.0 — but the Angular UIs generate their typed
     # clients with ng-openapi-gen 0.51.0, which CANNOT parse 3.1.0. Pinning back to
     # 3.0 keeps the BFF<->UI ng-openapi-gen contract unchanged. Mirrors admin-bff.
@@ -129,7 +129,7 @@ springdoc:
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
-  packages-to-scan: systems.snapdragon.federation
+  packages-to-scan: systems.hugmesh.federation
 
 # Resilience4j circuit breaker for the access-suspension profile-ban write path.
 # OverrideService.applyUserScope / clearScopeBySource wrap their DIRECT-repo

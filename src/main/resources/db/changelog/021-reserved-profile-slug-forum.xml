@@ -9,7 +9,7 @@
         RESERVED-PROFILE-SLUG guard — extend for the phpBB FORUM surface.
 
         The phpBB forum is integrated as a backend-only service wrapped by
-        snapdragon-forum-ui (served at the apex path /social/forum) + a Spring BFF.
+        hugmesh-forum-ui (served at the apex path /social/forum) + a Spring BFF.
         'forum' is therefore added to the canonical ReservedNames.RESERVED_LABELS
         (this repo's controller/ReservedNames + the user-bff mirror) so a vanity
         username 'forum' can never collide with a future forum.<domain> subdomain

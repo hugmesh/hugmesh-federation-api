@@ -12,7 +12,7 @@
         bookkeeping for a user-published federated module. The BFF / owner client
         PUTs a bundle, the BundleStorage strategy installs it under
         <slug>/<content-hash>/ and returns an opaque locator stored here; the
-        snapdragon-remote-fragment pods FETCH by content-hash to sync-and-serve.
+        hugmesh-remote-fragment pods FETCH by content-hash to sync-and-serve.
 
           • locator       — opaque BundleStorage locator (file:/... or s3://...).
           • content_hash  — SHA-256 of the bundle tree; the version + the key the

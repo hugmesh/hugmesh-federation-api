@@ -9,8 +9,8 @@
         RESERVED-PROFILE-SLUG guard — extend for the WIKI surface.
 
         The wiki is a default-on service: a writable Postgres content store owned by
-        snapdragon-wiki-bff-api, (re)packaged to a ZIM that kiwix-serve serves
-        read-only, fronted by snapdragon-wiki-ui (an Angular native-federation REMOTE
+        hugmesh-wiki-bff-api, (re)packaged to a ZIM that kiwix-serve serves
+        read-only, fronted by hugmesh-wiki-ui (an Angular native-federation REMOTE
         mounted at the apex path /wiki + role-gated in the host upper-left menu).
         'wiki' is therefore added to the canonical ReservedNames.RESERVED_LABELS
         (this repo's controller/ReservedNames + the user-bff mirror) so a vanity

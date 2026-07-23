@@ -104,7 +104,7 @@
         </preConditions>
         <insert tableName="federation_modules">
             <column name="slug" value="host"/>
-            <column name="display_name" value="Snapdragon — Federation Host"/>
+            <column name="display_name" value="HugMesh — Federation Host"/>
             <column name="kind" value="host"/>
             <column name="remote_entry_url" value="/"/>
             <column name="version" value="0.1.0"/>

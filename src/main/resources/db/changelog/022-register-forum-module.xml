@@ -9,7 +9,7 @@
         REGISTER the phpBB forum as a federation module (the registry row the
         Angular host loads at runtime).
 
-        snapdragon-forum-ui is an Angular native-federation REMOTE (kind
+        hugmesh-forum-ui is an Angular native-federation REMOTE (kind
         = 'remote-shell', exactly like the 'admin'/'login' seed rows in 010-2),
         served at the apex PATH /social/forum (NOT a subdomain — the vanity
         wildcard would swallow forum.<domain>). It is gated by the forum access
@@ -31,7 +31,7 @@
         this forum row needs its own changeSet. Idempotent: the preCondition seeds
         only when the 'forum' slug is absent, so re-running over an existing DB is a
         no-op (matches the 010-2 / 015-1 seed-guard style). The remote_entry_url is
-        a placeholder wired by the deployment's snapdragon-forum-ui Service.
+        a placeholder wired by the deployment's hugmesh-forum-ui Service.
     -->
 
     <changeSet id="022-1-register-forum-module" author="federation">

@@ -4,30 +4,30 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <!-- The org metapom (2.7.0 / Boot-4 line) — consolidates the Spring Boot 4.0.7 /
+  <!-- The org metapom (2.8.0 / Boot-4 line) — consolidates the Spring Boot 4.0.7 /
        Spring Cloud 2025.1.2 / Java 25 reactive BFF baseline (WebFlux + Casdoor OAuth2
        resource server + R2DBC/Liquibase + SpringDoc), the shared <dependencies>,
-       dependencyManagement (snapdragon-commons 2.7.0, Spring Cloud BOM, AWS SDK BOM,
+       dependencyManagement (hugmesh-commons 2.8.0, Spring Cloud BOM, AWS SDK BOM,
        resilience4j-spring-boot4, springdoc 3.x), pluginManagement (compiler / surefire
        bytebuddy flag / spring-boot / native) and the GitLab Maven publishing wiring.
-       snapdragon-parent is itself a child of spring-boot-starter-parent:4.0.7, so the
+       hugmesh-parent is itself a child of spring-boot-starter-parent:4.0.7, so the
        Spring Boot dependency + plugin management is inherited TRANSITIVELY. -->
   <parent>
-    <groupId>systems.snapdragon</groupId>
-    <artifactId>snapdragon-parent</artifactId>
-    <version>2.7.0</version>
+    <groupId>systems.hugmesh</groupId>
+    <artifactId>hugmesh-parent</artifactId>
+    <version>2.8.0</version>
     <relativePath/>
   </parent>
 
   <artifactId>federation</artifactId>
-  <version>0.1.0</version>
-  <name>snapdragon-federation-api</name>
-  <description>Snapdragon dynamic federation registry + manifest API (DB-hosted federated modules)</description>
+  <version>0.2.0</version>
+  <name>hugmesh-federation-api</name>
+  <description>HugMesh dynamic federation registry + manifest API (DB-hosted federated modules)</description>
 
   <properties>
-    <!-- java.version (25), encoding, the snapdragon-commons version, the AWS SDK
+    <!-- java.version (25), encoding, the hugmesh-commons version, the AWS SDK
          BOM version, the resilience4j version and the springdoc version are all
-         inherited from snapdragon-parent. ONLY the federation-specific pins stay. -->
+         inherited from hugmesh-parent. ONLY the federation-specific pins stay. -->
 
     <!-- ICU4J is PINNED (exact version). The Unicode confusable SKELETON is a
          RECOMPUTABLE CACHE, never a unique DB identity, BECAUSE the skeleton
@@ -39,7 +39,7 @@
     <icu4j.version>77.1</icu4j.version>
     <commons-text.version>1.13.1</commons-text.version>
     <!-- The Testcontainers BOM, the r2dbc-h2 1.0.0.RELEASE / H2 2.3.232 pins, and the
-         testcontainers test deps are now ALL provided by snapdragon-parent:2.7.0
+         testcontainers test deps are now ALL provided by hugmesh-parent:2.8.0
          (its dependencyManagement imports the TC BOM + pins H2; its shared
          <dependencies> declare spring-boot-testcontainers / postgresql / junit-jupiter
          / r2dbc). The federation-spike-local dependencyManagement block and the
@@ -47,38 +47,38 @@
   </properties>
 
   <dependencies>
-    <!-- The shared, canonical Snapdragon security/tenancy/config/web building blocks
+    <!-- The shared, canonical HugMesh security/tenancy/config/web building blocks
          (Casdoor JWT authorities, issuer->domain DomainRegistry, Roles + PrincipalDomain
          helpers, the config-gated multi-issuer TenancyResourceServerConfig, the BFF
-         ApiException). Version is MANAGED by snapdragon-parent's dependencyManagement,
+         ApiException). Version is MANAGED by hugmesh-parent's dependencyManagement,
          so NO <version> here. This replaces federation's deleted local copies of
          security.{Roles,DomainRegistry,DomainScope} + config.{CasdoorAuthorities,
          TenancyResourceServerConfig}. -->
     <dependency>
-      <groupId>systems.snapdragon</groupId>
-      <artifactId>snapdragon-commons</artifactId>
+      <groupId>systems.hugmesh</groupId>
+      <artifactId>hugmesh-commons</artifactId>
     </dependency>
 
-    <!-- snapdragon-commons TESTS jar — ships the shared full-context test base
-         systems.snapdragon.commons.testsupport.PostgresTestSupport (singleton Postgres
+    <!-- hugmesh-commons TESTS jar — ships the shared full-context test base
+         systems.hugmesh.commons.testsupport.PostgresTestSupport (singleton Postgres
          container, a fresh Liquibase-migrated database per @SpringBootTest class, r2dbc +
          jdbc wired at the same DB, json.type=text default). This replaces federation's
          deleted local copy of PostgresTestSupport. classifier=tests, type=test-jar,
-         test scope. The version is set EXPLICITLY to ${snapdragon-commons.version}
-         (the parent-inherited property, 2.7.0): snapdragon-parent's dependencyManagement
-         manages the MAIN snapdragon-commons jar but not the test-jar classifier variant,
+         test scope. The version is set EXPLICITLY to ${hugmesh-commons.version}
+         (the parent-inherited property, 2.8.0): hugmesh-parent's dependencyManagement
+         manages the MAIN hugmesh-commons jar but not the test-jar classifier variant,
          so Maven cannot infer a version for it. -->
     <dependency>
-      <groupId>systems.snapdragon</groupId>
-      <artifactId>snapdragon-commons</artifactId>
-      <version>${snapdragon-commons.version}</version>
+      <groupId>systems.hugmesh</groupId>
+      <artifactId>hugmesh-commons</artifactId>
+      <version>${hugmesh-commons.version}</version>
       <classifier>tests</classifier>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
 
     <!-- spring-boot-liquibase (the Boot-4 LiquibaseAutoConfiguration module, split out of
-         the autoconfigure umbrella) is now in snapdragon-parent's shared <dependencies>
+         the autoconfigure umbrella) is now in hugmesh-parent's shared <dependencies>
          (runtime scope, next to liquibase-core), so the local declaration was deleted. -->
 
     <!-- ============================================================================
@@ -86,14 +86,14 @@
          oauth2-resource-server / validation), the data-access stack (data-r2dbc /
          r2dbc-postgresql / liquibase-core / spring-jdbc / postgresql), springdoc, and
          the whole test stack (spring-boot-starter-test / reactor-test /
-         spring-security-test / r2dbc-h2 / h2) are INHERITED from snapdragon-parent's
+         spring-security-test / r2dbc-h2 / h2) are INHERITED from hugmesh-parent's
          common <dependencies>. They were removed here to de-duplicate. ONLY the
          repo-specific dependencies below remain.
          ============================================================================ -->
 
     <!-- Resilience4j circuit breaker — wraps the DIRECT-repo override apply/clear on
          the access-suspension profile-ban write path. Boot-4 starter line
-         (resilience4j-spring-boot4); version MANAGED by snapdragon-parent (2.4.0) so
+         (resilience4j-spring-boot4); version MANAGED by hugmesh-parent (2.4.0) so
          no <version> here. -->
     <dependency>
       <groupId>io.github.resilience4j</groupId>
@@ -131,7 +131,7 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-cassandra-reactive</artifactId></dependency>
 
     <!-- AWS SDK v2 S3 (synchronous client) — used by S3BundleStorage. Version
-         managed by the aws.sdk BOM imported in snapdragon-parent's
+         managed by the aws.sdk BOM imported in hugmesh-parent's
          dependencyManagement. Repo-specific — stays here. -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
@@ -140,7 +140,7 @@
 
     <!-- ========================================================================
          Testcontainers (test scope) — spring-boot-testcontainers + the postgresql /
-         junit-jupiter / r2dbc container modules are now in snapdragon-parent's shared
+         junit-jupiter / r2dbc container modules are now in hugmesh-parent's shared
          test <dependencies>, so the local declarations were deleted. The FULL-CONTEXT
          (@SpringBootTest) suites run against a REAL Postgres via the shared
          commons.testsupport.PostgresTestSupport base (above).
@@ -149,7 +149,7 @@
 
   <build><plugins>
     <!-- The spring-boot, native and surefire (bytebuddy-experimental argLine)
-         plugins are configured in snapdragon-parent's pluginManagement; declaring
+         plugins are configured in hugmesh-parent's pluginManagement; declaring
          them here (no config) binds the managed config. The native plugin is bound
          so `./mvnw -Pnative native:compile` works; spring-boot repackages the app. -->
     <plugin>

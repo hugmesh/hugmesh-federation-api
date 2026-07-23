@@ -1,6 +1,6 @@
 # Multi-issuer security-slice — the reusable test pattern (federation-api)
 
-This is the **reference pattern** (replicated from `snapdragon-gateway`) for proving a
+This is the **reference pattern** (replicated from `hugmesh-gateway`) for proving a
 Spring WebFlux OAuth2 resource server correctly handles **per-brand (multi-issuer)
 Casdoor tokens**, with the security property that matters most: an **unknown issuer
 fails CLOSED (401)** and a token from one brand can **never authenticate as another**.

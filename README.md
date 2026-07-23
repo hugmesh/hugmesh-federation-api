@@ -1,4 +1,4 @@
-# snapdragon-federation-api
+# hugmesh-federation-api
 
 The platform's **dynamic-federation registry / DB / manifest API** — the
 authoritative catalog of federated remote modules and the runtime contract the
@@ -15,13 +15,13 @@ backend service that:
 - resolves **vanity subdomains** (`<username>.<domain>`) to a user's public
   profile fragment;
 - stores per-user content-hash-versioned module **bundles** for the
-  `snapdragon-remote-fragment` pods to *sync-and-serve-static*;
+  `hugmesh-remote-fragment` pods to *sync-and-serve-static*;
 - owns the platform-wide **moderation + kill-switch** surface; and
 - gates a **username availability / confusable** check the registration mint
   paths consult.
 
 It is built by reusing two proven references — a DB-backed federation engine and
-the productionised snapdragon-admin-bff-api conventions — not by inventing new
+the productionised hugmesh-admin-bff-api conventions — not by inventing new
 patterns.
 
 ## Current State
@@ -32,15 +32,15 @@ patterns.
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
   Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
-  shared Maven artifacts: it inherits `systems.snapdragon:snapdragon-parent:2.7.0`
+  shared Maven artifacts: it inherits `systems.hugmesh:hugmesh-parent:2.8.0`
   (a child of `spring-boot-starter-parent:4.0.7`) and consumes
-  `systems.snapdragon:snapdragon-commons:2.7.0` for the shared security/tenancy
+  `systems.hugmesh:hugmesh-commons:2.8.0` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
   commons library*.
 - ✅ **Pure Casdoor-JWT resource server, no login/session logic here.** This
   service NEVER mints, exchanges or refreshes tokens and holds no session state.
-  It deliberately does **not** depend on the new `snapdragon-auth-core` artifact —
+  It deliberately does **not** depend on the new `hugmesh-auth-core` artifact —
   that account/session/MFA/Casdoor-admin core is consumed only by **user-bff** and
   **admin-bff**, where login/session/account logic now lives (the platform-wide
   relocation of login from admin-bff → user-bff does not touch this repo). The
@@ -69,7 +69,7 @@ patterns.
   today.
 - ✅ **GitLab CI only** (`.gitlab-ci.yml`) — the continuous-OWASP pen-test stages
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
-  from `snapdragon-generator`. **No GitHub Actions anywhere.**
+  from `hugmesh-generator`. **No GitHub Actions anywhere.**
 - 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
   PUBLISH trigger and moderation auto-apply are both shipped now; the remaining
   cross-service gap is the gateway `PUBLIC_PATHS` allowlist entry).
@@ -79,10 +79,10 @@ patterns.
 | | |
 |---|---|
 | **Tier** | Backend BFF / platform service (reactive Spring Boot, behind the gateway). |
-| **Namespace** | `systems.snapdragon.federation` (artifact `federation`, image built by GitLab CI). |
-| **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter copied verbatim from `snapdragon-gateway`** (so authorities are byte-identical across the platform). |
+| **Namespace** | `systems.hugmesh.federation` (artifact `federation`, image built by GitLab CI). |
+| **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter copied verbatim from `hugmesh-gateway`** (so authorities are byte-identical across the platform). |
 | **Tenancy** | Multi-brand / multi-tenant. The brand a token belongs to is keyed on the **cryptographically-validated issuer** (one Casdoor per brand → distinct `iss`) → a single `DOMAIN_<x>` authority, never a user-settable claim. See *Multi-tenancy (domain scoping)*. |
-| **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `snapdragon-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, profile-ban writes), mod-bff / admin-bff (moderation + kill-switch). |
+| **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `hugmesh-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, profile-ban writes), mod-bff / admin-bff (moderation + kill-switch). |
 | **Downstream** | PostgreSQL (R2DBC, all runtime reads/writes; JDBC only for Liquibase migrations), an optional best-effort Cassandra manifest cache, and the filesystem/S3 bundle store. |
 
 This service is the **read/write source of truth for "what UI modules exist,
@@ -93,14 +93,14 @@ host bootstrap, the remote-fragment static fleet) is downstream of its manifest.
 flowchart TB
     subgraph Callers["Upstream callers"]
         HostShell["Angular host shells\n(manifest / capabilities / vanity)"]
-        RemoteFragment["snapdragon-remote-fragment\nsync fleet (bundle fetch)"]
+        RemoteFragment["hugmesh-remote-fragment\nsync fleet (bundle fetch)"]
         RegMint["Registration mint paths\nuser-bff / actions\n(username check, bundle upload)"]
         ModAdmin["mod-bff / admin-bff\n(moderation + kill-switch)"]
     end
 
     Gateway["fe-gateway\n(validates JWT, swaps bff_ → Casdoor JWT)"]
 
-    FedAPI["snapdragon-federation-api\n(this service)"]
+    FedAPI["hugmesh-federation-api\n(this service)"]
 
     subgraph Downstream["Downstream"]
         PG["PostgreSQL\n(R2DBC runtime + JDBC Liquibase)"]
@@ -123,7 +123,7 @@ flowchart TB
 - **Casdoor** JWT OAuth2 resource-server; the authority converter (`CasdoorAuthorities`),
   the issuer→domain `DomainRegistry`, the `Roles`/`PrincipalDomain` helpers and the
   config-gated multi-issuer `TenancyResourceServerConfig` now come from the shared
-  **`systems.snapdragon:snapdragon-commons`** library (see *Shared commons library*).
+  **`systems.hugmesh:hugmesh-commons`** library (see *Shared commons library*).
 - **springdoc-openapi-starter-webflux-ui** — spec at `/v3/api-docs`, UI at
   `/swagger-ui.html` (profile-split gating, see *Security*). The published spec is
   pinned to **OpenAPI 3.0** (`springdoc.api-docs.version=openapi_3_0`) — springdoc
@@ -136,22 +136,22 @@ flowchart TB
 - GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`); no
   GitHub Actions.
 
-## Shared commons library (`snapdragon-parent` + `snapdragon-commons`)
+## Shared commons library (`hugmesh-parent` + `hugmesh-commons`)
 
 This service is the **first adopter** of the org's shared Maven artifacts. Two
 de-duplication moves:
 
-1. **Parent POM →** `systems.snapdragon:snapdragon-parent:2.7.0` (itself a child of
+1. **Parent POM →** `systems.hugmesh:hugmesh-parent:2.8.0` (itself a child of
    `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
    R2DBC + Liquibase + JDBC, springdoc, the full test stack) and the
-   `dependencyManagement` for `snapdragon-commons`, the AWS SDK BOM, resilience4j and
+   `dependencyManagement` for `hugmesh-commons`, the AWS SDK BOM, resilience4j and
    springdoc. Only the **federation-specific** deps stay in this POM: `icu4j`,
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `systems.snapdragon:snapdragon-commons:2.7.0`.
+2. **Shared security/tenancy/web →** `systems.hugmesh:hugmesh-commons:2.8.0`.
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -174,20 +174,20 @@ de-duplication moves:
    **Two consumer-wiring steps** (the canonical recipe for the fan-out):
    - `config.CommonsSecurityConfig` `@Import`s the commons `DomainRegistry` +
      `TenancyResourceServerConfig` beans, because the `@SpringBootApplication`
-     component-scan over `systems.snapdragon.federation` does **not** cover the
-     `systems.snapdragon.commons.*` packages. (`@Import` preserves
+     component-scan over `systems.hugmesh.federation` does **not** cover the
+     `systems.hugmesh.commons.*` packages. (`@Import` preserves
      `TenancyResourceServerConfig`'s `@ConditionalOnExpression` gate.)
    - `CapabilityController` maps an **anonymous** (`jwt == null`) public read to the
      explicit `"default"` domain, because `PrincipalDomain.resolve(null, reg)`
      deliberately fails closed to the `NO_DOMAIN` sentinel (a commons hardening over
      the old `DomainScope.resolve(null)` → `"default"` fall-through).
 
-### Resolving the private `snapdragon-commons` artifact
+### Resolving the private `hugmesh-commons` artifact
 
-`snapdragon-commons` is **not** on Maven Central — it lives in the org GitLab Maven
+`hugmesh-commons` is **not** on Maven Central — it lives in the org GitLab Maven
 Package Registry. Two resolution paths, **no secrets in git**:
 
-- **Local dev:** `snapdragon-parent` + `snapdragon-commons` are `mvn install`ed into
+- **Local dev:** `hugmesh-parent` + `hugmesh-commons` are `mvn install`ed into
   `~/.m2`, so a plain `./mvnw test` resolves them locally and never touches the
   remote (this is how the build was verified green).
 - **CI / Docker:** the committed [`settings.xml`](settings.xml) declares the
@@ -210,7 +210,7 @@ real test-gated build (`stages: [security, dast, pentest, test, build]`):
   publishing a JUnit report; `build:image` only runs after it (this stage is
   **not** advisory — a failing test blocks the image build).
 - the `pentest:sca` / `pentest:dast` jobs `extends:` the **canonical, org-wide**
-  pen-test template `include`d from `snapdragon-generator`
+  pen-test template `include`d from `hugmesh-generator`
   (`/tests/pentest/ci/pentest-stage.gitlab-ci.yml`) so there is ONE source of
   truth — **OWASP Dependency-Check SCA** + the authenticated **ZAP DAST** harness
   (with the custom escalation/DoS probes) + **nuclei**. These REPLACE the earlier
@@ -619,7 +619,7 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   tables (see *Multi-tenancy*). ✅ merged to `main`.
 - **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
   optional-service module (`slug='wiki'`, `mountAt /wiki`, `requiresRole 'wiki'`,
-  **`visibility='internal'`** — seeded INERT/hidden (`visibility='internal'`) pending per-domain superadmin enablement; snapdragon-wiki-bff-api and snapdragon-wiki-ui are shipped).
+  **`visibility='internal'`** — seeded INERT/hidden (`visibility='internal'`) pending per-domain superadmin enablement; hugmesh-wiki-bff-api and hugmesh-wiki-ui are shipped).
 - **`029`** — **COMPLETE the `federation_modules` seed** so the dynamic manifest is
   AUTHORITATIVE: seed the three static-manifest slugs that had no DB row — `mod`
   (`visibility='internal'`, `requiresRole 'mod'`, `/mod`), `apidocs`
@@ -768,7 +768,7 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
 ./mvnw test          # R2DBC slices over H2-PG-compat + the REAL Liquibase
                      # changelog; filesystem storage in a temp dir; Cassandra
                      # disabled (noop). No external infra required.
-./mvnw package       # builds target/federation-0.1.0.jar
+./mvnw package       # builds target/federation-0.2.0.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
 ```
 
@@ -817,7 +817,7 @@ Representative tests:
 | `SPRING_R2DBC_URL` / `_USERNAME` / `_PASSWORD` | …`/federation` | runtime DB |
 | `SPRING_LIQUIBASE_URL` / `_USER` / `_PASSWORD` | …`/federation` | migration DB |
 | `APP_BUNDLES_STORAGE` | `filesystem` | `filesystem` \| `s3` |
-| `APP_BUNDLES_DIR` | `/var/snapdragon/federation/bundles` | filesystem root |
+| `APP_BUNDLES_DIR` | `/var/hugmesh/federation/bundles` | filesystem root |
 | `APP_BUNDLES_MAX_BYTES` | `268435456` (256 MiB) | max bytes accepted on a single `PUT /bundles/{slug}` before a 413 (streamed cap, staged file cleaned up) |
 | `APP_BUNDLES_S3_BUCKET` | `snapdragon-federation` | S3 bucket (when `storage=s3`) |
 | `APP_BUNDLES_S3_ENDPOINT` | (empty) | S3 endpoint override (point at MinIO in dev/CI) |
@@ -889,11 +889,11 @@ Intentionally NOT implemented in the scaffold:
   unpublish which always moves `visibility` to `internal` in the same write) is
   admin-recoverable ONLY, via `POST /api/federation/overrides/{moduleSlug}/rearm`.
   See `VanityPublishServiceTest`.
-  `snapdragon-user-bff-api`'s `ProfileService.save` now calls this endpoint (via
+  `hugmesh-user-bff-api`'s `ProfileService.save` now calls this endpoint (via
   `FederationApiClient`) when the user opts in/out — see that repo's README.
 - **Vanity SERVING.** The resolved `VanityProfileDto.fragmentPath`
   (`/_fragments/profile-<username>/<contentHash>/`) is served by the existing
-  `snapdragon-remote-fragment` fleet (its sidecar polls `GET /manifest`, filters
+  `hugmesh-remote-fragment` fleet (its sidecar polls `GET /manifest`, filters
   `kind=='fragment'`, mirrors the bytes; nginx serves them; the fe-gateway routes
   `/_fragments/**`). **Gap:** remote-fragment only syncs fragments that appear in
   the manifest, and the manifest only emits `federation_modules` rows — so a
@@ -904,7 +904,7 @@ Intentionally NOT implemented in the scaffold:
   ends every chain with `anyExchange().authenticated()` and opens a hardcoded
   `PUBLIC_PATHS` allowlist. `/api/federation/vanity/**` (and `/capabilities`) must
   be added there so the fe-gateway does not 401 the anonymous public read before it
-  reaches federation — a one-line change in the `snapdragon-gateway` repo.
+  reaches federation — a one-line change in the `hugmesh-gateway` repo.
 
 ## Roadmap
 
@@ -931,7 +931,7 @@ Within this repo (detail in *Deferred / stubbed*):
 Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
 
 - 🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**` +
-  `/capabilities` — a one-line change in the `snapdragon-gateway` repo (see above).
+  `/capabilities` — a one-line change in the `hugmesh-gateway` repo (see above).
 - 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
   Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). The
   shared commons converter already emits the `MFA_SATISFIED` authority (parity with
@@ -949,11 +949,11 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
   DTO`), `UploadStorage` (pluggable filesystem|S3, opaque locator) +
   `AssetController` reactive serving + content-hash versioning + a scope triple
   (`all|role|user`).
-- **Conventions** = `snapdragon-admin-bff-api`: reactive WebFlux security
+- **Conventions** = `hugmesh-admin-bff-api`: reactive WebFlux security
   (profile-split filter chains), R2DBC + JDBC-only-for-Liquibase, `CassandraRouteMirror`
   best-effort mirror, springdoc, native hints, Dockerfile, `.gitlab-ci.yml`,
   H2-PG-compat slice tests over the real changelog.
-- **Auth / tenancy** = `snapdragon-gateway`: the `CasdoorAuthorities` converter,
+- **Auth / tenancy** = `hugmesh-gateway`: the `CasdoorAuthorities` converter,
   `DomainRegistry`, `Roles` helpers and `TenancyResourceServerConfig` are the
   canonical gateway code, copied verbatim so authorities + domain derivation are
   byte-identical across the platform.

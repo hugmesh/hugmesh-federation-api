@@ -6,7 +6,7 @@
             http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
 
     <!--
-      snapdragon-federation-api schema. Liquibase runs over a JDBC datasource
+      hugmesh-federation-api schema. Liquibase runs over a JDBC datasource
       (Liquibase has no R2DBC runner); ALL runtime access goes through R2DBC.
 
       JSON columns use the `${json.type}` property so the SAME changelog applies
@@ -69,7 +69,7 @@
               kind='remote-shell', mountAt /wiki, requiresRole 'wiki',
               visibility='internal'; idempotent slug-absent MARK_RAN seed-guard, like
               022/025. Registered INERT — visibility='internal' HIDES it from
-              non-role users until the snapdragon-wiki-ui + snapdragon-wiki-bff-api
+              non-role users until the hugmesh-wiki-ui + hugmesh-wiki-bff-api
               surfaces ship)
         029 — COMPLETE the federation_modules seed so the dynamic manifest is
               AUTHORITATIVE: add the three static-manifest slugs that had no DB row

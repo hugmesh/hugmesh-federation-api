@@ -1,7 +1,7 @@
-# Snapdragon federation-api — developer make targets.
+# HugMesh federation-api — developer make targets.
 #
 # `make pentest` runs the repo-local pen-test self-scan that mirrors the GitLab CI
-# `pentest` stage (snapdragon-generator tests/pentest/ci/pentest-stage.gitlab-ci.yml):
+# `pentest` stage (hugmesh-generator tests/pentest/ci/pentest-stage.gitlab-ci.yml):
 #   * SCA  — OWASP Dependency-Check over this Maven project (CVSS>=9 fails the build,
 #            matching the CI dependency-check job).
 #   * DAST — when DAST_TARGET_URL is set, delegates to the canonical generator harness
@@ -19,10 +19,10 @@ JDK_IMAGE        ?= eclipse-temurin:21-jdk-noble
 DEP_CHECK_DATA   ?= .dep-check-data
 SCA_FAIL_CVSS    ?= 9
 
-# DAST harness (canonical, in snapdragon-generator). Override GENERATOR_DIR if the
+# DAST harness (canonical, in hugmesh-generator). Override GENERATOR_DIR if the
 # generator checkout lives elsewhere; the target clones it on demand otherwise.
-GENERATOR_DIR    ?= ../snapdragon-generator
-GENERATOR_REPO   ?= https://github.com/Snapdragon-Systems/snapdragon-generator.git
+GENERATOR_DIR    ?= ../hugmesh-generator
+GENERATOR_REPO   ?= https://github.com/Snapdragon-Systems/hugmesh-generator.git
 PENTEST_HARNESS  ?= $(GENERATOR_DIR)/tests/pentest/run-pentest.sh
 
 .PHONY: pentest pentest-sca pentest-dast
