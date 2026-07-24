@@ -79,6 +79,34 @@ class FederationModuleRepositoryTest {
         assertOptionalService("games", "Games", "ROLE_GAMES", "/games");
     }
 
+    @Test
+    void characterForgeModule_isRegisteredInert_andShaped() {
+        // Changeset 038 registers the Character Forge (3D) remote DEFAULT-OFF:
+        // kind='remote-shell', visibility='internal', enabled=FALSE (optional
+        // service — flipped on install), ROLE_USER floor, mounted at
+        // /character-forge. Its presence proves changeset 038 applied.
+        FederationModule forge = repo.findBySlug("character-forge").block();
+        assertThat(forge).isNotNull();
+        assertThat(forge.getDisplayName()).isEqualTo("Character Forge (3D)");
+        assertThat(forge.getKind()).isEqualTo("remote-shell");
+        assertThat(forge.getVisibility()).isEqualTo("internal");
+        assertThat(forge.isEnabled()).isFalse();
+        assertThat(forge.getCircuitState()).isEqualTo("closed");
+        assertThat(forge.getRemoteEntryUrl())
+                .isEqualTo("http://snapdragon-character-forge-ui:8080/remoteEntry.json");
+        assertThat(forge.getExposedModule()).isEqualTo("./routes");
+        assertThat(forge.getMetadata()).contains("\"requiresRole\":\"ROLE_USER\"");
+        assertThat(forge.getMetadata()).contains("\"mountAt\":\"/character-forge\"");
+        // Platform/first-party module — no owner.
+        assertThat(forge.getOwnerUserId()).isNull();
+
+        // Registered INERT: the enabled-only manifest finder must NOT surface it.
+        List<FederationModule> enabled = repo.findAllByEnabledTrueOrderByKindAscSlugAsc()
+                .collectList().block();
+        assertThat(enabled).extracting(FederationModule::getSlug)
+                .doesNotContain("character-forge");
+    }
+
     private void assertOptionalService(String slug, String displayName,
                                        String requiresRole, String mountAt) {
         FederationModule m = repo.findBySlug(slug).block();

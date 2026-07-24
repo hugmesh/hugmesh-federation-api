@@ -65,10 +65,21 @@ public final class ReservedNames {
             // /superadmin/service-catalog/** on the superadmin-gateway — a dedicated
             // first-segment route prefix (canonical reserved-prefixes.yaml).
             "superadmin",
+            // hmdm / attest: the Headwind MDM (/hmdm/manage/**, /hmdm/rest/**) and
+            // AttestationServer (/attest/auditor/**, /attest/api/**) tailnet-only
+            // superadmin-gateway route prefixes (canonical reserved-prefixes.yaml
+            // rev 7/8 — drift fix: the canonical YAML instructed the app-repo
+            // copies to add these when the routes shipped).
+            "hmdm", "attest",
             // character-studio: the Character Studio (VN) micro-frontend remote is
             // served at /character-studio/** on the fe-gateway — a dedicated
             // first-segment route prefix (canonical reserved-prefixes.yaml rev 4).
             "character-studio",
+            // character-forge: the Character Forge (3D) micro-frontend remote is
+            // served at /character-forge/** on the fe-gateway (BFF at
+            // /bff/character-forge/**) — a dedicated first-segment route prefix
+            // (canonical reserved-prefixes.yaml rev 9).
+            "character-forge",
             // --- be-gateway route prefixes / publicly-routable homeserver surfaces ---
             // _synapse + media: PUBLICLY-ROUTABLE homeserver client surfaces the
             // route-access seed deploys — /_synapse/** (Matrix Synapse-compat,
@@ -96,6 +107,10 @@ public final class ReservedNames {
             "api-docs", "docs", "_remotes", "producer-registration", "registration",
             "wasm-fragment", "games-dodecahedron", "games-rpg-maker",
             "games-three-wizards", "games-vn-maker", "games-instances-console",
+            // games-character-forge / games-shadows-of-the-net: the 3D character
+            // maker + the XR chat room published into snapdragon.games as wasm
+            // games (nginx /_remotes/<slug>/ blocks, existing games-* pattern).
+            "games-character-forge", "games-shadows-of-the-net",
             // --- defensive web reserved names ---
             "root", "static", "assets", "public", "health", "healthz", "actuator",
             "metrics", "well-known", "favicon", "robots", "sitemap", "status",

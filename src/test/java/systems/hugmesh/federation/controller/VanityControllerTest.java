@@ -180,6 +180,42 @@ class VanityControllerTest {
         verify(svc, never()).resolve(any());
     }
 
+    /**
+     * The Character Forge (3D) additions: {@code character-forge} (fe-gateway
+     * {@code /character-forge/**} + {@code /bff/character-forge/**} route prefix)
+     * and the games-side wasm slugs {@code games-character-forge} /
+     * {@code games-shadows-of-the-net} (snapdragon.games nginx
+     * {@code /_remotes/<slug>/} blocks) are reserved: each must hard-404 as a
+     * vanity username — case-insensitively, host form included — and must NEVER
+     * reach the resolve service. Mirrors the forum/wiki guards.
+     */
+    @Test
+    void characterForgeLabels_are404_andNeverHitService() {
+        VanityService svc = mock(VanityService.class);
+        VanityController c = controller(svc);
+
+        for (String label : new String[]{
+                "character-forge", "games-character-forge", "games-shadows-of-the-net"}) {
+            assertThat(ReservedNames.isReserved(label)).as("reserved: %s", label).isTrue();
+
+            StepVerifier.create(c.resolve(label))
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(ResponseStatusException.class);
+                        assertThat(((ResponseStatusException) e).getStatusCode())
+                                .isEqualTo(HttpStatus.NOT_FOUND);
+                    })
+                    .verify();
+            StepVerifier.create(c.resolve(label.toUpperCase()))
+                    .expectError(ResponseStatusException.class)
+                    .verify();
+            // The vanity HOST form (<label>.snapdragon.systems) is rejected too.
+            StepVerifier.create(c.resolveByHost(label + ".snapdragon.systems"))
+                    .expectError(ResponseStatusException.class)
+                    .verify();
+        }
+        verify(svc, never()).resolve(any());
+    }
+
     @Test
     void resolveByHost_reservedHost_is404() {
         VanityService svc = mock(VanityService.class);

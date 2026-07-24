@@ -166,4 +166,5 @@
     <include file="db/changelog/035-user-modules-domain.xml"/>
     <include file="db/changelog/036-system-findings.xml"/>
     <include file="db/changelog/037-system-findings-subject-ref.xml"/>
+    <include file="db/changelog/038-register-character-forge-module.xml"/>
 </databaseChangeLog>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER character-forge (the 3D character maker: SVG-VN-to-3D mapping studio +
+        the Godot-rendered forge surface) as a federation module — the registry row the
+        Angular host loads at runtime + the row the PUBLIC /api/federation/capabilities
+        projection reports so a logged-out / non-admin host can grey-out the service
+        when it is NOT installed.
+
+        character-forge is an OPTIONAL service (DEFAULT-OFF, the generator's
+        with-character-forge flag; add/remove-by-command on a generated USB). It is an Angular
+        native-federation REMOTE (kind = 'remote-shell', like the forum/games/tube/
+        owncast/character-studio rows), served at the apex PATH /character-forge with a
+        ROLE_USER floor (/bff/character-forge/** is its BFF, gated the same). Mirrors
+        025-games / 033-tube field-for-field with the character-forge specifics
+        (recipe: generator specs/cluster/manifests/character-studio/
+        FEDERATION-REGISTRATION-TODO.md, adapted per the XR-chat design contract).
+
+        REGISTERED INERT (hidden until the operator installs the slug):
+          • slug          = 'character-forge'
+          • kind          = 'remote-shell'     (Angular native-federation REMOTE).
+          • visibility    = 'internal'         (hidden from non-ROLE_ADMIN manifest
+                            callers; the gateway route-access /character-forge/** =
+                            ROLE_USER row is the enforcement floor, not this flag).
+          • enabled       = false              (DEFAULT-OFF optional service; flipped
+                            when the slug is installed).
+          • metadata.requiresRole = 'ROLE_USER' (explicit role token, games-style).
+          • metadata.mountAt      = '/character-forge' (apex path).
+          • owner_user_id = NULL               (platform/first-party module).
+
+        Idempotent (MARK_RAN preCondition on slug-absent). remote_entry_url is the
+        platform service-DNS placeholder the deployment's Service wires at runtime
+        (identical pattern to 022-025/028/029/031/033).
+    -->
+
+    <changeSet id="038-1-register-character-forge-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'character-forge'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="character-forge"/>
+            <column name="display_name" value="Character Forge (3D)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://snapdragon-character-forge-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="false"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;ROLE_USER&quot;,&quot;mountAt&quot;:&quot;/character-forge&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
