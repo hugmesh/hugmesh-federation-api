@@ -173,8 +173,8 @@ public class ModuleRegistryController {
               <tr><td>ROLE_ADMIN</td>
                   <td>Caller's own brand</td></tr>
               <tr><td>ROLE_SUPERADMIN</td>
-                  <td><code>"default"</code> (cross-brand provisioning is a later
-                      admin-tooling concern)</td></tr>
+                  <td><code>"default"</code> (the SUPERADMIN admin-tooling surface is
+                      <code>/api/federation/admin/modules</code>)</td></tr>
             </table>
 
             <p>Default field values applied on create: <code>visibility='public'</code>,

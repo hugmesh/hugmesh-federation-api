@@ -73,6 +73,13 @@ So the tests are split:
 
 - **`MultiIssuerSecuritySliceTest`** + **`SecurityConfigPathGateSliceTest`** — the
   lightweight slice (no context). Path-gate rules + multi-issuer decoder + fail-closed.
+- **`AdminModulePathGateSliceTest`** — the same lightweight slice pointed at
+  `/api/federation/admin/modules/**`, whose load-bearing assertion is the gate's
+  **narrowness**: unlike the sibling `/api/federation/modules/**` rule
+  (`hasAnyRole ADMIN,SUPERADMIN`) this one is `hasRole SUPERADMIN` ONLY, so a
+  per-brand ADMIN is 403 on every verb (nothing sits above SUPERADMIN in the
+  hierarchy, so it cannot be satisfied transitively). The `@PreAuthorize` +
+  service-guard half is proven with the context up in `AdminModuleEndpointTest`.
 - **`ModerationDecideEscalationTest`** — a `@SpringBootTest` (mirrors the existing
   `DomainAuthzEndpointTest`) for the `POST /{id}/decide` **escalation boundary**: a MOD
   passes the coarse `/api/federation/moderation/**` path gate (`hasAnyRole MOD/ADMIN/

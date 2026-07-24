@@ -242,6 +242,8 @@ privileged surface in every brand.
 | `/username/{candidate}/confusables` | GET | ROLE_ADMIN | Admin debug: the computed skeleton (+ any reserved match), no DB scan. |
 | `/modules` | GET/POST | ROLE_ADMIN | Registry CRUD (list / create), domain-scoped. |
 | `/modules/{slug}` | GET/PUT/DELETE | ROLE_ADMIN | Registry CRUD (get / update / delete), domain-scoped. |
+| `/admin/modules` | GET/POST | **ROLE_SUPERADMIN only** | **Create-and-federate wizard control plane** (admin-bff's Service Store calls it). GET = the FULL registry state — every brand, **including disabled / circuit-open / internal rows** (the view the manifest deliberately hides). POST = idempotent **upsert-by-slug** (create defaults: `kind=remote-shell`, `visibility=internal`, `enabled=false`, `domain='default'`; a refresh never touches `slug`/`domain`/`circuit_state`, and an OMITTED `enabled` leaves the flag unchanged). Write guards: `profile-*` slugs 400 (vanity territory), `remoteEntryUrl` must be absolute http(s), `metadata` must be a JSON object with well-shaped `mountAt`/`requiresRole`. A per-brand ADMIN is **403** here. |
+| `/admin/modules/{slug}` | DELETE | **ROLE_SUPERADMIN only** | **Soft-disable** (`enabled=false`, 204): reversible registry off-switch — the row stays for inspection + a later re-enabling upsert; `visibility`/`circuit_state` untouched; 404 when absent. Never a hard delete (that stays on `DELETE /modules/{slug}`). |
 | `/bundles/{slug}` | PUT | authenticated (owner) | Upload a module bundle (content-hash versioned). |
 | `/bundles/{slug}` | DELETE | authenticated (owner) | Delete my bundle. |
 | `/bundles/mine` `…/slug/{slug}` `…/{hash}` | GET | authenticated | List bundles by owner / slug / content-hash. |
@@ -789,6 +791,16 @@ Representative tests:
   per-module kill-switch (`OverrideController` `action=unpublish`, which sets only
   `enabled=false` and leaves `visibility=public`) — recovery from that state is
   admin-only, via `POST /api/federation/overrides/{moduleSlug}/rearm`.
+- `AdminModuleServiceTest` / `AdminModuleEndpointTest` /
+  `AdminModulePathGateSliceTest` — the SUPERADMIN `/admin/modules` control plane:
+  create-with-defaults (`kind=remote-shell`, `visibility=internal`,
+  `enabled=false`, `domain=default`), refresh-in-place (`id`/`createdAt` stable, an
+  OMITTED `enabled` never silently disabling the row), the write guards
+  (`profile-*` slug, non-http(s) `remoteEntryUrl`, malformed
+  `metadata`/`mountAt`/`requiresRole` — each 400 with a repo re-read proving
+  nothing persisted), a circuit-break kill surviving wizard re-POSTs, soft-disable
+  keeping the row while the REAL manifest render drops it, and the gate NARROWNESS
+  (a per-brand ADMIN is 403 on every verb, victim-row proven unchanged).
 - `UsernameAvailabilityServiceTest` / `UsernameSkeletonServiceTest` — the
   confusable gate, incl. the exact-vs-fuzzy reserved-match tiers (`reason=reserved`
   never overridable vs `reason=confusable` ROLE_ADMIN-overridable).
@@ -803,7 +815,8 @@ Representative tests:
 - `FederationModuleRepositoryTest`, `UserModuleRepositoryTest`,
   `ModerationAndOverrideRepositoryTest`, `DomainScopedRepositoryTest` — R2DBC
   slices over the real changelog (incl. the `026` domain-pinned finders).
-- `MultiIssuerSecuritySliceTest` / `SecurityConfigPathGateSliceTest` (see
+- `MultiIssuerSecuritySliceTest` / `SecurityConfigPathGateSliceTest` /
+  `AdminModulePathGateSliceTest` (see
   `docs/testing/MULTI-ISSUER-SLICE.md`) / `DomainAuthzEndpointTest` — the Casdoor
   authority mapping (incl. the authority-injection regressions), the multi-issuer
   fail-closed decoder, and HTTP authz per role.
@@ -941,7 +954,11 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
 - 🚧 **Superadmin Service Catalog TAILSCALE-VPN-ONLY federated remotes.** The in-flight
   superadmin Service Catalog will register tailnet-only federated remote modules in
   *this* registry as a future module class (off the public UI, gateway role-blocked
-  + authguarded). Not yet a registered module kind here.
+  + authguarded). Not yet a registered module kind here. ✅ The **registration write
+  surface shipped**: the SUPERADMIN-only `/api/federation/admin/modules`
+  upsert/soft-disable API (see *Endpoints*) is what admin-bff's Service Store
+  federate action calls; a freshly-federated module lands `visibility=internal,
+  enabled=false` — dark until deliberately enabled.
 
 ## Conventions mirrored
 

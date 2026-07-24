@@ -160,6 +160,26 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-maven-plugin</artifactId>
     </plugin>
+    <!-- Surefire config MERGES with the parent's managed config (bytebuddy argLine
+         kept). The R2DBC pool cap exists because the FULL-CONTEXT suites share ONE
+         singleton Postgres container (commons PostgresTestSupport) across 13+
+         CACHED Spring test contexts, each holding its pool open for the whole run:
+         at the driver default (initial/max 10) the container's max_connections
+         (100) is exhausted before the LAST classes boot — the suite tail then dies
+         with 'FATAL: sorry, too many clients already'. Tests are sequential, so a
+         tiny per-context pool is ample; system properties sit below any
+         @DynamicPropertySource, so a test that really needs a bigger pool can
+         still override. -->
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <configuration>
+        <systemPropertyVariables>
+          <spring.r2dbc.pool.initial-size>1</spring.r2dbc.pool.initial-size>
+          <spring.r2dbc.pool.max-size>4</spring.r2dbc.pool.max-size>
+        </systemPropertyVariables>
+      </configuration>
+    </plugin>
   </plugins></build>
 
   <profiles>

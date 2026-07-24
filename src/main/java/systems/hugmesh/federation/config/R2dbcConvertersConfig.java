@@ -10,6 +10,8 @@ import org.springframework.data.r2dbc.convert.R2dbcCustomConversions;
 import org.springframework.data.r2dbc.dialect.DialectResolver;
 import org.springframework.data.r2dbc.dialect.R2dbcDialect;
 
+import org.springframework.data.convert.WritingConverter;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -24,6 +26,18 @@ import java.util.ArrayList;
  * GraalVM native-image, so registering the two reading converters explicitly
  * makes the conversion deterministic in both JVM and native modes (and on the H2
  * slice-test DB, which also hands back {@code LocalDateTime} for {@code timestamp}).
+ *
+ * <p><b>Why the WRITING converter exists (zone symmetry).</b> The reading side
+ * pins UTC ({@code LocalDateTime.toInstant(UTC)}), but without a writing
+ * converter the DRIVER encodes an {@code Instant} into a {@code timestamp}
+ * column via the JVM's <i>system default zone</i> (both r2dbc-postgresql and
+ * io.r2dbc.h2). On any non-UTC host that asymmetry silently shifts EVERY
+ * timestamp by the local offset on EVERY save+read round-trip — e.g. a
+ * read-modify-save patch ({@code ModuleRegistryService.applyPatch}, the admin
+ * upsert refresh) would move a row's {@code created_at} hours backwards per
+ * write. Latent in UTC-pinned prod containers, live everywhere else.
+ * {@link InstantToLocalDateTimeConverter} mirrors the read assumption
+ * (UTC wall time on the wire) so the round-trip is the identity in every zone.
  */
 @Configuration(proxyBeanMethods = false)
 public class R2dbcConvertersConfig {
@@ -37,6 +51,7 @@ public class R2dbcConvertersConfig {
         var converters = new ArrayList<>(dialect.getConverters());
         converters.add(new OffsetDateTimeToInstantConverter());
         converters.add(new LocalDateTimeToInstantConverter());
+        converters.add(new InstantToLocalDateTimeConverter());
         return R2dbcCustomConversions.of(dialect, converters);
     }
 
@@ -48,5 +63,16 @@ public class R2dbcConvertersConfig {
     @ReadingConverter
     static class LocalDateTimeToInstantConverter implements Converter<LocalDateTime, Instant> {
         @Override public Instant convert(LocalDateTime source) { return source.toInstant(ZoneOffset.UTC); }
+    }
+
+    /** The write-side mirror of {@link LocalDateTimeToInstantConverter}: an
+     *  {@code Instant} goes to the {@code timestamp} column as UTC wall time, so
+     *  write+read is the identity regardless of the host's default zone (without
+     *  this the driver encodes via the system zone — see the class javadoc). */
+    @WritingConverter
+    static class InstantToLocalDateTimeConverter implements Converter<Instant, LocalDateTime> {
+        @Override public LocalDateTime convert(Instant source) {
+            return LocalDateTime.ofInstant(source, ZoneOffset.UTC);
+        }
     }
 }

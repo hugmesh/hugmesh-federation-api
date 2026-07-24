@@ -60,6 +60,9 @@ import systems.hugmesh.commons.security.DomainRegistry;
  *       ROLE_SERVICE/ADMIN/SUPERADMIN (INTERNAL enumeration oracle);</li>
  *   <li>module-write ({@code /api/federation/modules/**}), overrides
  *       ({@code /api/federation/overrides/**}) = ROLE_ADMIN or ROLE_SUPERADMIN;</li>
+ *   <li>superadmin module admin ({@code /api/federation/admin/modules/**}) =
+ *       ROLE_SUPERADMIN ONLY (the create-and-federate wizard control plane —
+ *       a per-brand ADMIN is 403 here);</li>
  *   <li>moderation ({@code /api/federation/moderation/**}) = ROLE_MOD/ADMIN/SUPERADMIN
  *       (method-security narrows decide to ROLE_ADMIN/SUPERADMIN); the self-service
  *       sub-path ({@code POST /api/federation/moderation/recommend-instance-block})
@@ -177,6 +180,14 @@ public class SecurityConfig {
         // SUPERADMIN reaches it as the cross-domain infra role. Declared BEFORE the
         // authenticated catch-alls so it can never fall through to plain authenticated.
         ex.pathMatchers("/api/federation/username/**").hasAnyRole("SERVICE", "ADMIN", "SUPERADMIN");
+        // SUPERADMIN federation-module admin (the create-and-federate wizard control
+        // plane): full-registry read + upsert-by-slug + soft-disable. hasRole
+        // SUPERADMIN ONLY — nothing sits above SUPERADMIN in the RoleHierarchy, so a
+        // per-brand ADMIN is 403 here (this surface writes cross-brand
+        // control-plane state; the per-brand registry surface below is theirs).
+        // Defence-in-depth with AdminModuleController's class-level @PreAuthorize.
+        ex.pathMatchers("/api/federation/admin/modules", "/api/federation/admin/modules/**")
+                .hasRole("SUPERADMIN");
         // Registry write + kill-switch = admin (defence-in-depth on top of the
         // @PreAuthorize method gates). SUPERADMIN added as the cross-domain infra
         // role (the per-domain CUT — admin sees only their domain's rows; superadmin
