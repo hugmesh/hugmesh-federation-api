@@ -85,6 +85,13 @@ class FederationModuleRepositoryTest {
         // kind='remote-shell', visibility='internal', enabled=FALSE (optional
         // service — flipped on install), ROLE_USER floor, mounted at
         // /character-forge. Its presence proves changeset 038 applied.
+        //
+        // The remote_entry_url asserted below is the POST-039 value: 038 inserts the
+        // pre-rebrand snapdragon-character-forge-ui host and the additive 039 UPDATE
+        // repoints it at hugmesh-character-forge-ui (038 is merged history and is NOT
+        // edited in place). Asserting the hugmesh host therefore proves BOTH changesets
+        // applied, in order. The 'character-forge' SLUG / mountAt stay frozen — only the
+        // sibling service's brand prefix moved.
         FederationModule forge = repo.findBySlug("character-forge").block();
         assertThat(forge).isNotNull();
         assertThat(forge.getDisplayName()).isEqualTo("Character Forge (3D)");
@@ -93,7 +100,7 @@ class FederationModuleRepositoryTest {
         assertThat(forge.isEnabled()).isFalse();
         assertThat(forge.getCircuitState()).isEqualTo("closed");
         assertThat(forge.getRemoteEntryUrl())
-                .isEqualTo("http://snapdragon-character-forge-ui:8080/remoteEntry.json");
+                .isEqualTo("http://hugmesh-character-forge-ui:8080/remoteEntry.json");
         assertThat(forge.getExposedModule()).isEqualTo("./routes");
         assertThat(forge.getMetadata()).contains("\"requiresRole\":\"ROLE_USER\"");
         assertThat(forge.getMetadata()).contains("\"mountAt\":\"/character-forge\"");

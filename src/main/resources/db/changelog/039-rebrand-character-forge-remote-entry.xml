@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REBRAND FOLLOW-UP for 038 — repoint the character-forge remote_entry_url from
+        the sibling UI's OLD k8s Service short-name (snapdragon-character-forge-ui) to
+        its rebranded one (hugmesh-character-forge-ui).
+
+        WHY A NEW CHANGESET INSTEAD OF EDITING 038 IN PLACE.
+        038-register-character-forge-module.xml is MERGED (#86) and may already have run
+        in live databases, so it is immutable history:
+          1. remote_entry_url lives INSIDE 038's <changeSet>, so rewriting it changes the
+             changeSet's Liquibase MD5. Every DB that already ran 038 would then fail
+             startup with ValidationFailedException on a checksum mismatch.
+          2. Even ignoring checksums, an in-place edit would NOT actually fix an already
+             migrated DB: 038 is recorded RAN and never re-executes, so the live row
+             would keep pointing at the dead snapdragon-* Service forever. Only a NEW
+             changeset can migrate an existing row.
+        The one in-place precedent in this repo (PR #83's "Snapdragon — Federation Host"
+        -> "HugMesh — Federation Host" display_name edit in 010) was an explicitly-flagged
+        cosmetic exception. That same PR #83 deliberately LEFT every
+        http://snapdragon-<slug>[-ui]:8080/remoteEntry.json seed value alone, on the
+        stated grounds that they are "live routing targets owned by those sibling repos'
+        own (separate) rebrand, not cosmetic text". This changeset IS that separate
+        rebrand arriving for character-forge, so it migrates the value rather than
+        retro-editing the shipped INSERT.
+
+        DEPLOY ORDERING. The value here must match the sibling's actual k8s Service name.
+        The Service/Deployment/HTTPRoute for the Character Forge UI are renamed
+        snapdragon-character-forge-ui -> hugmesh-character-forge-ui in the generator's
+        specs/cluster/manifests/character-forge/ manifests as part of the SAME
+        character-forge rebrand wave. This changeset must not reach a cluster before
+        that manifest rename does, or the remote entry would resolve to a Service that
+        does not exist yet. (The row is registered enabled=false / visibility='internal'
+        by 038, so an in-flight window is inert rather than user-visible.)
+
+        NOT RENAMED HERE (frozen, per reserved-prefixes.yaml rev 9 + the merged 038
+        federation registration): the FEATURE SLUG 'character-forge' itself — the row's
+        slug, metadata.mountAt '/character-forge', the fe-gateway /character-forge/**
+        and BFF /bff/character-forge/** route prefixes. Only the BRAND PREFIX on the
+        sibling service's hostname changes.
+
+        SAFETY. The preCondition matches the row ONLY while it still carries the exact
+        pre-rebrand URL, so the changeset is idempotent (re-runs MARK_RAN) and it never
+        clobbers an operator/superadmin override of remote_entry_url (the admin control
+        plane added in #85 can rewrite this column). The same predicate is repeated in
+        the <where> clause so a concurrent override between the precondition check and
+        the UPDATE is still a no-op rather than a silent overwrite. updated_at is bumped
+        to mirror what ModuleRegistryService/AdminModuleService do on any row mutation.
+        A rollback restores the pre-rebrand URL.
+    -->
+
+    <changeSet id="039-1-rebrand-character-forge-remote-entry" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM federation_modules
+                 WHERE slug = 'character-forge'
+                   AND remote_entry_url = 'http://snapdragon-character-forge-ui:8080/remoteEntry.json'
+            </sqlCheck>
+        </preConditions>
+
+        <update tableName="federation_modules">
+            <column name="remote_entry_url" value="http://hugmesh-character-forge-ui:8080/remoteEntry.json"/>
+            <column name="updated_at" valueComputed="${now}"/>
+            <where>
+                slug = 'character-forge'
+                AND remote_entry_url = 'http://snapdragon-character-forge-ui:8080/remoteEntry.json'
+            </where>
+        </update>
+
+        <rollback>
+            <update tableName="federation_modules">
+                <column name="remote_entry_url" value="http://snapdragon-character-forge-ui:8080/remoteEntry.json"/>
+                <column name="updated_at" valueComputed="${now}"/>
+                <where>
+                    slug = 'character-forge'
+                    AND remote_entry_url = 'http://hugmesh-character-forge-ui:8080/remoteEntry.json'
+                </where>
+            </update>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

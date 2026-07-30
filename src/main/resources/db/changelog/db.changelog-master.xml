@@ -122,6 +122,20 @@
               address that row. NULL for the surface-level avatar/profile path (036),
               which is UNAFFECTED. Adds a composite (surface, status) index that backs
               the future reconcile query.
+        038 — register the character-forge remote (the 3D character maker) as a
+              federation_modules row: kind='remote-shell', mountAt /character-forge,
+              requiresRole ROLE_USER, enabled=false, visibility='internal'; idempotent
+              slug-absent MARK_RAN seed-guard. REGISTERED INERT — DEFAULT-OFF optional
+              service, flipped on when the operator installs the slug.
+        039 — rebrand follow-up to 038: repoint the character-forge remote_entry_url
+              from the sibling UI's pre-rebrand k8s Service short-name
+              (snapdragon-character-forge-ui) to hugmesh-character-forge-ui. An ADDITIVE
+              UPDATE rather than an edit of the merged 038 INSERT: 038 may already have
+              run, so rewriting it in place would both break its Liquibase checksum AND
+              leave already-migrated rows pointing at the dead Service (038 never
+              re-executes). Guarded on the exact pre-rebrand URL so it is idempotent and
+              never clobbers a superadmin override; rollback restores the old value.
+              Must not reach a cluster ahead of the matching generator manifest rename.
     -->
 
     <property name="json.type" value="jsonb" dbms="postgresql"/>
@@ -167,4 +181,5 @@
     <include file="db/changelog/036-system-findings.xml"/>
     <include file="db/changelog/037-system-findings-subject-ref.xml"/>
     <include file="db/changelog/038-register-character-forge-module.xml"/>
+    <include file="db/changelog/039-rebrand-character-forge-remote-entry.xml"/>
 </databaseChangeLog>

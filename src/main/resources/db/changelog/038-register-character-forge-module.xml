@@ -36,6 +36,17 @@
         Idempotent (MARK_RAN preCondition on slug-absent). remote_entry_url is the
         platform service-DNS placeholder the deployment's Service wires at runtime
         (identical pattern to 022-025/028/029/031/033).
+
+        SUPERSEDED VALUE — remote_entry_url below is the PRE-REBRAND host
+        (snapdragon-character-forge-ui) and is left as shipped: this changeSet is merged
+        history, and rewriting a value inside it would break the Liquibase checksum on
+        every DB that already ran it (and still would not fix those rows, since a RAN
+        changeSet never re-executes). The current host is set by the additive follow-up
+        039-rebrand-character-forge-remote-entry.xml
+        (-> http://hugmesh-character-forge-ui:8080/remoteEntry.json). Read 038+039
+        together for the effective row. Only this file-level COMMENT is edited here —
+        nothing inside <changeSet> — so the checksum is untouched (same treatment PR #83
+        gave 022/023/024/028's prose).
     -->
 
     <changeSet id="038-1-register-character-forge-module" author="federation">

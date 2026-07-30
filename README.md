@@ -658,6 +658,22 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   sticker id — for part-activation correlation; NULL for the surface-level
   avatar/profile path) plus a composite `(surface, status)` index backing the
   reconcile query.
+- **`038`** — register **Character Forge (3D)** (`slug='character-forge'`,
+  `kind='remote-shell'`, `mountAt /character-forge`, `requiresRole ROLE_USER`,
+  **`enabled=false` + `visibility='internal'`**) — seeded INERT; a DEFAULT-OFF
+  optional service flipped on when the operator installs the slug.
+- **`039`** — rebrand follow-up to `038`: repoints the character-forge
+  `remote_entry_url` from the sibling UI's pre-rebrand k8s Service short-name
+  (`snapdragon-character-forge-ui`) to **`hugmesh-character-forge-ui`**. It is an
+  **additive `UPDATE`, not an edit of the merged `038` INSERT** — `038` may already
+  have run, so rewriting it in place would break its Liquibase checksum *and* still
+  leave migrated rows on the dead Service (a RAN changeSet never re-executes).
+  Guarded on the exact pre-rebrand URL, so it is idempotent and never clobbers a
+  superadmin override; `<rollback>` restores the old value. **Deploy ordering:** must
+  not reach a cluster ahead of the matching generator manifest rename
+  (`specs/cluster/manifests/character-forge/`). The `character-forge` **slug** and the
+  `/character-forge/**` + `/bff/character-forge/**` route prefixes are FROZEN — only
+  the sibling service's brand prefix moved.
 
 ### A note on the JSON columns (honest constraint — corrected)
 
