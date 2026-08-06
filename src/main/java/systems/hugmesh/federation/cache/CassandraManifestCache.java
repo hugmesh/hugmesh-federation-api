@@ -50,7 +50,7 @@ import java.security.KeyStore;
  *       adds {@code .withSslContext(...)} built from a PKCS12 truststore (the
  *       in-pod {@code build-keystore} initContainer pattern, same as the server
  *       mTLS path). The truststore password is read from the in-pod
- *       {@code application-tls.properties} location, never from git/yaml.</li>
+ *       {@code application.properties} location, never from git/yaml.</li>
  * </ul>
  * Both knobs are inert when unset: an empty/false value leaves the builder
  * exactly as it was. Because the session is built lazily on first use (not at

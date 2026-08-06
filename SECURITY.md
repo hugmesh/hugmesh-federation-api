@@ -82,7 +82,7 @@ SSL_TRUST_STORE_TYPE=PKCS12
 ```
 
 (`SSL_KEY_STORE_PASSWORD` / `SSL_TRUST_STORE_PASSWORD` come from the in-pod
-generated `/stores/application-tls.properties`, loaded via
+generated `/stores/application.properties`, loaded via
 `SPRING_CONFIG_ADDITIONAL_LOCATION` — never set directly in the env block.) The
 readiness/liveness probes are already HTTPS `exec` `curl` calls presenting this
 pod's own client cert, matching `SSL_CLIENT_AUTH=need`.
