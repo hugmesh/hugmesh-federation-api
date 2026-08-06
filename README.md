@@ -784,14 +784,21 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
 ## Build & test
 
 ```bash
-./mvnw test          # R2DBC slices over H2-PG-compat + the REAL Liquibase
+./mvnw test          # @DataR2dbcTest slices over H2-PG-compat + the REAL Liquibase
                      # changelog; filesystem storage in a temp dir; Cassandra
-                     # disabled (noop). No external infra required.
+                     # disabled (noop) — these slices need no external infra. BUT the
+                     # full-context @SpringBootTest suites in the same run (see below)
+                     # extend commons.testsupport.PostgresTestSupport and spin up a
+                     # REAL Postgres via Testcontainers, so a working Docker daemon
+                     # IS required to run `./mvnw test` to completion (CI's `test:mvn`
+                     # job attaches a `docker:27-dind` service for exactly this).
 ./mvnw package       # builds target/federation-0.2.0.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
 ```
 
-Representative tests:
+Representative tests (the `@DataR2dbcTest` repository slices need no external infra;
+the `@SpringBootTest` full-context suites below need Docker for a Testcontainers
+Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
 - `ManifestServiceTest` / `ManifestDomainCutTest` — the keystone: filtering by
   visibility / enabled / circuit-state / scope-override + the per-domain vs
   superadmin cut + cache write-through.
@@ -843,6 +850,7 @@ Representative tests:
 | Env | Default | Purpose |
 |---|---|---|
 | `CASDOOR_ISSUER_URI` | `https://id.snapdragon.systems` | single-issuer JWT issuer |
+| `CASDOOR_JWKS_URI` | (derived: `CASDOOR_ISSUER_URI` + `/.well-known/jwks`) | overrides the JWT `jwk-set-uri` so an in-container resource server fetches signing keys directly (e.g. `http://casdoor:8000/.well-known/jwks`) instead of via OIDC discovery against a possibly browser-only `CASDOOR_ISSUER_URI` |
 | `APP_TENANCY_ISSUERS` | (empty) | multi-brand `iss=domain,…` CSV (gates the multi-issuer decoder) |
 | `SPRING_R2DBC_URL` / `_USERNAME` / `_PASSWORD` | …`/federation` | runtime DB |
 | `SPRING_LIQUIBASE_URL` / `_USER` / `_PASSWORD` | …`/federation` | migration DB |
