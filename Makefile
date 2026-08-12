@@ -22,7 +22,7 @@ SCA_FAIL_CVSS    ?= 9
 # DAST harness (canonical, in hugmesh-generator). Override GENERATOR_DIR if the
 # generator checkout lives elsewhere; the target clones it on demand otherwise.
 GENERATOR_DIR    ?= ../hugmesh-generator
-GENERATOR_REPO   ?= https://github.com/Snapdragon-Systems/hugmesh-generator.git
+GENERATOR_REPO   ?= https://github.com/hugmesh-net/hugmesh-generator.git
 PENTEST_HARNESS  ?= $(GENERATOR_DIR)/tests/pentest/run-pentest.sh
 
 .PHONY: pentest pentest-sca pentest-dast

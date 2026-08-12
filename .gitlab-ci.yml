@@ -9,7 +9,7 @@
 # authenticated ZAP DAST harness with the custom escalation/DoS probes + nuclei).
 # See memory snapdragon-pentest-standard / snapdragon-nuclei-integration.
 include:
-  - project: 'Snapdragon-Systems/snapdragon-generator'
+  - project: 'hugmesh-net/snapdragon-generator'
     ref: main
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
@@ -81,7 +81,7 @@ build:image:
     # CI_JOB_TOKEN is passed as a BuildKit SECRET (never persisted in a layer); the
     # GitLab registry coordinates go in as build-args so the committed settings.xml
     # can resolve the PRIVATE hugmesh-commons artifact during `./mvnw package`
-    # inside the build stage. GITLAB_GROUP_ID must be set to the Snapdragon-Systems
+    # inside the build stage. GITLAB_GROUP_ID must be set to the hugmesh-net
     # group id (a CI/CD or group variable).
     - |
       docker build --pull \
