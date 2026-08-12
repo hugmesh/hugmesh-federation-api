@@ -7,7 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.CapabilityDto;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 
 import java.util.List;
 

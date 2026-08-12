@@ -10,8 +10,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
-import systems.hugmesh.commons.security.PrincipalDomain;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.model.ResolvedFindingView;
 import systems.hugmesh.federation.service.SystemFindingService;
 

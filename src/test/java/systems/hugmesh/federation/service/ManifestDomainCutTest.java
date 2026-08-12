@@ -9,7 +9,7 @@ import systems.hugmesh.federation.model.FederationManifestDto;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.FederationOverrideRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.util.Set;
 

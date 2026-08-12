@@ -28,8 +28,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.model.UserModuleView;
-import systems.hugmesh.commons.security.DomainRegistry;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.service.BundleService;
 import systems.hugmesh.federation.web.ValidationPatterns;
 

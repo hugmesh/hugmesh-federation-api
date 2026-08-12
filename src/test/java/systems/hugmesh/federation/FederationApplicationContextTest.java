@@ -6,7 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import systems.hugmesh.federation.cache.ManifestCache;
 import systems.hugmesh.federation.storage.BundleStorage;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

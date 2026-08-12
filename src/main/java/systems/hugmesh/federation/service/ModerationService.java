@@ -6,7 +6,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.hugmesh.federation.model.ModerationRequest;
 import systems.hugmesh.federation.repository.ModerationRequestRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 

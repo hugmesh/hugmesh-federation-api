@@ -10,7 +10,7 @@ import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.model.FederationOverride;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.FederationOverrideRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

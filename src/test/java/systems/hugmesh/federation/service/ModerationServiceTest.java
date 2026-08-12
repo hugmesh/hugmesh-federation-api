@@ -5,7 +5,7 @@ import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.cache.ManifestCache;
 import systems.hugmesh.federation.model.FederationOverride;
 import systems.hugmesh.federation.model.ModerationRequest;

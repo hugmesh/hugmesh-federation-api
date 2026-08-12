@@ -17,7 +17,7 @@ import systems.hugmesh.federation.model.ModerationRequest;
 import systems.hugmesh.federation.service.ModerationService;
 import systems.hugmesh.federation.service.ModuleRegistryService;
 import systems.hugmesh.federation.service.OverrideService;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;

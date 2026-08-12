@@ -12,7 +12,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.repository.UserModuleRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.nio.charset.StandardCharsets;

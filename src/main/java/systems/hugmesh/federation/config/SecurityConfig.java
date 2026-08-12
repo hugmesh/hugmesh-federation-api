@@ -21,9 +21,9 @@ import org.springframework.security.oauth2.server.resource.authentication.Reacti
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
-import systems.hugmesh.commons.config.TenancyResourceServerConfig;
-import systems.hugmesh.commons.security.CasdoorAuthorities;
-import systems.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.config.TenancyResourceServerConfig;
+import net.hugmesh.commons.security.CasdoorAuthorities;
+import net.hugmesh.commons.security.DomainRegistry;
 
 /**
  * Casdoor-aware OAuth2 resource-server security for hugmesh-federation-api

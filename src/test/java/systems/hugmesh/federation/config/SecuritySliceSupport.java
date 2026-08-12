@@ -7,7 +7,7 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.WebFilterChainProxy;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.server.ServerWebExchange;
-import systems.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.DomainRegistry;
 
 /**
  * Shared scaffolding for the federation-api SECURITY-SLICE tests — builds a

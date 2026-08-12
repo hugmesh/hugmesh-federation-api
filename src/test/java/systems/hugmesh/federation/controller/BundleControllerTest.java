@@ -13,7 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.hugmesh.federation.model.UserModule;
-import systems.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.DomainRegistry;
 import systems.hugmesh.federation.service.BundleService;
 
 import java.nio.charset.StandardCharsets;
@@ -36,12 +36,12 @@ class BundleControllerTest {
 
     private static final String SLUG = "my-card";
 
-    /** Matcher for the {@link systems.hugmesh.commons.security.PrincipalDomain} scope
+    /** Matcher for the {@link net.hugmesh.commons.security.PrincipalDomain} scope
      *  arg the controller resolves from the JWT (the per-domain admin pin is tested in
      *  BundleServiceTest); here we only assert owner/admin forwarding. */
-    private static systems.hugmesh.commons.security.PrincipalDomain anyScope() {
+    private static net.hugmesh.commons.security.PrincipalDomain anyScope() {
         return org.mockito.ArgumentMatchers
-                .<systems.hugmesh.commons.security.PrincipalDomain>any();
+                .<net.hugmesh.commons.security.PrincipalDomain>any();
     }
 
     private static Jwt jwtFor(String subject) {
@@ -180,7 +180,7 @@ class BundleControllerTest {
         // non-admin caller -> admin=false forwarded; subject forwarded as owner.
         when(svc.put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.hugmesh.commons.security.PrincipalDomain>any(),
+                org.mockito.ArgumentMatchers.<net.hugmesh.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
         BundleController c = controller(svc);
@@ -194,7 +194,7 @@ class BundleControllerTest {
 
         verify(svc).put(eq("alice"), eq(SLUG), eq("card.html"), eq("internal"), eq("{}"),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.hugmesh.commons.security.PrincipalDomain>any(),
+                org.mockito.ArgumentMatchers.<net.hugmesh.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
@@ -206,7 +206,7 @@ class BundleControllerTest {
         when(svc.put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 eq(true),
-                org.mockito.ArgumentMatchers.<systems.hugmesh.commons.security.PrincipalDomain>any(),
+                org.mockito.ArgumentMatchers.<net.hugmesh.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.just(saved));
         BundleController c = controller(svc);
@@ -221,7 +221,7 @@ class BundleControllerTest {
         verify(svc).put(eq("root"), eq(SLUG), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 eq(true),
-                org.mockito.ArgumentMatchers.<systems.hugmesh.commons.security.PrincipalDomain>any(),
+                org.mockito.ArgumentMatchers.<net.hugmesh.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any());
     }
 
@@ -231,7 +231,7 @@ class BundleControllerTest {
         when(svc.put(eq("bob"), eq(SLUG), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 eq(false),
-                org.mockito.ArgumentMatchers.<systems.hugmesh.commons.security.PrincipalDomain>any(),
+                org.mockito.ArgumentMatchers.<net.hugmesh.commons.security.PrincipalDomain>any(),
                 org.mockito.ArgumentMatchers.<reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer>>any()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "another owner")));
         BundleController c = controller(svc);

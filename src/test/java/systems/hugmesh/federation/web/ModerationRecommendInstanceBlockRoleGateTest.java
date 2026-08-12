@@ -13,7 +13,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.ModerationRequest;
 import systems.hugmesh.federation.repository.ModerationRequestRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.util.List;

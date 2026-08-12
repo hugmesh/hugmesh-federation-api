@@ -13,8 +13,8 @@ import systems.hugmesh.federation.model.FederationOverride;
 import systems.hugmesh.federation.model.ScopeKind;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.FederationOverrideRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
-import systems.hugmesh.commons.security.Roles;
+import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.Roles;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -239,7 +239,7 @@ public class ManifestService {
      * @return a {@code Mono} emitting exactly one {@link FederationManifestDto};
      *         never empty — worst case an empty {@code remotes} list
      * @see PrincipalDomain
-     * @see systems.hugmesh.commons.security.DomainRegistry
+     * @see net.hugmesh.commons.security.DomainRegistry
      */
     public Mono<FederationManifestDto> render(Set<String> authorities, PrincipalDomain scope) {
         boolean canSeeInternal = authorities != null

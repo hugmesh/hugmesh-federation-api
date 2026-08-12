@@ -8,7 +8,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.repository.UserModuleRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.storage.BundleStorage;
 
 import java.nio.charset.StandardCharsets;
