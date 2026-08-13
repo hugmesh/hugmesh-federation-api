@@ -182,4 +182,5 @@
     <include file="db/changelog/037-system-findings-subject-ref.xml"/>
     <include file="db/changelog/038-register-character-forge-module.xml"/>
     <include file="db/changelog/039-rebrand-character-forge-remote-entry.xml"/>
+    <include file="db/changelog/040-register-character-studio-module.xml"/>
 </databaseChangeLog>

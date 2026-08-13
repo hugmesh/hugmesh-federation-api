@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        REGISTER character-studio (the VN character studio remote: layered-2D
+        character creator + chat surface) as a federation module — the registry row
+        the Angular host loads at runtime + the row the PUBLIC
+        /api/federation/capabilities projection reports.
+
+        character-studio was the ONLY deployed remote with NO federation_modules
+        row: /character-studio/remoteEntry.json is served by its UI pod, the
+        fe-gateway carries the '/character-studio/** = ROLE_USER' route-access
+        row, but the capabilities projection could not mention the slug at all —
+        neither installed:true nor a greyed-out installed:false — because the
+        projection only reports rows that exist. Its registration was specced in
+        the generator (specs/cluster/optional-services.yaml → federationModule,
+        manifests/character-studio/FEDERATION-REGISTRATION-TODO.md) but this
+        repo's changeset was never added when the sibling character-forge wave
+        landed 038/039. This is that missing changeset.
+
+        It is an Angular native-federation REMOTE (kind = 'remote-shell', like the
+        forum/games/tube/owncast/character-forge rows), served at the apex PATH
+        /character-studio with a ROLE_USER floor. Mirrors 025-games field-for-field
+        with the character-studio specifics:
+
+          • slug          = 'character-studio'
+          • kind          = 'remote-shell'      (Angular native-federation REMOTE).
+          • visibility    = 'internal'          (hidden from non-ROLE_ADMIN manifest
+                            callers; the gateway route-access /character-studio/** =
+                            ROLE_USER row is the enforcement floor, not this flag).
+          • enabled       = true                (games-style, NOT the inert 038
+                            character-forge style: character-studio is a pure
+                            frontend remote already serving remoteEntry.json in the
+                            deployments this seed backfills, so the row must project
+                            installed:true rather than grey out a live service.
+                            Deployments that deselect the slug flip enabled off via
+                            the operator path, exactly as for games.)
+          • metadata.requiresRole = 'ROLE_USER' (explicit role token, games-style;
+                            matches the gateway route-access floor).
+          • metadata.mountAt      = '/character-studio' (apex path).
+          • owner_user_id = NULL                (platform/first-party module).
+
+        Idempotent: the preCondition (MARK_RAN, slug-absent) seeds only when the
+        'character-studio' slug is absent, so re-running over an existing DB — or
+        one where an operator already hand-inserted the row — is a no-op.
+        remote_entry_url is the platform service-DNS placeholder the deployment's
+        Service wires at runtime, already in the post-rebrand hugmesh-* form (no
+        039-style follow-up needed).
+    -->
+
+    <changeSet id="040-1-register-character-studio-module" author="federation">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM federation_modules WHERE slug = 'character-studio'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="federation_modules">
+            <column name="slug" value="character-studio"/>
+            <column name="display_name" value="Character Studio (VN)"/>
+            <column name="kind" value="remote-shell"/>
+            <column name="remote_entry_url" value="http://hugmesh-character-studio-ui:8080/remoteEntry.json"/>
+            <column name="exposed_module" value="./routes"/>
+            <column name="version" value="0.1.0"/>
+            <column name="visibility" value="internal"/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="circuit_state" value="closed"/>
+            <column name="metadata" value="{&quot;requiresRole&quot;:&quot;ROLE_USER&quot;,&quot;mountAt&quot;:&quot;/character-studio&quot;}"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
