@@ -11,7 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.model.FederationManifestDto;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;

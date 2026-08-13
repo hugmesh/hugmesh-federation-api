@@ -15,7 +15,7 @@ import systems.hugmesh.federation.model.FederationManifestDto;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.UserModuleRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.time.Instant;
@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Two per-brand {@link TestIssuer} servers ({@code brandx}, {@code brandy}) plus
  * an untrusted {@code rogue} issuer give the
- * {@link systems.hugmesh.commons.security.DomainRegistry} two trusted issuers
+ * {@link net.hugmesh.commons.security.DomainRegistry} two trusted issuers
  * (so {@code isMultiIssuer()} holds and the per-issuer resolver swaps in) and an
  * unlisted one (for the fail-closed end-to-end case). A brand's token validates ONLY
  * against that brand's manager, so the per-request domain is the cryptographically

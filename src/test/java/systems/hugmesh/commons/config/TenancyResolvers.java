@@ -1,4 +1,4 @@
-package systems.hugmesh.commons.config;
+package net.hugmesh.commons.config;
 
 import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver;
 import org.springframework.web.server.ServerWebExchange;
@@ -12,12 +12,12 @@ import org.springframework.web.server.ServerWebExchange;
  * SECURITY-SLICE tests could call the package-private {@code @Bean} method directly
  * to build a {@link ReactiveAuthenticationManagerResolver} and feed it to the sliced
  * {@code SecurityConfig} WITHOUT a full Spring context. After the lift,
- * {@code TenancyResourceServerConfig} lives in {@code systems.hugmesh.commons.config}
+ * {@code TenancyResourceServerConfig} lives in {@code net.hugmesh.commons.config}
  * and that bean method stays <b>package-private by design</b> (only Spring should
  * publish it). A slice test in the consumer's own package therefore can no longer
  * reach it.
  *
- * <p>This tiny accessor — placed in {@code systems.hugmesh.commons.config} under
+ * <p>This tiny accessor — placed in {@code net.hugmesh.commons.config} under
  * the CONSUMER's <b>test</b> sources — re-opens exactly that one method to the slice
  * tests, with no change to the shipped commons jar and no widening of the production
  * API surface. Every consumer that runs the multi-issuer security slice drops this

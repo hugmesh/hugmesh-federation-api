@@ -11,8 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import systems.hugmesh.federation.model.CapabilityDto;
-import systems.hugmesh.commons.security.DomainRegistry;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.service.CapabilityService;
 
 /**

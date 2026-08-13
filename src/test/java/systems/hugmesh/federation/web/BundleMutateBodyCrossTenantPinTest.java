@@ -13,7 +13,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.repository.UserModuleRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.nio.charset.StandardCharsets;
@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p><b>The gap.</b> The admin branch of {@code activeRowForCaller} /
  * {@code supersedePriorOwned} used the SLUG-ONLY active finder
  * ({@code findFirstBySlugAndSupersededAtIsNull...}), and {@code deleteForOwner} /
- * {@code readOwnBody} never even received the {@link systems.hugmesh.commons.security.PrincipalDomain}
+ * {@code readOwnBody} never even received the {@link net.hugmesh.commons.security.PrincipalDomain}
  * scope. Because the {@code user_modules} slug namespace is per-owner (NOT globally
  * unique across brands — see {@link systems.hugmesh.federation.repository.UserModuleActiveOwnerUniqueTest}),
  * a per-domain ROLE_ADMIN of brand-X (a valid ADMIN, but NOT superadmin) could DELETE,

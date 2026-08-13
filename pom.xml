@@ -55,7 +55,7 @@
          security.{Roles,DomainRegistry,DomainScope} + config.{CasdoorAuthorities,
          TenancyResourceServerConfig}. -->
     <dependency>
-      <groupId>systems.hugmesh</groupId>
+      <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-commons</artifactId>
     </dependency>
 
@@ -69,7 +69,7 @@
          manages the MAIN hugmesh-commons jar but not the test-jar classifier variant,
          so Maven cannot infer a version for it. -->
     <dependency>
-      <groupId>systems.hugmesh</groupId>
+      <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-commons</artifactId>
       <version>${hugmesh-commons.version}</version>
       <classifier>tests</classifier>

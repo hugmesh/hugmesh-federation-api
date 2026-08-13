@@ -14,7 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.FederationOverrideRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.util.List;

@@ -12,7 +12,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
-import systems.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.DomainRegistry;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.model.VanityProfileDto;
 import systems.hugmesh.federation.service.UsernameSkeletonService;

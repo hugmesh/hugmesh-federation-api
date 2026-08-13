@@ -11,7 +11,7 @@ import systems.hugmesh.federation.model.FederationOverride;
 import systems.hugmesh.federation.model.ScopeKind;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.FederationOverrideRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 

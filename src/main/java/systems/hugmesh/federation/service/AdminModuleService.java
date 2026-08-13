@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.model.AdminModuleUpsertRequest;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;

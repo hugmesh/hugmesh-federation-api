@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.model.ResolvedFindingView;
 import systems.hugmesh.federation.model.SystemFinding;
 import systems.hugmesh.federation.repository.SystemFindingRepository;

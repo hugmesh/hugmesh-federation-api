@@ -22,8 +22,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.model.FederationOverride;
-import systems.hugmesh.commons.security.DomainRegistry;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.service.OverrideService;
 import systems.hugmesh.federation.web.ValidationPatterns;
 

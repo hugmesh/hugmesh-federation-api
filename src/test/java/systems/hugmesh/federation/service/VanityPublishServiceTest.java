@@ -5,7 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;

@@ -2,11 +2,11 @@ package systems.hugmesh.federation.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import systems.hugmesh.commons.config.TenancyResourceServerConfig;
-import systems.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.config.TenancyResourceServerConfig;
+import net.hugmesh.commons.security.DomainRegistry;
 
 /**
- * Registers the shared {@code systems.hugmesh.commons} security/tenancy beans into
+ * Registers the shared {@code net.hugmesh.commons} security/tenancy beans into
  * this consumer's application context.
  *
  * <p><b>Why this exists (recipe note for the 11-repo fan-out).</b> When
@@ -15,7 +15,7 @@ import systems.hugmesh.commons.security.DomainRegistry;
  * this repo's own {@code systems.hugmesh.federation.config} / {@code .security}
  * packages, the {@code @SpringBootApplication} component scan over
  * {@code systems.hugmesh.federation} picked them up automatically. After the lift
- * they live under {@code systems.hugmesh.commons.*}, which the federation scan does
+ * they live under {@code net.hugmesh.commons.*}, which the federation scan does
  * NOT cover, so {@code SecurityConfig}'s {@code DomainRegistry} dependency went
  * unsatisfied and every {@code @SpringBootTest} failed to load its context.
  *

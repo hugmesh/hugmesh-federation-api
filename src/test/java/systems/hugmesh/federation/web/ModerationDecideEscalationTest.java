@@ -12,7 +12,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import systems.hugmesh.federation.model.ModerationRequest;
 import systems.hugmesh.federation.repository.ModerationRequestRepository;
-import systems.hugmesh.commons.testsupport.PostgresTestSupport;
+import net.hugmesh.commons.testsupport.PostgresTestSupport;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.time.Instant;
@@ -32,7 +32,7 @@ import java.util.List;
  * proxy needs a real application context. We supply exactly that here.
  *
  * <p>Two real per-brand {@link TestIssuer} servers ({@code brandx}, {@code brandy})
- * give the {@link systems.hugmesh.commons.security.DomainRegistry} two trusted
+ * give the {@link net.hugmesh.commons.security.DomainRegistry} two trusted
  * issuers, so {@code isMultiIssuer()} holds and {@code SecurityConfig} swaps onto the
  * per-issuer resolver. A brand-X token validates ONLY against brand-X's manager and
  * resolves (via the cryptographically-validated {@code iss}) to {@code DOMAIN_brandx}

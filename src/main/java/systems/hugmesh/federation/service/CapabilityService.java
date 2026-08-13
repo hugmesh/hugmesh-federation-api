@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import systems.hugmesh.federation.model.CapabilityDto;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 /**
  * The PUBLIC capability-projection read path behind

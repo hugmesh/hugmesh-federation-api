@@ -9,9 +9,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import systems.hugmesh.commons.config.TenancyResourceServerConfig;
-import systems.hugmesh.commons.security.DomainRegistry;
-import systems.hugmesh.commons.config.TenancyResolvers;
+import net.hugmesh.commons.config.TenancyResourceServerConfig;
+import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.config.TenancyResolvers;
 import systems.hugmesh.federation.testsupport.TestIssuer;
 
 import java.util.List;

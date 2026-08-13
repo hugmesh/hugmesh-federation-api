@@ -8,7 +8,7 @@ import systems.hugmesh.federation.model.FederationModule;
 import systems.hugmesh.federation.model.UserModule;
 import systems.hugmesh.federation.repository.FederationModuleRepository;
 import systems.hugmesh.federation.repository.UserModuleRepository;
-import systems.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.time.Instant;
 
