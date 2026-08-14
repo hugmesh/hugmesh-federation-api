@@ -12,7 +12,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: federation-bundles
-  namespace: snapdragon-backend
+  namespace: hugmesh-backend
   labels: { app: snapdragon-federation-api }
 spec:
   accessModes: [ReadWriteOnce]

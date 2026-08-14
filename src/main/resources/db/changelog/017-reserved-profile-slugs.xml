@@ -12,7 +12,7 @@
         slug = 'profile-<username>' and kind = 'fragment' (the VanityService
         convention; see 015). A vanity username therefore MUST NOT equal any
         dedicated app path-prefix route or reserved service subdomain — otherwise
-        <username>.snapdragon.systems / .games would collide with a platform route.
+        <username>.hugmesh.net / .games would collide with a platform route.
 
         The serving layer already hard-404s a reserved first-label
         (VanityController + ReservedNames.RESERVED_LABELS). This changeset is the

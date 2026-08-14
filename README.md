@@ -33,9 +33,9 @@ patterns.
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
   Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
-  shared Maven artifacts: it inherits `systems.hugmesh:hugmesh-parent:2.8.0`
+  shared Maven artifacts: it inherits `net.hugmesh:hugmesh-parent:2.8.0`
   (a child of `spring-boot-starter-parent:4.0.7`) and consumes
-  `systems.hugmesh:hugmesh-commons:2.8.0` for the shared security/tenancy
+  `net.hugmesh:hugmesh-commons:2.8.0` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
   commons library*.
@@ -80,7 +80,7 @@ patterns.
 | | |
 |---|---|
 | **Tier** | Backend BFF / platform service (reactive Spring Boot, behind the gateway). |
-| **Namespace** | `systems.hugmesh.federation` (artifact `federation`, image built by GitLab CI). |
+| **Namespace** | `net.hugmesh.federation` (artifact `federation`, image built by GitLab CI). |
 | **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter copied verbatim from `hugmesh-gateway`** (so authorities are byte-identical across the platform). |
 | **Tenancy** | Multi-brand / multi-tenant. The brand a token belongs to is keyed on the **cryptographically-validated issuer** (one Casdoor per brand → distinct `iss`) → a single `DOMAIN_<x>` authority, never a user-settable claim. See *Multi-tenancy (domain scoping)*. |
 | **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `hugmesh-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, profile-ban writes), mod-bff / admin-bff (moderation + kill-switch). |
@@ -124,7 +124,7 @@ flowchart TB
 - **Casdoor** JWT OAuth2 resource-server; the authority converter (`CasdoorAuthorities`),
   the issuer→domain `DomainRegistry`, the `Roles`/`PrincipalDomain` helpers and the
   config-gated multi-issuer `TenancyResourceServerConfig` now come from the shared
-  **`systems.hugmesh:hugmesh-commons`** library (see *Shared commons library*).
+  **`net.hugmesh:hugmesh-commons`** library (see *Shared commons library*).
 - **springdoc-openapi-starter-webflux-ui** — spec at `/v3/api-docs`, UI at
   `/swagger-ui.html` (profile-split gating, see *Security*). The published spec is
   pinned to **OpenAPI 3.0** (`springdoc.api-docs.version=openapi_3_0`) — springdoc
@@ -142,7 +142,7 @@ flowchart TB
 This service is the **first adopter** of the org's shared Maven artifacts. Two
 de-duplication moves:
 
-1. **Parent POM →** `systems.hugmesh:hugmesh-parent:2.8.0` (itself a child of
+1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0` (itself a child of
    `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
@@ -152,7 +152,7 @@ de-duplication moves:
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `systems.hugmesh:hugmesh-commons:2.8.0`.
+2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.8.0`.
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -175,8 +175,8 @@ de-duplication moves:
    **Two consumer-wiring steps** (the canonical recipe for the fan-out):
    - `config.CommonsSecurityConfig` `@Import`s the commons `DomainRegistry` +
      `TenancyResourceServerConfig` beans, because the `@SpringBootApplication`
-     component-scan over `systems.hugmesh.federation` does **not** cover the
-     `systems.hugmesh.commons.*` packages. (`@Import` preserves
+     component-scan over `net.hugmesh.federation` does **not** cover the
+     `net.hugmesh.commons.*` packages. (`@Import` preserves
      `TenancyResourceServerConfig`'s `@ConditionalOnExpression` gate.)
    - `CapabilityController` maps an **anonymous** (`jwt == null`) public read to the
      explicit `"default"` domain, because `PrincipalDomain.resolve(null, reg)`
@@ -348,7 +348,7 @@ no JWT. The manifest / override read paths are untouched — this is purely addi
 
 ## Vanity subdomains (`<username>.<domain>`)
 
-A user can serve their PUBLIC profile at `https://<username>.snapdragon.systems`.
+A user can serve their PUBLIC profile at `https://<username>.hugmesh.net`.
 The federation API owns the **resolve** step.
 
 ```mermaid
@@ -849,7 +849,7 @@ Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
 
 | Env | Default | Purpose |
 |---|---|---|
-| `CASDOOR_ISSUER_URI` | `https://id.snapdragon.systems` | single-issuer JWT issuer |
+| `CASDOOR_ISSUER_URI` | `https://id.hugmesh.net` | single-issuer JWT issuer |
 | `CASDOOR_JWKS_URI` | (derived: `CASDOOR_ISSUER_URI` + `/.well-known/jwks`) | overrides the JWT `jwk-set-uri` so an in-container resource server fetches signing keys directly (e.g. `http://casdoor:8000/.well-known/jwks`) instead of via OIDC discovery against a possibly browser-only `CASDOOR_ISSUER_URI` |
 | `APP_TENANCY_ISSUERS` | (empty) | multi-brand `iss=domain,…` CSV (gates the multi-issuer decoder) |
 | `SPRING_R2DBC_URL` / `_USERNAME` / `_PASSWORD` | …`/federation` | runtime DB |
@@ -936,7 +936,7 @@ Intentionally NOT implemented in the scaffold:
   `/_fragments/**`). **Gap:** remote-fragment only syncs fragments that appear in
   the manifest, and the manifest only emits `federation_modules` rows — so a
   profile fragment is synced/served only once the publish path above creates its
-  registry row. The vanity HOST page is a `snapdragon.systems` front-end concern,
+  registry row. The vanity HOST page is a `hugmesh.net` front-end concern,
   out of scope here.
 - **Gateway `PUBLIC_PATHS` allowlist (cross-service).** The shared gateway image
   ends every chain with `anyExchange().authenticated()` and opens a hardcoded

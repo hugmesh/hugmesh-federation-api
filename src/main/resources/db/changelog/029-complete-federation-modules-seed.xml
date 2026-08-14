@@ -9,10 +9,10 @@
         COMPLETE the federation_modules seed so the DB-driven dynamic manifest
         (GET /api/federation/manifest) is AUTHORITATIVE for the host's remote
         topology — it no longer omits remotes the host's bundled static manifest
-        (snapdragon.systems src/assets/federation.manifest{,.prod}.json) carries.
+        (hugmesh.net src/assets/federation.manifest{,.prod}.json) carries.
 
         BACKGROUND. The host now resolves remotes DYNAMIC-FIRST (federation-api),
-        with the bundled static manifest as a UNION FLOOR (snapdragon.systems PR
+        with the bundled static manifest as a UNION FLOOR (hugmesh.net PR
         #78): on a successful authenticated DB read the host returns
         { ...staticFloor, ...dynamic } — the floor always present, the dynamic
         overlay overriding/adding slugs. Until the seed is complete the floor was
@@ -26,7 +26,7 @@
         host-only follow-up — NOT this PR).
 
         PER-REMOTE visibility / requiresRole — MATCHED to the host's actual route
-        gating (snapdragon.systems src/app/app.routes.ts REMOTE_ROUTES + the
+        gating (hugmesh.net src/app/app.routes.ts REMOTE_ROUTES + the
         canActivate guards in src/app/guards/*), NOT guessed:
 
           • mod     — REMOTE_ROUTES '/mod' is canActivate:[modGuard]; modGuard

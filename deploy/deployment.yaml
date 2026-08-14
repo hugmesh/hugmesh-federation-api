@@ -8,7 +8,7 @@
 # dependency, but it should reconcile first — see apps/29-federation-api.yaml):
 #   - admin-bff calls federation as a JWT-authenticated client; and
 #   - the snapdragon-remote-fragment sync sidecar polls
-#     http://snapdragon-federation-api.snapdragon-backend.svc.cluster.local:8080 for the
+#     http://snapdragon-federation-api.hugmesh-backend.svc.cluster.local:8080 for the
 #     manifest + bundles and serves them statically at /_fragments/**.
 #
 # Security model: federation is purely an OAuth2 RESOURCE SERVER. It VALIDATES the
@@ -26,8 +26,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: snapdragon-federation-api
-  namespace: snapdragon-backend
-  labels: { app: snapdragon-federation-api, app.kubernetes.io/part-of: snapdragon.systems }
+  namespace: hugmesh-backend
+  labels: { app: snapdragon-federation-api, app.kubernetes.io/part-of: hugmesh.net }
 spec:
   replicas: 1
   strategy: { type: Recreate }   # single writer over the RWO bundles PVC
@@ -35,7 +35,7 @@ spec:
   template:
     metadata: { labels: { app: snapdragon-federation-api } }
     spec:
-      nodeSelector: { snapdragon.systems/backend: "true" }
+      nodeSelector: { hugmesh.net/backend: "true" }
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -113,7 +113,7 @@ spec:
             # by admin-bff + the remote-fragment sync sidecar. JWKS auto-discovered
             # from the issuer well-known; no jwk-set-uri / client secret needed.
             - name: CASDOOR_ISSUER_URI
-              value: "https://id.snapdragon.systems"
+              value: "https://id.hugmesh.net"
             # Runtime reactive handle to federation's OWN Postgres (federation-db).
             # NOT the dangling `snapdragon-pg` the app default points at.
             # RUNTIME handle: log in as the dedicated NON-OWNER least-privilege role
@@ -122,7 +122,7 @@ spec:
             # federation-db-app-auth (key password) — the SAME Secret the DB pod's
             # FEDERATION_APP_PASSWORD mounts, so role + cred stay in sync.
             - name: SPRING_R2DBC_URL
-              value: "r2dbc:postgresql://federation-db.snapdragon-backend.svc.cluster.local:5432/federation"
+              value: "r2dbc:postgresql://federation-db.hugmesh-backend.svc.cluster.local:5432/federation"
             - name: SPRING_R2DBC_USERNAME
               value: "federation_app"
             - name: SPRING_R2DBC_PASSWORD
@@ -134,7 +134,7 @@ spec:
             # Liquibase keeps the owner role `federation` + the owner ESO Secret
             # federation-db-auth (the SAME the DB pod's POSTGRES_PASSWORD mounts).
             - name: SPRING_LIQUIBASE_URL
-              value: "jdbc:postgresql://federation-db.snapdragon-backend.svc.cluster.local:5432/federation"
+              value: "jdbc:postgresql://federation-db.hugmesh-backend.svc.cluster.local:5432/federation"
             - name: SPRING_LIQUIBASE_USER
               value: "federation"
             - name: SPRING_LIQUIBASE_PASSWORD
@@ -157,7 +157,7 @@ spec:
             - name: MANIFEST_CACHE_ENABLED
               value: "false"
             - name: MANIFEST_CACHE_CASSANDRA
-              value: "cassandra.snapdragon-pki.svc.cluster.local:9042"
+              value: "cassandra.hugmesh-pki.svc.cluster.local:9042"
             - name: MANIFEST_CACHE_KEYSPACE
               value: "snapdragon_federation"
             - name: MANIFEST_CACHE_LOCAL_DC

@@ -28,17 +28,17 @@ spring:
         jwt:
           # Casdoor issuer. The JWK set is discovered from the issuer's
           # well-known config; override the issuer per environment.
-          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}"
+          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.hugmesh.net}"
           # Explicit JWKS so the resource server does NOT do OIDC discovery against issuer-uri
           # (unreachable in-container when issuer-uri is the browser-facing localhost:8000, which
           # 500s every authenticated call). Mirrors hugmesh-actions + the gateway; compose sets
           # CASDOOR_JWKS_URI=http://casdoor:8000/.well-known/jwks. iss is still validated via issuer-uri.
-          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.snapdragon.systems}/.well-known/jwks}"
+          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.hugmesh.net}/.well-known/jwks}"
 
   # Runtime data access is REACTIVE (R2DBC). Owns federation_modules,
   # user_modules, moderation_requests, federation_override.
   r2dbc:
-    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://snapdragon-pg.snapdragon-backend.svc.cluster.local:5432/federation}"
+    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://snapdragon-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
     username: "${SPRING_R2DBC_USERNAME:snapdragon}"
     password: "${SPRING_R2DBC_PASSWORD:}"
 
@@ -47,7 +47,7 @@ spring:
   liquibase:
     enabled: true
     change-log: "classpath:db/changelog/db.changelog-master.xml"
-    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://snapdragon-pg.snapdragon-backend.svc.cluster.local:5432/federation}"
+    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://snapdragon-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
     user: "${SPRING_LIQUIBASE_USER:snapdragon}"
     password: "${SPRING_LIQUIBASE_PASSWORD:}"
 
@@ -78,7 +78,7 @@ app:
   manifest-cache:
     cassandra:
       enabled: "${MANIFEST_CACHE_ENABLED:false}"
-      contact-point: "${MANIFEST_CACHE_CASSANDRA:cassandra.snapdragon-pki.svc.cluster.local:9042}"
+      contact-point: "${MANIFEST_CACHE_CASSANDRA:cassandra.hugmesh-pki.svc.cluster.local:9042}"
       keyspace: "${MANIFEST_CACHE_KEYSPACE:snapdragon_federation}"
       local-dc: "${MANIFEST_CACHE_LOCAL_DC:dc1}"
       # ── Ships-dark CQL auth (HELD: default OFF until the Cassandra cluster is
@@ -129,7 +129,7 @@ springdoc:
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
-  packages-to-scan: systems.hugmesh.federation
+  packages-to-scan: net.hugmesh.federation
 
 # Resilience4j circuit breaker for the access-suspension profile-ban write path.
 # OverrideService.applyUserScope / clearScopeBySource wrap their DIRECT-repo
