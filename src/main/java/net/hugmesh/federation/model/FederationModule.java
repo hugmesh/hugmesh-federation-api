@@ -12,7 +12,7 @@ import java.time.Instant;
 /**
  * One row of the dynamic-federation registry (table {@code federation_modules}).
  *
- * <p>Lifted from the snapdragon.games DB-backed federation engine
+ * <p>Lifted from the hugmesh.games DB-backed federation engine
  * ({@code db/changelog/018} + its {@code FederationModule}), extended with the
  * platform-keystone fields: {@code ownerUserId}, {@code contentHash},
  * {@code visibility}, and {@code circuitState} (the kill-switch state the

@@ -20,7 +20,7 @@
         'fragment' row whose slug is 'profile-<reserved>'. The forbidden slug list
         below is GENERATED from the canonical ReservedNames.RESERVED_LABELS set —
         the SAME list the serving layer + the user-bff repo use (canonical source:
-        the fe-/be-gateway routes + reserved subdomains + the snapdragon.games
+        the fe-/be-gateway routes + reserved subdomains + the hugmesh.games
         route prefixes). Keep this list in sync with ReservedNames if that set
         changes.
 

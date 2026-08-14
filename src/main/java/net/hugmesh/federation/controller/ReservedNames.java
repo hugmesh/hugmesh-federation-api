@@ -6,7 +6,7 @@ import java.util.Set;
  * THE CANONICAL RESERVED USERNAME / DNS-LABEL LIST (case-insensitive).
  *
  * <p>A vanity username (the FIRST DNS label of {@code <user>.hugmesh.net}
- * or {@code <user>.snapdragon.games}) must NOT equal any of these, because each
+ * or {@code <user>.hugmesh.games}) must NOT equal any of these, because each
  * one is — or could collide with — a dedicated app path-prefix route or a platform
  * service subdomain. A prefix-collision (username exactly equals a reserved label)
  * is a hard 404 in the serving layer AND rejected at the DB layer.
@@ -26,8 +26,8 @@ import java.util.Set;
  *       {@code /wiki}); both labels are reserved defensively so a vanity
  *       {@code forum.<domain>} / {@code wiki.<domain>} can never collide);</li>
  *   <li><b>hugmesh.GAMES app route prefixes</b> — DERIVED from
- *       snapdragon.games/frontend/nginx.conf {@code /_remotes/<slug>/} blocks +
- *       location prefixes + the {@code <service>.snapdragon.games} subdomains
+ *       hugmesh.games/frontend/nginx.conf {@code /_remotes/<slug>/} blocks +
+ *       location prefixes + the {@code <service>.hugmesh.games} subdomains
  *       (compose.prod.yml): the remote slugs {@code admin, api-docs, banned,
  *       games-dodecahedron, games-rpg-maker, games-three-wizards, games-vn-maker,
  *       login, mod, producer-registration, publisher, registration, wasm-fragment},
@@ -102,13 +102,13 @@ public final class ReservedNames {
             // reserved-prefixes.yaml rev 6).
             "ai",
             // --- hugmesh.GAMES app route prefixes (derived: nginx /_remotes/<slug>/
-            //     + location prefixes + <service>.snapdragon.games subdomains) ---
+            //     + location prefixes + <service>.hugmesh.games subdomains) ---
             "games", "play", "wasm", "producer", "publisher", "banned",
             "api-docs", "docs", "_remotes", "producer-registration", "registration",
             "wasm-fragment", "games-dodecahedron", "games-rpg-maker",
             "games-three-wizards", "games-vn-maker", "games-instances-console",
             // games-character-forge / games-shadows-of-the-net: the 3D character
-            // maker + the XR chat room published into snapdragon.games as wasm
+            // maker + the XR chat room published into hugmesh.games as wasm
             // games (nginx /_remotes/<slug>/ blocks, existing games-* pattern).
             "games-character-forge", "games-shadows-of-the-net",
             // --- defensive web reserved names ---

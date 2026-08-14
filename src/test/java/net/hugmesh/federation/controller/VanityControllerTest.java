@@ -184,7 +184,7 @@ class VanityControllerTest {
      * The Character Forge (3D) additions: {@code character-forge} (fe-gateway
      * {@code /character-forge/**} + {@code /bff/character-forge/**} route prefix)
      * and the games-side wasm slugs {@code games-character-forge} /
-     * {@code games-shadows-of-the-net} (snapdragon.games nginx
+     * {@code games-shadows-of-the-net} (hugmesh.games nginx
      * {@code /_remotes/<slug>/} blocks) are reserved: each must hard-404 as a
      * vanity username — case-insensitively, host form included — and must NEVER
      * reach the resolve service. Mirrors the forum/wiki guards.

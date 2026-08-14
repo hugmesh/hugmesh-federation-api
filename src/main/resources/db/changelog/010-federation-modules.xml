@@ -8,7 +8,7 @@
     <!--
         federation_modules — the platform dynamic-federation registry.
 
-        Lifted from snapdragon.games db/changelog/018-federation-modules: one row
+        Lifted from hugmesh.games db/changelog/018-federation-modules: one row
         per federated remote module the Angular host loads at runtime. This
         platform-level table extends the games-engine shape with the fields the
         Phase-4 keystone needs:

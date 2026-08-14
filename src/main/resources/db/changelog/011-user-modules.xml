@@ -8,7 +8,7 @@
     <!--
         user_modules — per-user federated module bundle uploads.
 
-        Mirror of snapdragon.games db/changelog/021-game-uploads: the upload
+        Mirror of hugmesh.games db/changelog/021-game-uploads: the upload
         bookkeeping for a user-published federated module. The BFF / owner client
         PUTs a bundle, the BundleStorage strategy installs it under
         <slug>/<content-hash>/ and returns an opaque locator stored here; the

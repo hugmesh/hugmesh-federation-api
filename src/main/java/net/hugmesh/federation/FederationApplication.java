@@ -16,7 +16,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <p>Reactive end-to-end (WebFlux + R2DBC); JDBC is used ONLY by Liquibase for
  * schema migrations. Conventions mirror hugmesh-admin-bff-api; the federation
- * engine itself is lifted from the snapdragon.games DB-backed
+ * engine itself is lifted from the hugmesh.games DB-backed
  * {@code FederationController} + {@code UploadStorage} + {@code game_access}
  * patterns.
  */
