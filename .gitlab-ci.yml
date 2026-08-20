@@ -9,7 +9,7 @@
 # authenticated ZAP DAST harness with the custom escalation/DoS probes + nuclei).
 # See memory hugmesh-pentest-standard / hugmesh-nuclei-integration.
 include:
-  - project: 'hugmesh-net/hugmesh-generator'
+  - project: 'hugmesh/hugmesh-generator'
     ref: main
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
