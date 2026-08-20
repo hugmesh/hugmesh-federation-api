@@ -664,7 +664,7 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   optional service flipped on when the operator installs the slug.
 - **`039`** — rebrand follow-up to `038`: repoints the character-forge
   `remote_entry_url` from the sibling UI's pre-rebrand k8s Service short-name
-  (`snapdragon-character-forge-ui`) to **`hugmesh-character-forge-ui`**. It is an
+  to **`hugmesh-character-forge-ui`**. It is an
   **additive `UPDATE`, not an edit of the merged `038` INSERT** — `038` may already
   have run, so rewriting it in place would break its Liquibase checksum *and* still
   leave migrated rows on the dead Service (a RAN changeSet never re-executes).
@@ -857,7 +857,7 @@ Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
 | `APP_BUNDLES_STORAGE` | `filesystem` | `filesystem` \| `s3` |
 | `APP_BUNDLES_DIR` | `/var/hugmesh/federation/bundles` | filesystem root |
 | `APP_BUNDLES_MAX_BYTES` | `268435456` (256 MiB) | max bytes accepted on a single `PUT /bundles/{slug}` before a 413 (streamed cap, staged file cleaned up) |
-| `APP_BUNDLES_S3_BUCKET` | `snapdragon-federation` | S3 bucket (when `storage=s3`) |
+| `APP_BUNDLES_S3_BUCKET` | `hugmesh-federation` | S3 bucket (when `storage=s3`) |
 | `APP_BUNDLES_S3_ENDPOINT` | (empty) | S3 endpoint override (point at MinIO in dev/CI) |
 | `APP_BUNDLES_S3_REGION` | `us-east-1` | S3 region |
 | `MANIFEST_CACHE_ENABLED` | `false` | enable the Cassandra cache |

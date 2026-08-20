@@ -97,7 +97,7 @@ public class CassandraManifestCache implements ManifestCache {
     public CassandraManifestCache(
             @Value("${app.manifest-cache.cassandra.contact-point:cassandra:9042}") String contactPoint,
             @Value("${app.manifest-cache.cassandra.local-dc:dc1}") String localDc,
-            @Value("${app.manifest-cache.cassandra.keyspace:snapdragon_federation}") String keyspace,
+            @Value("${app.manifest-cache.cassandra.keyspace:hugmesh_federation}") String keyspace,
             @Value("${app.manifest-cache.cassandra.auth.enabled:false}") boolean authEnabled,
             @Value("${app.manifest-cache.cassandra.auth.username:}") String authUsername,
             @Value("${app.manifest-cache.cassandra.auth.password:}") String authPassword,

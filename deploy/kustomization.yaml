@@ -7,13 +7,13 @@ resources:
   - service.yaml
 # First-party images pull from the in-cluster GitLab container registry
 # (registry.hugmesh.net = the GitLab chart's hosts.domain default; project
-# path = <group>/<repo>). The federation CI (snapdragon-federation-api/.gitlab-ci.yml)
+# path = <group>/<repo>). The federation CI (hugmesh-federation-api/.gitlab-ci.yml)
 # pushes $CI_REGISTRY_IMAGE:<branch> + :<sha>; $CI_REGISTRY_IMAGE =
-# registry.hugmesh.net/snapdragon/snapdragon-federation-api. We track the moving
+# registry.hugmesh.net/hugmesh/hugmesh-federation-api. We track the moving
 # :main here for dev. Pulls need the gitlab-registry imagePullSecret (ESO-
 # materialized; the hugmesh-backend ExternalSecret already exists).
 images:
-  - { name: snapdragon-systems/snapdragon-federation-api, newName: registry.hugmesh.net/snapdragon/snapdragon-federation-api, newTag: main }
+  - { name: hugmesh/hugmesh-federation-api, newName: registry.hugmesh.net/hugmesh/hugmesh-federation-api, newTag: main }
 patches:
   - target: { kind: Deployment }
     patch: |

@@ -38,8 +38,8 @@ spring:
   # Runtime data access is REACTIVE (R2DBC). Owns federation_modules,
   # user_modules, moderation_requests, federation_override.
   r2dbc:
-    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://snapdragon-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
-    username: "${SPRING_R2DBC_USERNAME:snapdragon}"
+    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://hugmesh-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
+    username: "${SPRING_R2DBC_USERNAME:hugmesh}"
     password: "${SPRING_R2DBC_PASSWORD:}"
 
   # Liquibase owns schema migrations. It has NO R2DBC runner, so it uses a plain
@@ -47,8 +47,8 @@ spring:
   liquibase:
     enabled: true
     change-log: "classpath:db/changelog/db.changelog-master.xml"
-    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://snapdragon-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
-    user: "${SPRING_LIQUIBASE_USER:snapdragon}"
+    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://hugmesh-pg.hugmesh-backend.svc.cluster.local:5432/federation}"
+    user: "${SPRING_LIQUIBASE_USER:hugmesh}"
     password: "${SPRING_LIQUIBASE_PASSWORD:}"
 
 app:
@@ -69,7 +69,7 @@ app:
       region: "${APP_BUNDLES_S3_REGION:us-east-1}"
       access-key: "${APP_BUNDLES_S3_ACCESS_KEY:}"
       secret-key: "${APP_BUNDLES_S3_SECRET_KEY:}"
-      bucket: "${APP_BUNDLES_S3_BUCKET:snapdragon-federation}"
+      bucket: "${APP_BUNDLES_S3_BUCKET:hugmesh-federation}"
 
   # Best-effort write-through cache of the rendered manifest into a Cassandra
   # table the remote-fragment pods / edge can poll. Disabled-friendly: any
@@ -79,7 +79,7 @@ app:
     cassandra:
       enabled: "${MANIFEST_CACHE_ENABLED:false}"
       contact-point: "${MANIFEST_CACHE_CASSANDRA:cassandra.hugmesh-pki.svc.cluster.local:9042}"
-      keyspace: "${MANIFEST_CACHE_KEYSPACE:snapdragon_federation}"
+      keyspace: "${MANIFEST_CACHE_KEYSPACE:hugmesh_federation}"
       local-dc: "${MANIFEST_CACHE_LOCAL_DC:dc1}"
       # ── Ships-dark CQL auth (HELD: default OFF until the Cassandra cluster is
       # secured). When auth.enabled=true the CqlSession dials with

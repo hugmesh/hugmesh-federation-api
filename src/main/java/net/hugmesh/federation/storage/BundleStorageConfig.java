@@ -39,7 +39,7 @@ public class BundleStorageConfig {
     @Bean
     @ConditionalOnProperty(name = "app.bundles.storage", havingValue = "s3")
     public BundleStorage s3BundleStorage(
-            @Value("${app.bundles.s3.bucket:snapdragon-federation}") String bucket,
+            @Value("${app.bundles.s3.bucket:hugmesh-federation}") String bucket,
             @Value("${app.bundles.s3.endpoint:}") String endpoint,
             @Value("${app.bundles.s3.region:us-east-1}") String region) {
         S3ClientBuilder builder = S3Client.builder().region(Region.of(region));

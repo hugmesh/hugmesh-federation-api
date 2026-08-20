@@ -1,4 +1,4 @@
-# snapdragon-federation-api — the module-federation REGISTRY + manifest/bundles API
+# hugmesh-federation-api — the module-federation REGISTRY + manifest/bundles API
 # (reactive WebFlux + R2DBC + Liquibase). It owns the enabled-MFE registry
 # (federation_modules / user_modules / moderation_requests / federation_override),
 # renders the manifest the host's loadRemoteModule consumes, and stores the
@@ -7,8 +7,8 @@
 # It is UPSTREAM of two runtime clients (both already retry, so this is a soft
 # dependency, but it should reconcile first — see apps/29-federation-api.yaml):
 #   - admin-bff calls federation as a JWT-authenticated client; and
-#   - the snapdragon-remote-fragment sync sidecar polls
-#     http://snapdragon-federation-api.hugmesh-backend.svc.cluster.local:8080 for the
+#   - the hugmesh-remote-fragment sync sidecar polls
+#     http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080 for the
 #     manifest + bundles and serves them statically at /_fragments/**.
 #
 # Security model: federation is purely an OAuth2 RESOURCE SERVER. It VALIDATES the
@@ -25,15 +25,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: snapdragon-federation-api
+  name: hugmesh-federation-api
   namespace: hugmesh-backend
-  labels: { app: snapdragon-federation-api, app.kubernetes.io/part-of: hugmesh.net }
+  labels: { app: hugmesh-federation-api, app.kubernetes.io/part-of: hugmesh.net }
 spec:
   replicas: 1
   strategy: { type: Recreate }   # single writer over the RWO bundles PVC
-  selector: { matchLabels: { app: snapdragon-federation-api } }
+  selector: { matchLabels: { app: hugmesh-federation-api } }
   template:
-    metadata: { labels: { app: snapdragon-federation-api } }
+    metadata: { labels: { app: hugmesh-federation-api } }
     spec:
       nodeSelector: { hugmesh.net/backend: "true" }
       securityContext:
@@ -44,8 +44,8 @@ spec:
           type: container_t
           level: "s0:c24"
       # ── API-to-API mTLS identity (build-keystore) ───────────────────────────
-      # Mirrors the snapdragon-gateway chart's build-keystore initContainer: turns
-      # the Vault-PKI-issued, ESO-synced TLS Secret (snapdragon-federation-api-mtls:
+      # Mirrors the hugmesh-gateway chart's build-keystore initContainer: turns
+      # the Vault-PKI-issued, ESO-synced TLS Secret (hugmesh-federation-api-mtls:
       # tls.crt/tls.key/ca.crt — NEW, added in this PR's pki-externalsecrets.yaml +
       # vault-pki role) into keystore.p12 (identity) + truststore.p12 (cluster CA)
       # for the server.ssl.* config to REQUIRE a client cert chaining to the cluster
@@ -54,7 +54,7 @@ spec:
       # SPRING_CONFIG_ADDITIONAL_LOCATION — never in git / a Secret / the pod spec.
       initContainers:
         - name: build-keystore
-          image: snapdragon-systems/snapdragon-federation-api:dev
+          image: hugmesh/hugmesh-federation-api:dev
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -64,9 +64,9 @@ spec:
             - |
               P="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
               openssl pkcs12 -export -inkey /pki/tls.key -in /pki/tls.crt \
-                -certfile /pki/ca.crt -name snapdragon-federation-api \
+                -certfile /pki/ca.crt -name hugmesh-federation-api \
                 -out /stores/keystore.p12 -passout "pass:${P}"
-              keytool -importcert -noprompt -alias snapdragon-cluster-ca \
+              keytool -importcert -noprompt -alias hugmesh-cluster-ca \
                 -file /pki/ca.crt -keystore /stores/truststore.p12 \
                 -storetype PKCS12 -storepass "${P}"
               # FILENAME IS LOAD-BEARING — do NOT rename this back to
@@ -89,8 +89,8 @@ spec:
             - { name: pki,    mountPath: /pki, readOnly: true }
             - { name: stores, mountPath: /stores }
       containers:
-        - name: snapdragon-federation-api
-          image: snapdragon-systems/snapdragon-federation-api:dev
+        - name: hugmesh-federation-api
+          image: hugmesh/hugmesh-federation-api:dev
           ports: [{ name: http, containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false
@@ -115,7 +115,7 @@ spec:
             - name: CASDOOR_ISSUER_URI
               value: "https://id.hugmesh.net"
             # Runtime reactive handle to federation's OWN Postgres (federation-db).
-            # NOT the dangling `snapdragon-pg` the app default points at.
+            # NOT the dangling `hugmesh-pg` the app default points at.
             # RUNTIME handle: log in as the dedicated NON-OWNER least-privilege role
             # `federation_app` (DML only, no DDL), created by federation-db's
             # initdb/10-roles.sh. Password from its OWN ESO Secret
@@ -147,7 +147,7 @@ spec:
             - name: APP_BUNDLES_STORAGE
               value: "filesystem"
             - name: APP_BUNDLES_DIR
-              value: "/var/snapdragon/federation/bundles"
+              value: "/var/hugmesh/federation/bundles"
             # Best-effort manifest write-through cache. Left DISABLED for first
             # deploy (renders from Postgres; NoopManifestCache). To enable best-
             # effort like admin-bff, flip MANIFEST_CACHE_ENABLED to "true" — any
@@ -159,7 +159,7 @@ spec:
             - name: MANIFEST_CACHE_CASSANDRA
               value: "cassandra.hugmesh-pki.svc.cluster.local:9042"
             - name: MANIFEST_CACHE_KEYSPACE
-              value: "snapdragon_federation"
+              value: "hugmesh_federation"
             - name: MANIFEST_CACHE_LOCAL_DC
               value: "dc1"
             # ── Ships-dark CQL auth + TLS (HELD: default OFF) ──────────────────
@@ -210,8 +210,8 @@ spec:
                 - -ec
                 - >-
                   curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
-                  --resolve snapdragon-federation-api:8080:127.0.0.1
-                  https://snapdragon-federation-api:8080/actuator/health/readiness
+                  --resolve hugmesh-federation-api:8080:127.0.0.1
+                  https://hugmesh-federation-api:8080/actuator/health/readiness
             initialDelaySeconds: 20
             periodSeconds: 10
           livenessProbe:
@@ -221,8 +221,8 @@ spec:
                 - -ec
                 - >-
                   curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
-                  --resolve snapdragon-federation-api:8080:127.0.0.1
-                  https://snapdragon-federation-api:8080/actuator/health/liveness
+                  --resolve hugmesh-federation-api:8080:127.0.0.1
+                  https://hugmesh-federation-api:8080/actuator/health/liveness
             initialDelaySeconds: 45
             periodSeconds: 15
           resources:
@@ -230,7 +230,7 @@ spec:
             limits:   { cpu: "1",  memory: 768Mi }
           volumeMounts:
             - { name: tmp,     mountPath: /tmp }
-            - { name: bundles, mountPath: /var/snapdragon/federation/bundles }
+            - { name: bundles, mountPath: /var/hugmesh/federation/bundles }
             - { name: stores,  mountPath: /stores, readOnly: true }
             - { name: pki,     mountPath: /pki,    readOnly: true }
       volumes:
@@ -241,7 +241,7 @@ spec:
         # Vault-PKI-issued mTLS material, synced by ESO (kubernetes.io/tls).
         - name: pki
           secret:
-            secretName: snapdragon-federation-api-mtls
+            secretName: hugmesh-federation-api-mtls
         # tmpfs for the assembled PKCS12 stores + the in-pod SSL properties.
         - name: stores
           emptyDir:

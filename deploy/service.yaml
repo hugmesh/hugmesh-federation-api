@@ -1,16 +1,16 @@
 # ClusterIP — reached in-cluster by the be-gateway (/api/federation/** route),
 # admin-bff, and the remote-fragment sync sidecar. The Service NAME is load-bearing:
 # clients hard-code the FQDN
-#   snapdragon-federation-api.hugmesh-backend.svc.cluster.local:8080
+#   hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080
 # (remote-fragment/deployment.yaml, the be-gateway route). Keep in sync with those.
 apiVersion: v1
 kind: Service
 metadata:
-  name: snapdragon-federation-api
+  name: hugmesh-federation-api
   namespace: hugmesh-backend
-  labels: { app: snapdragon-federation-api }
+  labels: { app: hugmesh-federation-api }
 spec:
   type: ClusterIP
-  selector: { app: snapdragon-federation-api }
+  selector: { app: hugmesh-federation-api }
   ports:
     - { name: http, port: 8080, targetPort: http }
