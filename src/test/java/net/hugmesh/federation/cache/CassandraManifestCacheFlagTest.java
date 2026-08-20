@@ -36,7 +36,7 @@ class CassandraManifestCacheFlagTest {
     /** Constructs the cache with auth + ssl explicitly OFF (the shipped default). */
     private static CassandraManifestCache flagsOff() {
         return new CassandraManifestCache(
-                "cassandra:9042", "dc1", "snapdragon_federation",
+                "cassandra:9042", "dc1", "hugmesh_federation",
                 /* authEnabled */ false, "", "",
                 /* sslEnabled  */ false, "", "", "", "");
     }
@@ -65,7 +65,7 @@ class CassandraManifestCacheFlagTest {
     @Test
     void authFlagOn_attachesPlainTextCredentials() throws Exception {
         CassandraManifestCache cache = new CassandraManifestCache(
-                "cassandra:9042", "dc1", "snapdragon_federation",
+                "cassandra:9042", "dc1", "hugmesh_federation",
                 /* authEnabled */ true, "fed_app", "s3cret-from-env-only",
                 /* sslEnabled  */ false, "", "", "", "");
 
@@ -87,7 +87,7 @@ class CassandraManifestCacheFlagTest {
         writeEmptyPkcs12(truststore, storePw);
 
         CassandraManifestCache cache = new CassandraManifestCache(
-                "cassandra:9042", "dc1", "snapdragon_federation",
+                "cassandra:9042", "dc1", "hugmesh_federation",
                 /* authEnabled */ false, "", "",
                 /* sslEnabled  */ true, truststore.toString(), storePw, "", "");
 
@@ -104,7 +104,7 @@ class CassandraManifestCacheFlagTest {
         writeEmptyPkcs12(truststore, storePw);
 
         CassandraManifestCache cache = new CassandraManifestCache(
-                "cassandra:9042", "dc1", "snapdragon_federation",
+                "cassandra:9042", "dc1", "hugmesh_federation",
                 /* authEnabled */ true, "fed_app", "s3cret-from-env-only",
                 /* sslEnabled  */ true, truststore.toString(), storePw, "", "");
 

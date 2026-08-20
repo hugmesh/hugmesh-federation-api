@@ -63,6 +63,27 @@ class FederationModuleRepositoryTest {
         assertThat(forum.getMetadata()).contains("\"mountAt\":\"/social/forum\"");
         // Platform/first-party module — no owner.
         assertThat(forum.getOwnerUserId()).isNull();
+        // The remote_entry_url asserted is the POST-041 value: 022 seeds the
+        // pre-rebrand host and the additive 041 UPDATE repoints it (022 is merged
+        // history and is NOT edited in place, mirroring 038/039). Asserting the
+        // hugmesh host therefore proves BOTH changesets applied, in order.
+        assertThat(forum.getRemoteEntryUrl())
+                .isEqualTo("http://hugmesh-forum-ui:8080/remoteEntry.json");
+    }
+
+    @Test
+    void noSeededModule_pointsAtAPreRebrandHost() {
+        // REBRAND DRIFT-GUARD — bans the old brand token. The historical seeds
+        // (022-033/038) inserted pre-rebrand "snapdragon-*" Service hostnames and are
+        // immutable merged history; the additive UPDATEs (039, 041) repoint every row.
+        // If a future changeset seeds (or reverts to) an old-brand host, this fails.
+        List<FederationModule> all = repo.findAll().collectList().block();
+        assertThat(all).isNotEmpty();
+        assertThat(all).allSatisfy(m -> {
+            if (m.getRemoteEntryUrl() != null) {
+                assertThat(m.getRemoteEntryUrl()).doesNotContainIgnoringCase("snapdragon");
+            }
+        });
     }
 
     @Test
@@ -87,7 +108,7 @@ class FederationModuleRepositoryTest {
         // /character-forge. Its presence proves changeset 038 applied.
         //
         // The remote_entry_url asserted below is the POST-039 value: 038 inserts the
-        // pre-rebrand snapdragon-character-forge-ui host and the additive 039 UPDATE
+        // pre-rebrand host and the additive 039 UPDATE
         // repoints it at hugmesh-character-forge-ui (038 is merged history and is NOT
         // edited in place). Asserting the hugmesh host therefore proves BOTH changesets
         // applied, in order. The 'character-forge' SLUG / mountAt stay frozen — only the

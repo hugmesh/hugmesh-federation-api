@@ -5,11 +5,11 @@
 # Images carry NO keys — KEYS material is supplied from the USB at first boot.
 
 # The OWASP pen-test stage is pulled in from the canonical, org-wide template in
-# snapdragon-generator (the single source of truth: Dependency-Check SCA + the
+# hugmesh-generator (the single source of truth: Dependency-Check SCA + the
 # authenticated ZAP DAST harness with the custom escalation/DoS probes + nuclei).
-# See memory snapdragon-pentest-standard / snapdragon-nuclei-integration.
+# See memory hugmesh-pentest-standard / hugmesh-nuclei-integration.
 include:
-  - project: 'hugmesh-net/snapdragon-generator'
+  - project: 'hugmesh-net/hugmesh-generator'
     ref: main
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
@@ -40,7 +40,7 @@ stages: [security, dast, pentest, test, build]
 # -----------------------------------------------------------------------------
 test:mvn:
   stage: test
-  tags: [snapdragon-x86, privileged]
+  tags: [hugmesh-x86, privileged]
   image: maven:3.9-eclipse-temurin-25
   services:
     - name: docker:27-dind
@@ -65,7 +65,7 @@ test:mvn:
 
 build:image:
   stage: build
-  tags: [snapdragon-x86, privileged]
+  tags: [hugmesh-x86, privileged]
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG'

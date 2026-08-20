@@ -129,7 +129,7 @@
               service, flipped on when the operator installs the slug.
         039 — rebrand follow-up to 038: repoint the character-forge remote_entry_url
               from the sibling UI's pre-rebrand k8s Service short-name
-              (snapdragon-character-forge-ui) to hugmesh-character-forge-ui. An ADDITIVE
+              to hugmesh-character-forge-ui. An ADDITIVE
               UPDATE rather than an edit of the merged 038 INSERT: 038 may already have
               run, so rewriting it in place would both break its Liquibase checksum AND
               leave already-migrated rows pointing at the dead Service (038 never
@@ -183,4 +183,5 @@
     <include file="db/changelog/038-register-character-forge-module.xml"/>
     <include file="db/changelog/039-rebrand-character-forge-remote-entry.xml"/>
     <include file="db/changelog/040-register-character-studio-module.xml"/>
+    <include file="db/changelog/041-rebrand-module-remote-entries.xml"/>
 </databaseChangeLog>
