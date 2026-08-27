@@ -243,7 +243,8 @@ public class VanityController {
             <h4>Caller-role access matrix</h4>
             <table>
               <tr><th>Caller</th><th>Result</th></tr>
-              <tr><td>Authenticated caller, <code>username</code> == own JWT subject</td>
+              <tr><td>Authenticated caller, <code>username</code> == own vanity label
+                  (<code>preferred_username</code>)</td>
                   <td>Publishes/refreshes own profile fragment</td></tr>
               <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
                   <td>May publish on behalf of any username</td></tr>
@@ -259,8 +260,10 @@ public class VanityController {
         @ApiResponse(responseCode = "401",
             description = "Missing, expired, or invalid Casdoor JWT."),
         @ApiResponse(responseCode = "403",
-            description = "username does not match the caller's own JWT subject and the caller "
-                + "does not hold ROLE_ADMIN or ROLE_SUPERADMIN."),
+            description = "username does not match the caller's own vanity label (the token's "
+                + "preferred_username claim) and the caller does not hold ROLE_ADMIN or "
+                + "ROLE_SUPERADMIN. Also returned when the token carries no label claim at all "
+                + "(fail-closed — the label is never derived from the JWT subject)."),
         @ApiResponse(responseCode = "404",
             description = "No active bundle uploaded yet for profile-<username> — "
                 + "PUT /api/federation/bundles/profile-<username> first."),
@@ -280,8 +283,12 @@ public class VanityController {
             @RequestBody(required = false) PublishRequest body) {
         PrincipalDomain scope = PrincipalDomain.resolve(jwt, domains);
         String displayName = body == null ? null : body.displayName();
+        // TWO axes, deliberately both passed: the SUBJECT scopes the user_modules read
+        // (owner_user_id is the Casdoor UUID BundleController stamped); the LABEL is what
+        // the owner guard compares to `username`. See VanityPublishService's class javadoc.
         return adminMono().flatMap(admin ->
-                publish.publish(jwt.getSubject(), admin, username, displayName, scope));
+                publish.publish(jwt.getSubject(), vanityLabelOf(jwt), admin, username,
+                        displayName, scope));
     }
 
     @Operation(
@@ -297,7 +304,8 @@ public class VanityController {
             <h4>Caller-role access matrix</h4>
             <table>
               <tr><th>Caller</th><th>Result</th></tr>
-              <tr><td>Authenticated caller, <code>username</code> == own JWT subject</td>
+              <tr><td>Authenticated caller, <code>username</code> == own vanity label
+                  (<code>preferred_username</code>)</td>
                   <td>Unpublishes own profile fragment</td></tr>
               <tr><td>ROLE_ADMIN / ROLE_SUPERADMIN</td>
                   <td>May unpublish on behalf of any username</td></tr>
@@ -310,8 +318,10 @@ public class VanityController {
         @ApiResponse(responseCode = "401",
             description = "Missing, expired, or invalid Casdoor JWT."),
         @ApiResponse(responseCode = "403",
-            description = "username does not match the caller's own JWT subject and the caller "
-                + "does not hold ROLE_ADMIN or ROLE_SUPERADMIN."),
+            description = "username does not match the caller's own vanity label (the token's "
+                + "preferred_username claim) and the caller does not hold ROLE_ADMIN or "
+                + "ROLE_SUPERADMIN. Also returned when the token carries no label claim at all "
+                + "(fail-closed — the label is never derived from the JWT subject)."),
         @ApiResponse(responseCode = "500",
             description = "Postgres error during the unpublish. Check server logs.")
     })
@@ -321,7 +331,41 @@ public class VanityController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable @Pattern(regexp = ValidationPatterns.USERNAME,
                     message = "username must be a DNS-label token") String username) {
-        return adminMono().flatMap(admin -> publish.unpublish(jwt.getSubject(), admin, username));
+        return adminMono().flatMap(admin ->
+                publish.unpublish(jwt.getSubject(), vanityLabelOf(jwt), admin, username));
+    }
+
+    /**
+     * The caller's own vanity LABEL (DNS label) as carried on the token — the axis the
+     * owner guard on this controller's write surface compares to the {@code username}
+     * path segment.
+     *
+     * <p>Deliberately mirrors user-bff-api's {@code ProfileController.usernameOf} — the
+     * OTHER end of this call, which derives the path segment the same way — with ONE
+     * intentional divergence: <b>there is no fallback to {@code jwt.getSubject()}</b>.
+     * On this platform the subject is a Casdoor UUID (or a bff_-session
+     * {@code provider:handle} composite), never a DNS label, so a subject fallback could
+     * only ever produce a bogus comparison; worse, a principal whose subject string
+     * happened to equal a victim's label would be handed ownership of that label. A
+     * token with neither claim therefore yields {@code null}, which the service's owner
+     * guard turns into a 403.
+     *
+     * @param jwt the validated access token
+     * @return the {@code preferred_username} claim, else {@code name}, else {@code null}
+     */
+    static String vanityLabelOf(Jwt jwt) {
+        if (jwt == null) {
+            return null;
+        }
+        String preferred = jwt.getClaimAsString("preferred_username");
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        String name = jwt.getClaimAsString("name");
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        return null;
     }
 
     /**
