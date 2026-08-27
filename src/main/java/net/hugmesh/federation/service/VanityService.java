@@ -21,7 +21,8 @@ import net.hugmesh.federation.repository.FederationOverrideRepository;
  *       table (the slug column is already UNIQUE + indexed);</li>
  *   <li>{@code kind = "fragment"}             — served by the remote-fragment
  *       sync-and-serve-static fleet (same path as every other fragment bundle);</li>
- *   <li>{@code owner_user_id = username}      — the Casdoor subject, so the
+ *   <li>{@code owner_user_id = username}      — the vanity LABEL (NOT the Casdoor
+ *       subject/UUID; see {@code VanityPublishService}'s two-axis note), so the
  *       admin/mod scope=user kill-switch already covers a user's vanity profile
  *       with no new wiring;</li>
  *   <li>{@code visibility = "public"}         — the GATE. Only public fragments

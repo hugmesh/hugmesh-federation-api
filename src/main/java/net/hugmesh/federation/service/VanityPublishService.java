@@ -35,12 +35,50 @@ import static org.springframework.http.HttpStatus.UNAUTHORIZED;
  * {@code remoteEntryUrl} / {@code contentHash} from the request body, so a caller
  * cannot register a fragment pointing at bytes they never uploaded.
  *
+ * <h2>TWO identity axes — never compare one to the other</h2>
+ * This service straddles two DIFFERENT identities and the whole vanity surface was
+ * broken for every real user because they were compared to each other:
+ *
+ * <ul>
+ *   <li><b>LABEL axis</b> — {@code username}: the vanity DNS label behind
+ *       {@code <username>.hugmesh.net} and the {@code profile-<username>} slug.
+ *       It is Casdoor's LOGIN NAME, carried on the token as
+ *       {@code preferred_username}. It is what user-bff-api sends in the path
+ *       segment ({@code ProfileController.usernameOf} ->
+ *       {@code FederationApiClient.publishVanity}), and it is what
+ *       {@code federation_modules.owner_user_id} holds for a profile fragment (the
+ *       value the {@code scope=user} ban writer targets — see
+ *       {@link VanityService}'s owner-ban section).</li>
+ *   <li><b>SUBJECT axis</b> — {@code jwt.getSubject()}: on this platform the Casdoor
+ *       <b>UUID</b> on a real Casdoor JWT, and the composite
+ *       {@code provider:handle} account id on a bff_-session synthetic principal
+ *       (stated outright in user-bff-api's {@code CasdoorUserClient}). It is what
+ *       {@code BundleController} stamps on every {@code user_modules} row as
+ *       {@code owner_user_id}.</li>
+ * </ul>
+ *
+ * <p><b>The two are NEVER equal for a real account.</b> An earlier revision of this
+ * class asserted the opposite ("the Casdoor subject IS the username on this
+ * platform") and acted on it in both directions:
+ * <ol>
+ *   <li>{@link #ownerGuard} compared the caller's SUBJECT to the LABEL, so EVERY
+ *       non-admin publish/unpublish was a 403 — which is what a user saw as a failed
+ *       {@code PUT /bff/user/profile} whenever they enabled Public + vanity; and</li>
+ *   <li>the {@code user_modules} lookup filtered {@code owner_user_id} by the LABEL
+ *       when that column holds the SUBJECT, so relaxing (1) alone would only have
+ *       converted the 403 into a 404.</li>
+ * </ol>
+ *
  * <h2>Owner-scoping (matches the {@code BundleController} owner-or-admin pattern)</h2>
- * The {@code username} path segment MUST equal the caller's own JWT subject
- * (the Casdoor subject IS the username on this platform — see
- * {@code ProfileService.usernameOf} in user-bff-api), UNLESS the caller holds
- * {@code ROLE_ADMIN} or {@code ROLE_SUPERADMIN}. A non-owner, non-admin caller
- * is rejected with 403 BEFORE any read or write runs.
+ * The {@code username} path segment MUST equal the caller's own vanity LABEL
+ * (case-insensitively — {@code ValidationPatterns.USERNAME} admits upper case while
+ * the DNS label is lower-cased), UNLESS the caller holds {@code ROLE_ADMIN} or
+ * {@code ROLE_SUPERADMIN}. A non-owner, non-admin caller is rejected with 403 BEFORE
+ * any read or write runs. A caller whose token carries NO label claim fails CLOSED
+ * (403): the label is never derived from the subject, because a subject-shaped value
+ * that happened to equal a victim's label would otherwise buy ownership of it.
+ * The bundle read is scoped on the SUBJECT axis (see
+ * {@link #activeBundleForCaller}).
  *
  * <h2>Reserved-name defence (write-layer, mirrors {@code ProfileService.save})</h2>
  * Publishing is rejected with 400 when the username is an EXACT reserved label
@@ -114,7 +152,13 @@ public class VanityPublishService {
      * error (no bundle, reserved name, not-owner) is always an error signal, never
      * a downgraded success.
      *
-     * @param caller      the authenticated JWT subject
+     * @param callerSubject the authenticated JWT SUBJECT (Casdoor UUID / bff_ composite).
+     *                    Used ONLY as the {@code user_modules.owner_user_id} filter —
+     *                    never compared to {@code username}. See the class javadoc.
+     * @param callerLabel the caller's own vanity LABEL from the token's
+     *                    {@code preferred_username}/{@code name} claim, or {@code null}
+     *                    when the token carries neither (fails closed). This is the
+     *                    value compared to {@code username}.
      * @param admin       {@code true} when the caller holds ROLE_ADMIN/ROLE_SUPERADMIN
      *                    (may publish on behalf of another username)
      * @param username    the vanity username / path segment being published
@@ -133,9 +177,10 @@ public class VanityPublishService {
      *                                 must go through {@code POST
      *                                 /api/federation/overrides/{moduleSlug}/rearm}
      */
-    public Mono<FederationModule> publish(String caller, boolean admin, String username,
-                                          String displayName, PrincipalDomain scope) {
-        ResponseStatusException owner = ownerGuard(caller, admin, username);
+    public Mono<FederationModule> publish(String callerSubject, String callerLabel, boolean admin,
+                                          String username, String displayName,
+                                          PrincipalDomain scope) {
+        ResponseStatusException owner = ownerGuard(callerSubject, callerLabel, admin, username);
         if (owner != null) {
             return Mono.error(owner);
         }
@@ -144,7 +189,10 @@ public class VanityPublishService {
             return Mono.error(reserved);
         }
         String slug = VanityService.profileSlug(username);
-        return bundles.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(slug, username)
+        // SUBJECT axis: user_modules.owner_user_id is what BundleController.put stamps
+        // (jwt.getSubject()), NOT the DNS label. Filtering it by `username` here is what
+        // made the guard fix alone insufficient — see the class javadoc.
+        return activeBundleForCaller(slug, callerSubject, admin, scope)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND,
                         "no uploaded bundle for " + slug + " — PUT /api/federation/bundles/" + slug
                                 + " before publishing a vanity profile")))
@@ -157,7 +205,7 @@ public class VanityPublishService {
                                                 + "and can only be restored by an admin via POST "
                                                 + "/api/federation/overrides/" + slug + "/rearm"));
                             }
-                            applyPublish(module, bundle, displayName);
+                            applyPublish(module, bundle, displayName, username);
                             return modules.save(module);
                         }))
                 // Best-effort skeleton mint — mirrors ModuleRegistryService.create's
@@ -176,14 +224,18 @@ public class VanityPublishService {
      * Idempotent: completes successfully whether or not a fragment row exists yet
      * (unpublishing a never-published profile is a no-op, not an error).
      *
-     * @param caller   the authenticated JWT subject
+     * @param callerSubject the authenticated JWT SUBJECT — presence-checked only (401);
+     *                 never compared to {@code username}. See the class javadoc.
+     * @param callerLabel the caller's own vanity LABEL from the token, or {@code null}
+     *                 when absent (fails closed with 403)
      * @param admin    {@code true} when the caller holds ROLE_ADMIN/ROLE_SUPERADMIN
      * @param username the vanity username / path segment being unpublished
      * @return a {@code Mono<Void>} completing once the row (if any) is suppressed
      * @throws ResponseStatusException 401 missing subject, 403 not owner/admin
      */
-    public Mono<Void> unpublish(String caller, boolean admin, String username) {
-        ResponseStatusException violation = ownerGuard(caller, admin, username);
+    public Mono<Void> unpublish(String callerSubject, String callerLabel, boolean admin,
+                                String username) {
+        ResponseStatusException violation = ownerGuard(callerSubject, callerLabel, admin, username);
         if (violation != null) {
             return Mono.error(violation);
         }
@@ -214,15 +266,82 @@ public class VanityPublishService {
         return null;
     }
 
-    private static ResponseStatusException ownerGuard(String caller, boolean admin, String username) {
-        if (caller == null || caller.isBlank()) {
+    /**
+     * Owner-or-admin gate, on the LABEL axis.
+     *
+     * <p>{@code callerSubject} is only presence-checked (an absent subject is an
+     * unauthenticated call, 401). Ownership is decided by comparing the caller's own
+     * vanity LABEL to the {@code username} path segment — the axis user-bff-api
+     * actually addresses this endpoint by. Comparing the SUBJECT to it (the pre-fix
+     * behaviour) 403'd every real account, because the subject is a Casdoor UUID.
+     *
+     * <p>Fails CLOSED on a missing label: {@code callerLabel == null} is a 403, never
+     * a fallback to the subject. A subject-derived fallback would let any principal
+     * whose subject string happened to equal a victim's DNS label publish or take
+     * down that victim's profile.
+     *
+     * <p>The comparison is case-insensitive and trims: {@code ValidationPatterns.USERNAME}
+     * admits upper case and Casdoor does not lower-case a login name, while the vanity
+     * DNS label is lower-cased — a case-sensitive equality would 403 every user whose
+     * login name has a capital letter.
+     */
+    private static ResponseStatusException ownerGuard(String callerSubject, String callerLabel,
+                                                      boolean admin, String username) {
+        if (callerSubject == null || callerSubject.isBlank()) {
             return new ResponseStatusException(UNAUTHORIZED, "missing authenticated subject");
         }
-        if (!admin && !caller.equals(username)) {
+        if (admin) {
+            return null;
+        }
+        if (!labelsMatch(callerLabel, username)) {
             return new ResponseStatusException(FORBIDDEN,
                     "cannot publish or unpublish another user's vanity profile");
         }
         return null;
+    }
+
+    /** Case-insensitive, trimmed equality of two vanity DNS labels; a null/blank on
+     *  either side never matches (fail closed). */
+    private static boolean labelsMatch(String a, String b) {
+        if (a == null || a.isBlank() || b == null || b.isBlank()) {
+            return false;
+        }
+        return a.trim().equalsIgnoreCase(b.trim());
+    }
+
+    /**
+     * The active {@code user_modules} row the caller may publish FROM — the SUBJECT-axis
+     * three-tier cut, mirroring {@code BundleService.activeRowForCaller} (this service
+     * holds the repository directly; that method is private to its own service).
+     *
+     * <ul>
+     *   <li>SUPERADMIN — un-pinned: the slug's active row in ANY brand.</li>
+     *   <li>per-domain ADMIN — the slug's active row pinned to the caller's brand, so a
+     *       same-slug row in another brand resolves EMPTY (404), never a cross-tenant
+     *       publish. An admin publishing on another user's behalf cannot use their own
+     *       subject as the owner filter (the bundle is the target user's), so the owner
+     *       predicate is dropped here rather than mis-applied.</li>
+     *   <li>per-domain non-admin — ONLY their own active row, owner = JWT SUBJECT.</li>
+     * </ul>
+     */
+    private Mono<UserModule> activeBundleForCaller(String slug, String callerSubject, boolean admin,
+                                                   PrincipalDomain scope) {
+        if (scope != null && scope.superadmin()) {
+            return bundles.findFirstBySlugAndSupersededAtIsNullOrderByCreatedAtDesc(slug);
+        }
+        if (admin) {
+            return bundles.findFirstBySlugAndDomainAndSupersededAtIsNullOrderByCreatedAtDesc(
+                    slug, domainOf(scope));
+        }
+        return bundles.findFirstBySlugAndOwnerUserIdAndSupersededAtIsNullOrderByCreatedAtDesc(
+                slug, callerSubject);
+    }
+
+    /** The caller's brand for a READ predicate ({@code "default"} when scope-less) —
+     *  mirrors {@code BundleService.domainOf}. Distinct from {@link #domainForWrite},
+     *  which additionally collapses a SUPERADMIN to {@code "default"} when STAMPING. */
+    private static String domainOf(PrincipalDomain scope) {
+        return scope == null ? PrincipalDomain.forDomain("default").domain() : scope.domain();
     }
 
     /**
@@ -263,17 +382,29 @@ public class VanityPublishService {
         return m;
     }
 
-    private static void applyPublish(FederationModule module, UserModule bundle, String displayName) {
+    /**
+     * Stamp the fragment row from the caller's bundle.
+     *
+     * <p>{@code owner_user_id} is stamped with the vanity LABEL, NOT
+     * {@code bundle.getOwnerUserId()} (which is the SUBJECT — see the class javadoc).
+     * That column is the axis {@link VanityService}'s owner-ban gate resolves an
+     * active {@code scope=user} override by, and the ban writer targets the username;
+     * stamping a Casdoor UUID there would leave every vanity-profile ban inert while
+     * the fragment kept resolving at the vanity host. The cosmetic {@code displayName}
+     * falls back to the label for the same reason — a raw UUID is not a display name.
+     */
+    private static void applyPublish(FederationModule module, UserModule bundle,
+                                     String displayName, String username) {
         Instant now = Instant.now();
         if (module.getCreatedAt() == null) {
             module.setCreatedAt(now);
         }
         module.setKind(FRAGMENT_KIND);
-        module.setOwnerUserId(bundle.getOwnerUserId());
+        module.setOwnerUserId(username);
         String name = (displayName != null && !displayName.isBlank())
                 ? displayName
                 : (module.getDisplayName() != null && !module.getDisplayName().isBlank()
-                        ? module.getDisplayName() : bundle.getOwnerUserId());
+                        ? module.getDisplayName() : username);
         module.setDisplayName(name);
         String entry = (bundle.getEntryFile() != null && !bundle.getEntryFile().isBlank())
                 ? bundle.getEntryFile() : DEFAULT_ENTRY_FILE;

@@ -73,6 +73,27 @@ class VanityControllerTest {
                 .build();
     }
 
+    /**
+     * A REALISTICALLY-SHAPED Casdoor token: {@code sub} is the UUID and
+     * {@code preferred_username} is the login name — two DIFFERENT values. The
+     * single-argument {@link #jwtFor(String)} above collapses both axes onto one
+     * string, which is exactly why this suite could not see the identity-axis 403;
+     * every publish/unpublish case below uses THIS builder so the two stay apart.
+     */
+    private static Jwt jwtFor(String subject, String preferredUsername) {
+        return Jwt.withTokenValue("t")
+                .header("alg", "none")
+                .subject(subject)
+                .claim("sub", subject)
+                .claim("preferred_username", preferredUsername)
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build();
+    }
+
+    private static final String UUID_ALICE = "8c8f1a02-6f2e-4a1e-9a4d-7c1f0b2e5d33";
+    private static final String UUID_MALLORY = "11111111-2222-3333-4444-555555555555";
+
     /** A security context whose authentication carries the given authorities. */
     private static SecurityContext ctx(String subject, String... roles) {
         var authorities = java.util.Arrays.stream(roles).map(SimpleGrantedAuthority::new).toList();
@@ -330,21 +351,23 @@ class VanityControllerTest {
         return m;
     }
 
-    /** The controller forwards the JWT SUBJECT as the caller (never a request
-     *  param), resolves the ADMIN flag from the reactive security context, and
-     *  hands the request body's displayName + a resolved scope straight through to
-     *  {@link VanityPublishService#publish}. */
+    /** The controller forwards BOTH identity axes (never a request param): the JWT
+     *  SUBJECT, which scopes the user_modules read, AND the caller's vanity LABEL from
+     *  {@code preferred_username}, which the service's owner guard compares to the
+     *  {@code username} path segment. It resolves the ADMIN flag from the reactive
+     *  security context and hands the body's displayName + a resolved scope straight
+     *  through to {@link VanityPublishService#publish}. */
     @Test
-    void publish_forwardsSubjectAdminAndDisplayName_toService() {
+    void publish_forwardsBothIdentityAxesAdminAndDisplayName_toService() {
         VanityService svc = mock(VanityService.class);
         VanityPublishService publishSvc = mock(VanityPublishService.class);
-        when(publishSvc.publish(eq("alice"), eq(false), eq("alice"), eq("Alice"), any()))
+        when(publishSvc.publish(eq(UUID_ALICE), eq("alice"), eq(false), eq("alice"), eq("Alice"), any()))
                 .thenReturn(Mono.just(module("alice")));
         VanityController c = controller(svc, publishSvc);
 
-        StepVerifier.create(c.publish(jwtFor("alice"), "alice", new VanityController.PublishRequest("Alice"))
+        StepVerifier.create(c.publish(jwtFor(UUID_ALICE, "alice"), "alice", new VanityController.PublishRequest("Alice"))
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
-                                Mono.just(ctx("alice", "ROLE_USER")))))
+                                Mono.just(ctx(UUID_ALICE, "ROLE_USER")))))
                 .assertNext(m -> assertThat(m.getSlug()).isEqualTo("profile-alice"))
                 .verifyComplete();
     }
@@ -355,13 +378,13 @@ class VanityControllerTest {
     void publish_nullBody_forwardsNullDisplayName() {
         VanityService svc = mock(VanityService.class);
         VanityPublishService publishSvc = mock(VanityPublishService.class);
-        when(publishSvc.publish(eq("alice"), eq(true), eq("alice"), isNull(), any()))
+        when(publishSvc.publish(eq(UUID_ALICE), eq("alice"), eq(true), eq("alice"), isNull(), any()))
                 .thenReturn(Mono.just(module("alice")));
         VanityController c = controller(svc, publishSvc);
 
-        StepVerifier.create(c.publish(jwtFor("alice"), "alice", null)
+        StepVerifier.create(c.publish(jwtFor(UUID_ALICE, "alice"), "alice", null)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
-                                Mono.just(ctx("alice", "ROLE_ADMIN")))))
+                                Mono.just(ctx(UUID_ALICE, "ROLE_ADMIN")))))
                 .expectNextCount(1)
                 .verifyComplete();
     }
@@ -373,13 +396,13 @@ class VanityControllerTest {
     void publish_serviceError_propagates_neverFakesSuccess() {
         VanityService svc = mock(VanityService.class);
         VanityPublishService publishSvc = mock(VanityPublishService.class);
-        when(publishSvc.publish(eq("mallory"), eq(false), eq("alice"), any(), any()))
+        when(publishSvc.publish(eq(UUID_MALLORY), eq("mallory"), eq(false), eq("alice"), any(), any()))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "not owner")));
         VanityController c = controller(svc, publishSvc);
 
-        StepVerifier.create(c.publish(jwtFor("mallory"), "alice", null)
+        StepVerifier.create(c.publish(jwtFor(UUID_MALLORY, "mallory"), "alice", null)
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
-                                Mono.just(ctx("mallory", "ROLE_USER")))))
+                                Mono.just(ctx(UUID_MALLORY, "ROLE_USER")))))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ResponseStatusException.class);
                     assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -388,15 +411,15 @@ class VanityControllerTest {
     }
 
     @Test
-    void unpublish_forwardsSubjectAndAdmin_toService_andCompletesEmpty() {
+    void unpublish_forwardsBothIdentityAxesAndAdmin_toService_andCompletesEmpty() {
         VanityService svc = mock(VanityService.class);
         VanityPublishService publishSvc = mock(VanityPublishService.class);
-        when(publishSvc.unpublish(eq("alice"), eq(false), eq("alice"))).thenReturn(Mono.empty());
+        when(publishSvc.unpublish(eq(UUID_ALICE), eq("alice"), eq(false), eq("alice"))).thenReturn(Mono.empty());
         VanityController c = controller(svc, publishSvc);
 
-        StepVerifier.create(c.unpublish(jwtFor("alice"), "alice")
+        StepVerifier.create(c.unpublish(jwtFor(UUID_ALICE, "alice"), "alice")
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
-                                Mono.just(ctx("alice", "ROLE_USER")))))
+                                Mono.just(ctx(UUID_ALICE, "ROLE_USER")))))
                 .verifyComplete();
     }
 
@@ -404,13 +427,13 @@ class VanityControllerTest {
     void unpublish_serviceError_propagates_neverFakesSuccess() {
         VanityService svc = mock(VanityService.class);
         VanityPublishService publishSvc = mock(VanityPublishService.class);
-        when(publishSvc.unpublish(eq("mallory"), eq(false), eq("alice")))
+        when(publishSvc.unpublish(eq(UUID_MALLORY), eq("mallory"), eq(false), eq("alice")))
                 .thenReturn(Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "not owner")));
         VanityController c = controller(svc, publishSvc);
 
-        StepVerifier.create(c.unpublish(jwtFor("mallory"), "alice")
+        StepVerifier.create(c.unpublish(jwtFor(UUID_MALLORY, "mallory"), "alice")
                         .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(
-                                Mono.just(ctx("mallory", "ROLE_USER")))))
+                                Mono.just(ctx(UUID_MALLORY, "ROLE_USER")))))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ResponseStatusException.class);
                     assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
