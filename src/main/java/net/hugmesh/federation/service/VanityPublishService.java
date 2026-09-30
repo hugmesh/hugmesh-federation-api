@@ -196,24 +196,41 @@ public class VanityPublishService {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(NOT_FOUND,
                         "no uploaded bundle for " + slug + " — PUT /api/federation/bundles/" + slug
                                 + " before publishing a vanity profile")))
-                .flatMap(bundle -> modules.findBySlug(slug)
-                        .defaultIfEmpty(newModule(slug, username, scope))
-                        .flatMap(module -> {
-                            if (adminSuppressed(module)) {
-                                return Mono.<FederationModule>error(new ResponseStatusException(CONFLICT,
-                                        "profile '" + username + "' was administratively unpublished "
-                                                + "and can only be restored by an admin via POST "
-                                                + "/api/federation/overrides/" + slug + "/rearm"));
-                            }
-                            applyPublish(module, bundle, displayName, username);
-                            return modules.save(module);
-                        }))
+                .flatMap(bundle -> upsertFragment(bundle, slug, username, displayName, scope))
                 // Best-effort skeleton mint — mirrors ModuleRegistryService.create's
                 // profile-fragment side-effect. A skeleton-write failure never fails
                 // the publish; the slug UNIQUE column is the authoritative backstop.
                 .flatMap(saved -> usernames.grant(username, username)
                         .onErrorResume(e -> Mono.empty())
                         .thenReturn(saved));
+    }
+
+    /**
+     * The {@link #publish} leg once the caller's bundle is found: load (or start) the
+     * {@code profile-<username>} row, refuse an admin-suppressed one with 409, else apply
+     * the publish and save.
+     *
+     * @param bundle      the caller's active {@code user_modules} bundle for the slug
+     * @param slug        the {@code profile-<username>} fragment slug
+     * @param username    the vanity username / path segment being published
+     * @param displayName optional display name to stamp on the fragment row
+     * @param scope       the caller's resolved tenant scope (stamps {@code domain} on INSERT only)
+     * @return a {@code Mono} emitting the saved {@link FederationModule}
+     */
+    private Mono<FederationModule> upsertFragment(UserModule bundle, String slug, String username,
+                                                  String displayName, PrincipalDomain scope) {
+        return modules.findBySlug(slug)
+                .defaultIfEmpty(newModule(slug, username, scope))
+                .flatMap(module -> {
+                    if (adminSuppressed(module)) {
+                        return Mono.<FederationModule>error(new ResponseStatusException(CONFLICT,
+                                "profile '" + username + "' was administratively unpublished "
+                                        + "and can only be restored by an admin via POST "
+                                        + "/api/federation/overrides/" + slug + "/rearm"));
+                    }
+                    applyPublish(module, bundle, displayName, username);
+                    return modules.save(module);
+                });
     }
 
     /**

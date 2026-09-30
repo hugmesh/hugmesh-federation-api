@@ -492,22 +492,30 @@ public class BundleService {
      * @param staging the temp staging directory to remove (no-op when {@code null}/absent)
      */
     private static void deleteStaging(Path staging) {
-        Mono.fromRunnable(() -> {
-            if (staging == null || !Files.exists(staging)) {
-                return;
-            }
-            try (var stream = Files.walk(staging)) {
-                stream.sorted(Comparator.reverseOrder()).forEach(p -> {
-                    try {
-                        Files.deleteIfExists(p);
-                    } catch (IOException ignored) {
-                        // best effort — a single undeletable entry must not mask the rejection
-                    }
-                });
-            } catch (IOException ex) {
-                log.warn("[bundle] failed to clean up staging dir {}", staging, ex);
-            }
-        }).subscribeOn(Schedulers.boundedElastic()).subscribe();
+        Mono.fromRunnable(() -> deleteStagingTree(staging)).subscribeOn(Schedulers.boundedElastic()).subscribe();
+    }
+
+    /**
+     * The blocking body of {@link #deleteStaging}: delete the staging tree entry by entry,
+     * children before parents, logging (never throwing) on an IO failure.
+     *
+     * @param staging the temp staging directory to remove (no-op when {@code null}/absent)
+     */
+    private static void deleteStagingTree(Path staging) {
+        if (staging == null || !Files.exists(staging)) {
+            return;
+        }
+        try (var stream = Files.walk(staging)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                    // best effort — a single undeletable entry must not mask the rejection
+                }
+            });
+        } catch (IOException ex) {
+            log.warn("[bundle] failed to clean up staging dir {}", staging, ex);
+        }
     }
 
     /**
