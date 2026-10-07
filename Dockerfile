@@ -48,6 +48,10 @@ RUN --mount=type=secret,id=ci_job_token \
         export CI_JOB_TOKEN="$(cat /run/secrets/ci_job_token)"; \
       fi; \
       if [ -f /run/secrets/packages_read_token ]; then \
+        if [ ! -s /run/secrets/packages_read_token ]; then \
+          echo "FATAL: secret packages_read_token is mounted but empty (is PACKAGES_READ_TOKEN set?)" >&2; \
+          exit 1; \
+        fi; \
         export UPSTREAM_PACKAGES_TOKEN="$(cat /run/secrets/packages_read_token)"; \
         export UPSTREAM_PACKAGES_ACTOR="${UPSTREAM_PACKAGES_ACTOR:-hugmesh}"; \
         ./mvnw -B -s .github/maven-ci-settings.xml package -DskipTests; \

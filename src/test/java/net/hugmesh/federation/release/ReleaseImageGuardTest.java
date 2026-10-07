@@ -129,18 +129,26 @@ class ReleaseImageGuardTest {
     void releaseWorkflowUsesGitHubContract() throws IOException {
         Path wf = ROOT.resolve(".github/workflows/release.yml");
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(wf),
-                "this repo has no release workflow yet; the Dockerfile/settings guards above still apply");
+                "no release workflow in this checkout; the Dockerfile/settings guards above still apply");
         String yaml = code(Files.readString(wf, StandardCharsets.UTF_8), "#");
         assertThat(yaml)
-                .contains("packages_read_token=${{ secrets.PACKAGES_READ_TOKEN || secrets.GITHUB_TOKEN }}")
+                .contains("packages_read_token=${{ secrets.PACKAGES_READ_TOKEN }}")
                 .contains("UPSTREAM_PACKAGES_ACTOR=${{ secrets.PACKAGES_READ_ACTOR || github.actor }}")
-                .contains("DOCKER_BUILD_RECORD_UPLOAD: false")
-                .contains("Preflight - cross-repo package read");
+                .contains("Preflight, cross-repo package read");
+        // GITHUB_TOKEN cannot read another repository's package, so falling back to it would only
+        // turn "secret not set" into an opaque 401/404 deep in the build.
+        assertThat(yaml).as("no GITHUB_TOKEN fall-back for the cross-repo read")
+                .doesNotContain("PACKAGES_READ_TOKEN || secrets.GITHUB_TOKEN");
+        // build-push-action v6 uploads a build-record artifact holding raw BuildKit logs; v5 does
+        // not. Either stay on <= v5 or turn the upload off explicitly.
+        assertThat(yaml.contains("docker/build-push-action@v5") || yaml.contains("DOCKER_BUILD_RECORD_UPLOAD: false"))
+                .as("build-push-action must be <= v5 or set DOCKER_BUILD_RECORD_UPLOAD: false")
+                .isTrue();
         assertThat(yaml).as("the GitLab inputs these names replaced must not come back")
                 .doesNotContain("ci_job_token=")
                 .doesNotContain("CI_API_V4_URL=")
                 .doesNotContain("GITLAB_GROUP_ID=");
-        assertThat(yaml.indexOf("Preflight - cross-repo package read"))
+        assertThat(yaml.indexOf("Preflight, cross-repo package read"))
                 .as("the preflight must precede the image build")
                 .isLessThan(yaml.indexOf("docker/build-push-action"));
     }
