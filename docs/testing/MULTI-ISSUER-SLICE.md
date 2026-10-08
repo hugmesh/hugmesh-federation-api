@@ -32,11 +32,13 @@ reserved-prefix permissions).
 
 ### 1. `TestIssuer` — mint issuer-specific JWTs against test JWKs (no network)
 
-`src/test/java/.../testsupport/TestIssuer.java`, copied **verbatim** (package only)
-from the gateway. Each instance generates a fresh RSA keypair, starts a JDK
+`src/test/java/.../testsupport/TestIssuer.java`, copied from the gateway (package
+changed) and since extended. Each instance generates a fresh RSA keypair, starts a JDK
 `HttpServer` on `127.0.0.1:<random-port>` serving the OIDC discovery doc + the public
 JWK set, and exposes `issuerUri()` / `mint(subject, roleNames)` /
-`mintWithClaims(subject, claims)`. A token minted by issuer A is cryptographically
+`mintWithClaims(subject, claims)`, plus the negative-test minters
+`mintWithExpiry(subject, claims, expirySeconds)`, `mintExpired(subject, roleNames)` and
+`mintRevoked(subject, roleNames)`. A token minted by issuer A is cryptographically
 valid **only** against issuer A's manager — exactly the cross-brand isolation (c).
 `AutoCloseable`; stop it in `@AfterEach`.
 
@@ -46,13 +48,15 @@ Only dependency: `nimbus-jose-jwt`, already transitive via
 ### 2. `SecuritySliceSupport` — build the REAL `SecurityWebFilterChain` into a `WebTestClient`
 
 `src/test/java/.../config/SecuritySliceSupport.java`. It constructs this repo's real
-`SecurityConfig(domainRegistry, tenantAuthManagerResolver)` and calls its **prod**
+`SecurityConfig(domainRegistry, tenantAuthManagerResolver, false, 600_000L)` (the last
+two arguments are the MFA flag, off, and its freshness window in ms) and calls its **prod**
 `filterChain(ServerHttpSecurity.http())`, wraps it in a `WebFilterChainProxy`, and
 installs it as a `webFilter` on `WebTestClient.bindToController(...)`. **No full Spring
 Boot context** — the production `authorizeExchange` policy and OAuth2 resource-server
 wiring run exactly as deployed, but the test is a fast slice.
 
-Helpers: `provider(resolver)` (the multi-issuer swap) / `absent()` (single-issuer
+Helpers: `sliceClient(registry, resolverProvider, controllers...)` (builds the client),
+`provider(resolver)` (the multi-issuer swap) / `absent()` (single-issuer
 `o.jwt(...)` path).
 
 > **federation-api note.** This repo's `SecurityConfig` splits the chain into a

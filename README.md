@@ -26,8 +26,7 @@ patterns.
 
 ## Current State
 
-> Snapshot as of 2026-07-22 (through PR #83, the HugMesh naming rebrand — code-level
-> only, no functional change). ✅ shipped (merged to `main`) ·
+> Snapshot as of 2026-10-07 (`main` at 3133d2c). ✅ shipped (merged to `main`) ·
 > 🚧 in-flight · 🔭 planned.
 
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
@@ -35,7 +34,7 @@ patterns.
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
   shared Maven artifacts: it inherits `net.hugmesh:hugmesh-parent:2.8.0`
   (a child of `spring-boot-starter-parent:4.0.7`) and consumes
-  `net.hugmesh:hugmesh-commons:2.8.0` for the shared security/tenancy
+  `net.hugmesh:hugmesh-commons` (2.1.0, the version `hugmesh-parent` manages) for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
   commons library*.
@@ -66,24 +65,27 @@ patterns.
   plus a narrower ROLE_MATRIX/MASTODON self-service instance-block filing path),
   an automated system-findings queue for edge-AI content moderation, and the
   optional-service + static-union module seeds. MFA_SATISFIED authority parity is
-  inherited from the commons converter, but **no federation route gates on it**
+  inherited from the commons converter and ships dark (`app.mfa.enabled`, default
+  `false`, so the marker is never emitted), and **no federation route gates on it**
   today.
-- ✅ **GitLab CI only** (`.gitlab-ci.yml`) — the continuous-OWASP pen-test stages
+- ✅ **GitLab CI for tests and pen-tests** (`.gitlab-ci.yml`) — the continuous-OWASP pen-test stages
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
-  from `hugmesh-generator`. **No GitHub Actions anywhere.**
+  from `hugmesh-generator`. **GitHub Actions has one workflow**, `.github/workflows/release.yml`:
+  manual only (`workflow_dispatch`), it builds the image and pushes it to
+  `ghcr.io/hugmesh/hugmesh-federation-api`.
 - 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
-  PUBLISH trigger and moderation auto-apply are both shipped now; the remaining
-  cross-service gap is the gateway `PUBLIC_PATHS` allowlist entry).
+  PUBLISH trigger, moderation auto-apply and the gateway allowlist entry for the
+  public vanity and capabilities reads are all shipped now).
 
 ## Where it sits in the architecture
 
 | | |
 |---|---|
 | **Tier** | Backend BFF / platform service (reactive Spring Boot, behind the gateway). |
-| **Namespace** | `net.hugmesh.federation` (artifact `federation`, image built by GitLab CI). |
+| **Namespace** | `net.hugmesh.federation` (artifact `federation`; image built by GitLab CI, or by the manual GitHub release workflow). |
 | **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter copied verbatim from `hugmesh-gateway`** (so authorities are byte-identical across the platform). |
 | **Tenancy** | Multi-brand / multi-tenant. The brand a token belongs to is keyed on the **cryptographically-validated issuer** (one Casdoor per brand → distinct `iss`) → a single `DOMAIN_<x>` authority, never a user-settable claim. See *Multi-tenancy (domain scoping)*. |
-| **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `hugmesh-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, profile-ban writes), mod-bff / admin-bff (moderation + kill-switch). |
+| **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `hugmesh-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, vanity publish), mod-bff / admin-bff (moderation, findings, `overrides/clear-source`). |
 | **Downstream** | PostgreSQL (R2DBC, all runtime reads/writes; JDBC only for Liquibase migrations), an optional best-effort Cassandra manifest cache, and the filesystem/S3 bundle store. |
 
 This service is the **read/write source of truth for "what UI modules exist,
@@ -134,8 +136,8 @@ flowchart TB
 - **Cassandra-reactive** driver for a best-effort manifest write-through cache
   (disabled by default; degrades gracefully when absent).
 - Optional **server-side mTLS** (TLSv1.3, client-cert-required) for API↔API calls.
-- GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`); no
-  GitHub Actions.
+- GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`) plus
+  one manual GitHub Actions release workflow (`.github/workflows/release.yml`).
 
 ## Shared commons library (`hugmesh-parent` + `hugmesh-commons`)
 
@@ -152,7 +154,7 @@ de-duplication moves:
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.8.0`.
+2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons` (2.1.0, managed by `hugmesh-parent:2.8.0`).
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -186,7 +188,8 @@ de-duplication moves:
 ### Resolving the private `hugmesh-commons` artifact
 
 `hugmesh-commons` is **not** on Maven Central — it lives in the org GitLab Maven
-Package Registry. Two resolution paths, **no secrets in git**:
+Package Registry, and in GitHub Packages for the release workflow. Three resolution
+paths, **no secrets in git**:
 
 - **Local dev:** `hugmesh-parent` + `hugmesh-commons` are `mvn install`ed into
   `~/.m2`, so a plain `./mvnw test` resolves them locally and never touches the
@@ -199,6 +202,13 @@ Package Registry. Two resolution paths, **no secrets in git**:
   (`--mount=type=secret`, so it never lands in an image layer); `.gitlab-ci.yml`
   passes `--secret id=ci_job_token,env=CI_JOB_TOKEN` plus the `CI_API_V4_URL` /
   `GITLAB_GROUP_ID` build-args.
+- **GitHub release workflow:** when the BuildKit secret `packages_read_token` is
+  mounted, the Dockerfile builds with `.github/maven-ci-settings.xml` against GitHub
+  Packages (`maven.pkg.github.com/hugmesh/*`) instead of `settings.xml`. The workflow
+  passes the repository secret `PACKAGES_READ_TOKEN` (a classic token with
+  `read:packages`; the automatic `GITHUB_TOKEN` cannot read another repository's
+  packages) and fails a preflight, by name, if `hugmesh-build-config`, `hugmesh-parent`,
+  `hugmesh-commons` or `hugmesh-auth-core` is not readable.
 
 ### Security CI (GitLab) ✅ shipped
 
@@ -232,10 +242,10 @@ privileged surface in every brand.
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
 | `/manifest` | GET | authenticated | Runtime manifest: enabled + circuit-closed + visibility-permitted + **domain-scoped** remotes, `{generatedAt, remotes[]}`. Visibility/role/domain filtered **in code**; Cassandra write-through cached (public-safe view only, keyed per-domain — see *The manifest read path*). |
-| `/capabilities` | GET | **public (no JWT)** | **Public install-state projection** — `{slug, installed, mountAt, requiresRole}` per registered module. The list a logged-out / non-admin host reads to grey-out optional services. Narrow + caller-independent (no internal locator/detail). |
+| `/capabilities` | GET | **public (no JWT)** | **Public install-state projection** — `{slug, installed, mountAt, requiresRole}` per registered non-fragment module in the caller's domain (anonymous: `default`; SUPERADMIN: all brands). The list a logged-out / non-admin host reads to grey-out optional services. Narrow (no internal locator/detail); vanity `profile-*` fragments are never listed. |
 | `/vanity/{username}` | GET | **public (no JWT)** | **Vanity-subdomain resolve.** Returns the user's PUBLIC profile-fragment descriptor (`remoteEntryUrl`, `contentHash`, `/_fragments/<slug>/<hash>/` path) iff a `slug=profile-<username>`, `kind=fragment`, `visibility=public`, enabled, circuit-closed, **non-suspended** module exists; else **404**. Never returns internal fragments. |
 | `/vanity` (+ `Host:` header) | GET | **public (no JWT)** | Same resolve, but the username is the **first DNS label** of the `Host` header (`alice.<domain>` → `alice`) so the gateway can forward the vanity host verbatim. |
-| `/vanity/{username}` | PUT | authenticated (owner-or-admin) | **Self-publish.** Upserts the caller's `profile-<username>` fragment (`visibility=public, enabled=true`) FROM their own already-uploaded `PUT /bundles/profile-<username>` bundle — `remoteEntryUrl`/`contentHash` are always derived server-side, never accepted from the request. 404 if no bundle is uploaded yet; 403 if `username` != caller's own JWT subject and the caller is not ROLE_ADMIN/SUPERADMIN; 400 if `username` is reserved/confusable. |
+| `/vanity/{username}` | PUT | authenticated (owner-or-admin) | **Self-publish.** Upserts the caller's `profile-<username>` fragment (`visibility=public, enabled=true`) FROM their own already-uploaded `PUT /bundles/profile-<username>` bundle — `remoteEntryUrl`/`contentHash` are always derived server-side, never accepted from the request. 404 if no bundle is uploaded yet; 403 if `username` != the caller's vanity label (the token's `preferred_username` claim, else `name`; never the JWT subject; a token with neither is 403) and the caller is not ROLE_ADMIN/SUPERADMIN; 400 if `username` is reserved/confusable; 409 if an admin kill-switch unpublished the row. |
 | `/vanity/{username}` | DELETE | authenticated (owner-or-admin) | **Self-unpublish.** Flips the caller's fragment to `visibility=internal, enabled=false` (never deletes the row). Idempotent — a no-op if never published. |
 | `/username/{candidate}/availability` | GET | **ROLE_SERVICE / ADMIN (INTERNAL)** | Registration gate: collision / reserved / confusable check. An enumeration oracle (`matchedWith` names the colliding label) — **never public**. |
 | `/username/check` | POST | ROLE_SERVICE / ADMIN | Same check by request body. |
@@ -324,8 +334,8 @@ from Postgres.
 manifest is `authenticated()` + visibility-filtered, so a logged-out host could
 never even learn that an internal-visibility optional service (e.g. forum /
 mastodon / matrix) exists — it cannot drive greying. The capabilities projection is
-`permitAll`, lists **every** registry row (via `findAll()`, not just the serveable
-ones), and returns a deliberately narrow, public-safe `CapabilityDto`
+`permitAll`, lists every non-fragment registry row **in the caller's domain** (not just the serveable
+ones; an anonymous caller gets the `default` domain, SUPERADMIN gets all brands), and returns a deliberately narrow, public-safe `CapabilityDto`
 (`slug + installed + mountAt + requiresRole` only — no `remoteEntryUrl`,
 `contentHash`, `ownerUserId`, `visibility` or raw `metadata`).
 
@@ -337,14 +347,18 @@ ones), and returns a deliberately narrow, public-safe `CapabilityDto`
 
 **Seeded-but-inert optional services.** Several modules are seeded deliberately
 hidden/disabled so they appear greyed/absent until a superadmin enables them
-per-domain: **owncast** and **tube** are seeded `enabled=false` +
-`visibility='internal'` (GPU-gated live-streaming / YouTube-archiver), and **wiki**
-is seeded `visibility='internal'` (inert until a superadmin enables it per-domain; the wiki BFF and UI are shipped). The
-capabilities projection therefore reports `installed=false` (or omits them from the
-role-visible manifest) until they are turned on and the matching role is granted.
+per-domain: **owncast**, **tube** and **character-forge** are seeded `enabled=false` +
+`visibility='internal'` (GPU-gated live-streaming / YouTube-archiver / 3D character
+creator), and **wiki** is seeded `visibility='internal'` (enabled, but hidden from
+non-admin manifest callers; the wiki BFF and UI are shipped). The
+capabilities projection therefore reports `installed=false` for owncast, tube and
+character-forge until a superadmin enables them. Wiki reports `installed=true`, but the
+manifest hides it from callers without `ROLE_ADMIN` / `ROLE_INTERNAL` / `SUPERADMIN`.
 
-GET-only and caller-independent (the same body for everyone), so it is safe with
-no JWT. The manifest / override read paths are untouched — this is purely additive.
+GET-only, with the domain cut enforced in the query, and `kind='fragment'` rows
+(the `profile-<username>` vanity slugs) excluded, so it cannot be used to enumerate
+other brands' services or usernames. It is never cached, so install-state changes show
+at once. The manifest / override read paths are untouched — this is purely additive.
 
 ## Vanity subdomains (`<username>.<domain>`)
 
@@ -355,7 +369,7 @@ The federation API owns the **resolve** step.
 sequenceDiagram
     participant Browser
     participant DNS as Wildcard DNS *.<domain>
-    participant Ingress as Backend ingress
+    participant Ingress as fe-gateway ingress
     participant GW as fe-gateway
     participant FedAPI as federation-api
     participant DB as PostgreSQL
@@ -363,8 +377,8 @@ sequenceDiagram
     Browser->>DNS: GET https://alice.<domain>/
     DNS->>Ingress: (wildcard match)
     Ingress->>GW: Host: alice.<domain>
-    Note over GW: The fe-gateway Host=*.<domain> route is ORDERED AFTER<br/>the apex + reserved service hosts (id. api. matrix. …<br/>the full set is ReservedNames.RESERVED_LABELS), so<br/>reserved subdomains are matched first and never<br/>captured by the wildcard.
-    GW->>FedAPI: GET /api/federation/vanity<br/>(Host: alice.<domain>)
+    Note over GW: The Host=*.<domain> route is declared after the apex/path<br/>routes and before the catch-all. Reserved service hosts<br/>(id. api. matrix. mastodon. scale. headscale.) are fronted by<br/>the be-gateway ingress and never reach this gateway.<br/>The full reserved set is ReservedNames.RESERVED_LABELS.
+    GW->>FedAPI: GET /api/federation/vanity<br/>(SetPath, direct hop, Host: alice.<domain>)
     FedAPI->>FedAPI: Extract first DNS label → "alice"
     FedAPI->>DB: SELECT WHERE slug='profile-alice'<br/>AND kind='fragment' AND visibility='public'<br/>AND enabled AND circuit_state='closed'
     DB-->>FedAPI: row (or empty)
@@ -413,29 +427,30 @@ the gateway route order already prevents most of these):
 
 ## Account-states profile-ban (read/write path)
 
-The platform's access-suspension foundation (admin-bff / mod-bff) bans a USER's
-public profile through this service — via the **read** path (vanity / manifest)
-and a direct **write** path on `OverrideService`:
+A USER's public profile is banned through a `scope=user` row in `federation_override`.
+The row is read by the **read** path (vanity / manifest) and written by a direct
+**write** path on `OverrideService`:
 
 ```mermaid
 sequenceDiagram
-    participant AdminBff as admin-bff / mod-bff
+    participant Caller as ModerationService.decide<br/>(in-process)
     participant FedAPI as federation-api
     participant DB as PostgreSQL (federation_override)
     participant Cache as ManifestCache
+    participant AdminBff as admin-bff
 
-    AdminBff->>FedAPI: applyUserScope(ownerUsername, action, setBy, source)
-    FedAPI->>DB: INSERT scope='user', target=ownerUsername,\nreason='access_suspension:<id>'
+    Caller->>FedAPI: applyUserScope(ownerUsername, action, setBy, source)
+    FedAPI->>DB: INSERT scope='user', target=ownerUsername,\nreason=source
     Note over DB: Row exists even if user never published.\nDrops all owned modules from manifest render\nand blocks vanity resolve.
     FedAPI->>Cache: invalidate(domain) — evict this brand's cached manifest
 
-    Note over AdminBff,Cache: On every subsequent request:
+    Note over FedAPI,Cache: On every subsequent request:
     FedAPI->>DB: findByScopeAndTargetAndClearedAtIsNull('user', owner)
     DB-->>FedAPI: active override row found
     FedAPI-->>FedAPI: return empty Mono → 404\n(even if fragment is public + enabled + circuit-closed)
 
-    AdminBff->>FedAPI: clearScopeBySource(source) — lift suspension
-    FedAPI->>DB: UPDATE cleared_at = now()\nWHERE reason = source (only this suspension's rows)
+    AdminBff->>FedAPI: POST /api/federation/overrides/clear-source {source}
+    FedAPI->>DB: UPDATE cleared_at = now()\nWHERE reason = source (only this source's rows)
     Note over DB: A different manual scope=user kill\n(NULL or different reason) is not touched.
 ```
 
@@ -443,25 +458,33 @@ sequenceDiagram
   a `scope='user'` `federation_override` row **directly via the repository** — no
   module lookup, **no existing-module requirement**. The durable row exists
   regardless of whether the user ever published, drops every owned module from the
-  manifest render, and blocks the vanity read. Tagged `reason='access_suspension:<id>'`.
+  manifest render, and blocks the vanity read. It is a Java method with **no HTTP
+  endpoint**; the one caller in this repo is `ModerationService.decide`, which tags
+  the row `reason='moderation_request:<id>'` when an admin approves a `user-removal`.
+  The `reason='access_suspension:<id>'` tag in the javadoc is the convention for
+  access suspensions; no HTTP caller of the apply half exists in admin-bff, mod-bff or
+  user-bff (UNVERIFIED: any other writer of such rows).
 - **`VanityService.resolve()`** also consults
   `findByScopeAndTargetAndClearedAtIsNull('user', owner)` on the resolved
   fragment's `owner_user_id` and returns empty → **404 even for a public + enabled
   + circuit-closed fragment** when the owner is suspended. Identity is pinned on
   **`owner_user_id`**, NOT the Casdoor sub.
-- **`ManifestCache.invalidate()`** is called on every `scope=user` mutation so a
+- **`ManifestCache.invalidate(domain)`** is called on every `scope=user` mutation so a
   just-banned profile is never served from a stale cached manifest.
 - **`OverrideService.clearScopeBySource(source)`** (lifting/expiring a suspension)
   stamps `cleared_at` on **only** the rows whose `reason` equals that source — so
   an expiring suspension never rearms an unrelated manual `scope=user` kill (which
-  carries a NULL / different `reason`).
+  carries a NULL / different `reason`). Over HTTP this is
+  `POST /api/federation/overrides/clear-source`; admin-bff's
+  `FederationOverrideClearClient` calls it at expiry, gated by
+  `federation-api.override-clear.enabled` (default `false`).
 - Both direct-repo writes are wrapped in `@CircuitBreaker(name="federationOverride")`
   (fail-fast): the durable row is the source of truth, so the read path converges
   once it lands.
 
-Scope of the profile ban: **unpublish / vanity-suppress only** — there is no
-`ROLE_USER` self-publish endpoint today (`ModuleRegistryController` is ADMIN-only),
-so the ban suppresses the existing/future profile rather than gating a create path.
+Scope of the profile ban: it suppresses the profile; it does not gate a create path.
+A user may self-publish through `PUT /vanity/{username}` (see *Endpoints*), so a ban
+written before or after a publish suppresses the profile either way.
 The homeserver (akkoma/tuwunel) and the access-suspension table + reconcile loop
 live in their own repos (generator / admin-bff / mod-bff).
 
@@ -614,10 +637,12 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
 - **`020` `username_skeleton`** — confusable-skeleton cache (non-unique skeleton
   index + ICU version stamp).
 - **`022`–`025`** — register the optional-service modules (phpBB **forum**,
-  akkoma **mastodon**, tuwunel **matrix**, and the opt-in **games** service —
-  default-off, only present when the build is generated with `--enable-games`) as
-  federation modules (`kind='remote-shell'`, idempotent slug-absent seed-guard so
-  install-state can appear / grey-out via the manifest + capabilities).
+  akkoma **mastodon**, tuwunel **matrix**, and the opt-in **games** service, which
+  the generator deploys only when built with `--enable-games`) as
+  federation modules (`kind='remote-shell'`, `visibility='internal'`, `enabled=true`,
+  idempotent slug-absent seed-guard so install-state can appear / grey-out via the
+  manifest + capabilities). The games row is seeded whether or not the service is
+  deployed.
 - **`026`** — multi-tenancy `domain` column + index on the three tenant-owned
   tables (see *Multi-tenancy*). ✅ merged to `main`.
 - **`027` / `028`** — reserve the `wiki` profile-slug, then register the **wiki**
@@ -625,7 +650,7 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   **`visibility='internal'`** — seeded INERT/hidden (`visibility='internal'`) pending per-domain superadmin enablement; hugmesh-wiki-bff-api and hugmesh-wiki-ui are shipped).
 - **`029`** — **COMPLETE the `federation_modules` seed** so the dynamic manifest is
   AUTHORITATIVE: seed the three static-manifest slugs that had no DB row — `mod`
-  (`visibility='internal'`, `requiresRole 'mod'`, `/mod`), `apidocs`
+  (`visibility='public'`, `requiresRole 'mod'`, `/mod`), `apidocs`
   (`visibility='internal'`, `requiresRole 'admin'`, `/admin/docs`) and `user`
   (`visibility='public'`, **no** `requiresRole`, `/user`). With
   login/admin/matrix/mastodon already seeded, the authenticated `/manifest` is now
@@ -674,6 +699,18 @@ every token mints `DOMAIN_default`, every pre-existing/seed row defaults to
   (`specs/cluster/manifests/character-forge/`). The `character-forge` **slug** and the
   `/character-forge/**` + `/bff/character-forge/**` route prefixes are FROZEN — only
   the sibling service's brand prefix moved.
+- **`040`** — register **Character Studio** (`slug='character-studio'`,
+  `kind='remote-shell'`, `mountAt /character-studio`, `requiresRole ROLE_USER`,
+  `visibility='internal'`, **`enabled=true`**, `remote_entry_url`
+  `http://hugmesh-character-studio-ui:8080/remoteEntry.json`). Unlike `038` it is
+  seeded enabled: the UI already served `remoteEntry.json` with no registry row, so
+  the capabilities projection could not report it.
+- **`041`** — the same additive rebrand `UPDATE` as `039`, ten changesets
+  (`041-1`…`041-10`) for the `forum`, `mastodon`, `matrix`, `games`, `wiki`, `mod`,
+  `apidocs`, `user`, `owncast` and `tube` rows: each repoints `remote_entry_url` from
+  the `snapdragon-*` Service name to the `hugmesh-*` one, guarded on the exact old
+  URL. Slugs, `mountAt` values and route prefixes stay frozen. Same deploy-ordering
+  caveat as `039`.
 
 ### A note on the JSON columns (honest constraint — corrected)
 
@@ -713,6 +750,8 @@ works with no explicit cast.
   `isAdmin`, the `ROLE_USER` floor, the issuer-keyed `DOMAIN_<x>`), unit-tested.
 - Profile split for the springdoc spec/UI: **permitAll** under `dev`/`test` (so
   `gen:fetch` can curl `/v3/api-docs` without a token), **ROLE_ADMIN** in prod.
+- Probes `/actuator/health`, `/actuator/health/**` and `/actuator/info` are
+  **permitAll**; only `health` and `info` are exposed.
 - Path rules (all declared before the `anyExchange().authenticated()` catch-all):
   vanity + capabilities = **permitAll** (public reads); username = **ROLE_SERVICE
   / ADMIN** (internal oracle); modules + overrides = **ROLE_ADMIN**; moderation =
@@ -736,6 +775,14 @@ works with no explicit cast.
   sets `SSL_ENABLED=true` / `SSL_CLIENT_AUTH=need`, so the TLS handshake **requires
   a client cert chaining to the cluster CA** (TLSv1.3 floor). A caller not
   deployed+signed by the Vault/ESO PKI process cannot reach the API at all.
+- **Response headers** on both chains: `Content-Security-Policy: default-src 'none';
+  frame-ancestors 'none'` on top of Spring Security's defaults (`nosniff`,
+  `X-Frame-Options: DENY`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`).
+  No `Strict-Transport-Security` or `Permissions-Policy`: this is a JSON API behind
+  the TLS front door. CSRF is disabled (stateless bearer-token API).
+- **MFA floor ships dark.** `app.mfa.enabled` (default `false`) and
+  `app.mfa.freshness-window` (default `600000` ms) feed the commons converter. With the
+  default the `MFA_SATISFIED` marker is never produced, and no route gates on it.
 - **Bean Validation** on all write/path inputs (`ValidationPatterns` +
   `ValidationExceptionHandler`) so API-enforced vocabularies match the DB CHECK
   constraints (the `018` enum parity).
@@ -794,6 +841,9 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
                      # job attaches a `docker:27-dind` service for exactly this).
 ./mvnw package       # builds target/federation-0.2.0.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
+make pentest         # local pen-test self-scan: pentest-sca + pentest-dast
+make pentest-sca     # OWASP Dependency-Check (CVSS >= 9 fails)
+make pentest-dast    # ZAP/nuclei via the generator harness; skipped unless DAST_TARGET_URL is set
 ```
 
 Representative tests (the `@DataR2dbcTest` repository slices need no external infra;
@@ -860,10 +910,17 @@ Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
 | `APP_BUNDLES_S3_BUCKET` | `hugmesh-federation` | S3 bucket (when `storage=s3`) |
 | `APP_BUNDLES_S3_ENDPOINT` | (empty) | S3 endpoint override (point at MinIO in dev/CI) |
 | `APP_BUNDLES_S3_REGION` | `us-east-1` | S3 region |
+| `APP_BUNDLES_S3_ACCESS_KEY` / `_SECRET_KEY` | (empty) | S3 credentials |
 | `MANIFEST_CACHE_ENABLED` | `false` | enable the Cassandra cache |
+| `MANIFEST_CACHE_CASSANDRA` / `_KEYSPACE` / `_LOCAL_DC` | `cassandra.hugmesh-pki.svc.cluster.local:9042` / `hugmesh_federation` / `dc1` | Cassandra contact point, keyspace, local datacenter |
+| `MANIFEST_CACHE_CASSANDRA_AUTH_ENABLED` (+ `_USERNAME` / `_PASSWORD`) | `false` | CQL authentication |
+| `MANIFEST_CACHE_CASSANDRA_SSL_ENABLED` (+ `_SSL_TRUSTSTORE`, `_SSL_KEYSTORE` and their `_PASSWORD`s) | `false`; truststore `/stores/cassandra-truststore.p12` | CQL TLS |
 | `SSL_ENABLED` / `SSL_CLIENT_AUTH` | `false` / `none` | API↔API mTLS (in-cluster: `true` / `need`) |
 | `SSL_KEY_STORE` / `SSL_TRUST_STORE` (+ passwords) | `/stores/…p12` | PKCS12 identity + cluster-CA truststore |
 | `SPRING_PROFILES_ACTIVE` | (prod) | `dev` / `test` open the spec |
+
+Two more properties have no env var in `application.yml`: `app.mfa.enabled` (`false`) and
+`app.mfa.freshness-window` (`600000` ms).
 
 ## Deferred / stubbed (honest)
 
@@ -938,11 +995,11 @@ Intentionally NOT implemented in the scaffold:
   profile fragment is synced/served only once the publish path above creates its
   registry row. The vanity HOST page is a `hugmesh.net` front-end concern,
   out of scope here.
-- **Gateway `PUBLIC_PATHS` allowlist (cross-service).** The shared gateway image
-  ends every chain with `anyExchange().authenticated()` and opens a hardcoded
-  `PUBLIC_PATHS` allowlist. `/api/federation/vanity/**` (and `/capabilities`) must
-  be added there so the fe-gateway does not 401 the anonymous public read before it
-  reaches federation — a one-line change in the `hugmesh-gateway` repo.
+- ~~**Gateway `PUBLIC_PATHS` allowlist (cross-service).**~~ **No longer deferred —
+  ✅ shipped.** The `hugmesh-gateway` `SecurityConfig` now permits anonymous `GET`
+  on `/api/federation/vanity`, `/api/federation/vanity/**` and
+  `/api/federation/capabilities` on the fe tier (`FE_SHELL_PUBLIC_GET_PATHS`), and
+  `CanonicalSeed` seeds the matching `PUBLIC` route-access rows.
 
 ## Roadmap
 
@@ -968,12 +1025,12 @@ Within this repo (detail in *Deferred / stubbed*):
 
 Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
 
-- 🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**` +
-  `/capabilities` — a one-line change in the `hugmesh-gateway` repo (see above).
+- ~~🔭 Gateway `PUBLIC_PATHS` allowlist entry~~ **No longer roadmap — ✅ shipped**
+  (see *Deferred / stubbed*).
 - 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
   Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). The
-  shared commons converter already emits the `MFA_SATISFIED` authority (parity with
-  the gateway), but **no federation route gates on it today**; if fail-closed MFA
+  shared commons converter can emit the `MFA_SATISFIED` authority (parity with
+  the gateway) once `app.mfa.enabled` is turned on (default `false`), but **no federation route gates on it today**; if fail-closed MFA
   gating is ever extended to federation routes it will be noted here.
 - 🚧 **Superadmin Service Catalog TAILSCALE-VPN-ONLY federated remotes.** The in-flight
   superadmin Service Catalog will register tailnet-only federated remote modules in

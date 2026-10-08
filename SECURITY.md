@@ -5,15 +5,19 @@
 This API is defended in depth by two independent layers:
 
 1. **OAuth2 resource server (application layer).** Every request must carry a
-   valid Casdoor-issued JWT (`spring.security.oauth2.resourceserver`). Fine-grained
+   valid Casdoor-issued JWT (`spring.security.oauth2.resourceserver`), except four
+   public reads: `GET /api/federation/vanity` (and `/vanity/**`),
+   `GET /api/federation/capabilities`, and the probes `/actuator/health`,
+   `/actuator/health/**` and `/actuator/info`. Fine-grained
    authz (modules/overrides = `ROLE_ADMIN`, moderation = `ROLE_MOD`/`ROLE_ADMIN`,
-   manifest GET + bundles = authenticated) is enforced in `SecurityConfig`. This is
-   unchanged.
+   manifest GET + bundles = authenticated, plus `ROLE_SUPERADMIN` on every
+   privileged gate) is enforced in `SecurityConfig`. The README's *Security*
+   section lists every path rule.
 
 2. **Mutual TLS — the API-to-API trust boundary (transport layer).** In-cluster,
    the TLS handshake **requires a client certificate that chains to the cluster CA
    truststore**. Only services that were deployed and signed by our Vault/ESO PKI
-   process hold such a certificate. A random pod, an `io`/external client, or
+   process hold such a certificate. A random pod, an external client, or
    anything not issued by our PKI presents no chaining cert, so its handshake is
    rejected before any byte of HTTP is read — it cannot read or call this API at all.
 
@@ -62,10 +66,13 @@ properties directly; no custom `SslContext`/`HttpServer` bean is needed.
 
 The **authoritative** deployment manifest for this API lives in
 `hugmesh-generator` (`specs/cluster/manifests/federation-api/deployment.yaml`);
-this repo's own [`deploy/deployment.yaml`](deploy/deployment.yaml) is a verbatim,
-kept-in-sync mirror of it, staged for the (not-yet-active) Forgejo/ArgoCD
+this repo's own [`deploy/deployment.yaml`](deploy/deployment.yaml) is a mirror of it,
+staged for the (not-yet-active) Forgejo/ArgoCD
 `hugmesh-deploy.yaml` catalog cutover — see that file's own header comment for
-the dual-home rationale. Both copies already carry the enforcement wiring: a
+the dual-home rationale. The mirror has drifted: the generator copy sets the Cassandra
+manifest-cache block differently (CQL auth on with user `federation_cass`, local
+datacenter `datacenter1`, a `hugmesh.net/cassandra-access: dml` pod annotation), while
+this repo's copy keeps CQL auth off and `dc1`. The mTLS wiring is identical in both. Both copies carry the enforcement wiring: a
 `build-keystore` initContainer assembles `keystore.p12` (this pod's Vault-PKI
 identity, from the ESO-synced `hugmesh-federation-api-mtls` Secret) +
 `truststore.p12` (the cluster CA) into a `Memory`-backed `stores` `emptyDir`
