@@ -24,9 +24,10 @@ This API is defended in depth by two independent layers:
 ## How the mTLS layer is wired
 
 The cluster CA is the offline root from `hugmesh-generator/scripts/gen-keystores.sh`.
-In-cluster, Vault PKI imports that CA and issues a short-lived leaf cert per app;
-External Secrets Operator (ESO) syncs it into the `hugmesh-federation-api-mtls`
-`kubernetes.io/tls` Secret (`tls.crt` / `tls.key` / `ca.crt`). A keystore
+In-cluster, Vault's `pki_int` role (which chains to that root) issues a leaf cert per
+app with `ttl: 720h`; External Secrets Operator (ESO) refreshes it every 168h into the
+`hugmesh-federation-api-mtls` `kubernetes.io/tls` Secret (`tls.crt` / `tls.key` /
+`ca.crt`, where `ca.crt` is the issuing CA Vault returns). A keystore
 initContainer (the equivalent of the gateway chart's `build-keystore`) assembles:
 
 - `keystore.p12` — this service's own mTLS **identity** (key + cert chain),
@@ -35,11 +36,13 @@ initContainer (the equivalent of the gateway chart's `build-keystore`) assembles
 into an in-pod tmpfs and generates the store password there (it never enters git,
 a Secret, or Vault). The deployment then sets the env below so the running pod
 enforces client-cert verification. Because every in-cluster leaf chains to the same
-cluster CA, the truststore validates them; ESO rotates the cert before expiry.
+cluster CA, the truststore validates them. The initContainer runs once per pod start,
+so a refreshed Secret reaches the pod only when the pod restarts.
 
-The gateway (`hugmesh-be-gateway`) is the legitimate caller: it presents its own
-ESO-issued client cert (`hugmesh-be-gateway-mtls`) when proxying to this API, so
-its handshake succeeds while everyone else's fails.
+The gateways are the legitimate callers. `hugmesh-be-gateway` presents its own
+ESO-issued client cert (`hugmesh-be-gateway-mtls`) on the `federation-api` route
+(`/api/federation/**`), and `hugmesh-fe-gateway` presents its client cert on the direct
+`vanity-subdomain` route. Their handshakes succeed; a caller without a cert chaining to the cluster CA fails.
 
 ## Configuration (parameterized — safe by default)
 

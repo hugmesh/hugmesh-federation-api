@@ -83,7 +83,7 @@ patterns.
 |---|---|
 | **Tier** | Backend BFF / platform service (reactive Spring Boot, behind the gateway). |
 | **Namespace** | `net.hugmesh.federation` (artifact `federation`; image built by GitLab CI, or by the manual GitHub release workflow). |
-| **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter copied verbatim from `hugmesh-gateway`** (so authorities are byte-identical across the platform). |
+| **Issuer / auth** | Casdoor JWT OAuth2 **resource server**. Tokens arrive already validated by the gateway; this service re-validates the JWT and maps Casdoor claims → Spring authorities with the **canonical converter from `hugmesh-commons`** (extracted from the `hugmesh-gateway` code, so authorities are identical across the platform). |
 | **Tenancy** | Multi-brand / multi-tenant. The brand a token belongs to is keyed on the **cryptographically-validated issuer** (one Casdoor per brand → distinct `iss`) → a single `DOMAIN_<x>` authority, never a user-settable claim. See *Multi-tenancy (domain scoping)*. |
 | **Upstream callers** | the Angular host shells (manifest + capabilities + vanity), the `hugmesh-remote-fragment` sync fleet (bundle fetch), the registration mint paths / actions / user-bff / admin-bff (username check, bundle upload, vanity publish), mod-bff / admin-bff (moderation, findings, `overrides/clear-source`). |
 | **Downstream** | PostgreSQL (R2DBC, all runtime reads/writes; JDBC only for Liquibase migrations), an optional best-effort Cassandra manifest cache, and the filesystem/S3 bundle store. |
@@ -422,7 +422,7 @@ the gateway route order already prevents most of these):
   defensive web names (`actuator metrics health root static assets …`).
 - **confusable-of-reserved** — `UsernameSkeletonService.isReservedSkeleton(label)`
   hard-404s a label whose ICU4j look-alike **skeleton** matches a reserved label
-  (e.g. `4dmin`, `akk0ma`), via an O(1) precomputed reserved-skeleton membership
+  (e.g. `4dmin`, `v4ult`), via an O(1) precomputed reserved-skeleton membership
   check (NO DB hit), so a confusable that slipped past the exact set still 404s.
 
 ## Account-states profile-ban (read/write path)
@@ -461,9 +461,11 @@ sequenceDiagram
   manifest render, and blocks the vanity read. It is a Java method with **no HTTP
   endpoint**; the one caller in this repo is `ModerationService.decide`, which tags
   the row `reason='moderation_request:<id>'` when an admin approves a `user-removal`.
-  The `reason='access_suspension:<id>'` tag in the javadoc is the convention for
-  access suspensions; no HTTP caller of the apply half exists in admin-bff, mod-bff or
-  user-bff (UNVERIFIED: any other writer of such rows).
+  Nothing writes the apply half over HTTP today: no code in admin-bff, mod-bff or
+  user-bff calls an endpoint that creates a `scope=user` row without a module lookup
+  (user-bff's `self-silence/hide-profile` call targets an endpoint this service does
+  not have). admin-bff expects rows tagged `reason='access_suspension:<id>'` and clears
+  them, but nothing in this repo writes that tag.
 - **`VanityService.resolve()`** also consults
   `findByScopeAndTargetAndClearedAtIsNull('user', owner)` on the resolved
   fragment's `owner_user_id` and returns empty → **404 even for a public + enabled
@@ -555,9 +557,8 @@ See `SystemFindingService`, `SystemFindingController`, `SystemFindingRepositoryT
 
 The platform is multi-brand / multi-tenant: one Casdoor per brand, so the token's
 cryptographically-validated **issuer** (`iss`) is the trustworthy tenant
-discriminator. Domain scoping is the canonical, adversarially-verified gateway
-code copied verbatim (package-adjusted) into this BFF so it derives a token's
-brand **the exact same way the gateway does**:
+discriminator. Domain scoping is the gateway's code, now shared from `hugmesh-commons`, so this
+service derives a token's brand **the same way the gateway does**:
 
 ```mermaid
 flowchart TB
@@ -599,9 +600,10 @@ flowchart TB
   their issuer-derived domain. An unresolvable issuer → `NO_DOMAIN` sentinel that
   **matches no row** (fail-closed, never silently cross-domain).
 - **`Roles`** helpers (`isSuperadmin` / `isImageBuilder` / `domainOf`,
-  fail-closed) drive the least-privilege cascade
-  **SUPERADMIN → ADMIN → MOD → USER** plus the orthogonal `ROLE_IMAGE_BUILDER`
-  capability (mesh-workload image builds — a separate grant, not an admin default).
+  fail-closed) answer who is SUPERADMIN, who may build images and which domain a
+  token belongs to. The role hierarchy puts SUPERADMIN above ADMIN, MOD and USER;
+  ADMIN and MOD are siblings. `ROLE_IMAGE_BUILDER` is orthogonal
+  (mesh-workload image builds — a separate grant, not an admin default).
 - Changeset **`026`** adds a NOT-NULL `domain` column (DEFAULT `'default'`) +
   domain index to the three tenant-owned tables (`federation_modules`,
   `federation_override`, `moderation_requests`). A row's domain is stamped from the
@@ -1004,8 +1006,9 @@ Intentionally NOT implemented in the scaffold:
 ## Roadmap
 
 > **State convention:** ✅ shipped (merged to `main`) · 🚧 in-flight (code on an
-> open branch/PR, not yet merged) · 🔭 planned (design only, no code). Nothing
-> below is shipped in this repo — do not treat it as implemented.
+> open branch/PR, not yet merged) · 🔭 planned (design only, no code). Struck-through
+> items below are done and kept for history; every item still marked 🔭 or 🚧 is not
+> shipped in this repo — do not treat it as implemented.
 
 Within this repo (detail in *Deferred / stubbed*):
 
@@ -1053,6 +1056,6 @@ Cross-service / platform roadmap (other repos own the bulk; noted here for shape
   best-effort mirror, springdoc, native hints, Dockerfile, `.gitlab-ci.yml`,
   H2-PG-compat slice tests over the real changelog.
 - **Auth / tenancy** = `hugmesh-gateway`: the `CasdoorAuthorities` converter,
-  `DomainRegistry`, `Roles` helpers and `TenancyResourceServerConfig` are the
-  canonical gateway code, copied verbatim so authorities + domain derivation are
-  byte-identical across the platform.
+  `DomainRegistry`, `Roles` helpers and `TenancyResourceServerConfig` started as the
+  gateway's code and now live in `hugmesh-commons`, so authorities + domain
+  derivation are identical across the platform.
