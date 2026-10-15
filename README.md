@@ -72,8 +72,9 @@ patterns.
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
   from `hugmesh-generator`. **No GitHub Actions anywhere.**
 - 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
-  PUBLISH trigger and moderation auto-apply are both shipped now; the remaining
-  cross-service gap is the gateway `PUBLIC_PATHS` allowlist entry).
+  PUBLISH trigger, moderation auto-apply and the gateway `PUBLIC_PATHS` allowlist
+  entry are all shipped now; what remains is the MFA gate and the tailnet module
+  class).
 
 ## Where it sits in the architecture
 
@@ -938,17 +939,22 @@ Intentionally NOT implemented in the scaffold:
   profile fragment is synced/served only once the publish path above creates its
   registry row. The vanity HOST page is a `hugmesh.net` front-end concern,
   out of scope here.
-- **Gateway `PUBLIC_PATHS` allowlist (cross-service).** The shared gateway image
-  ends every chain with `anyExchange().authenticated()` and opens a hardcoded
-  `PUBLIC_PATHS` allowlist. `/api/federation/vanity/**` (and `/capabilities`) must
-  be added there so the fe-gateway does not 401 the anonymous public read before it
-  reaches federation — a one-line change in the `hugmesh-gateway` repo.
+- ~~**Gateway `PUBLIC_PATHS` allowlist (cross-service).**~~ **✅ Shipped in
+  `hugmesh-gateway`.** The shared gateway image ends every chain with
+  `anyExchange().authenticated()` and opens a hardcoded `PUBLIC_PATHS` allowlist;
+  that list now carries `/api/federation/vanity`, `/api/federation/vanity/**` and
+  `/api/federation/capabilities` (`SecurityConfig.java`), and `CanonicalSeed.java`
+  seeds the same three routes as `PUBLIC`, so the fe-gateway no longer 401s the
+  anonymous public read before it reaches federation. The compose route-access seed
+  (`compose/route-access-seed.sql`) carries the same rows since `hugmesh-gateway`
+  PR #34.
 
 ## Roadmap
 
 > **State convention:** ✅ shipped (merged to `main`) · 🚧 in-flight (code on an
-> open branch/PR, not yet merged) · 🔭 planned (design only, no code). Nothing
-> below is shipped in this repo — do not treat it as implemented.
+> open branch/PR, not yet merged) · 🔭 planned (design only, no code). Entries
+> struck through below are shipped; every other entry is not implemented in this
+> repo — do not treat it as implemented.
 
 Within this repo (detail in *Deferred / stubbed*):
 
@@ -968,8 +974,10 @@ Within this repo (detail in *Deferred / stubbed*):
 
 Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
 
-- 🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**` +
-  `/capabilities` — a one-line change in the `hugmesh-gateway` repo (see above).
+- ~~🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**`
+  + `/capabilities`~~ **No longer roadmap — ✅ shipped** in `hugmesh-gateway`
+  (`SecurityConfig.java` `PUBLIC_PATHS`, seeded as `PUBLIC` in `CanonicalSeed.java`;
+  see *Deferred / stubbed* above).
 - 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
   Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). The
   shared commons converter already emits the `MFA_SATISFIED` authority (parity with
