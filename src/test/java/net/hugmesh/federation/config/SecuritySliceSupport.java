@@ -93,6 +93,25 @@ abstract class SecuritySliceSupport {
                 .build();
     }
 
+    /**
+     * Like {@link #sliceClient} but with the D8 MFA flag ON: the production chain is built
+     * with {@code app.mfa.enabled=true} and a 10-minute window, so the {@code stepUp}
+     * wrappers are live. The caller must ALSO build the per-issuer resolver with MFA on,
+     * or no token can carry the marker.
+     */
+    static WebTestClient mfaSliceClient(
+            DomainRegistry registry,
+            ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>> tenantResolver,
+            Object... controllers) {
+        SecurityConfig config = new SecurityConfig(registry, tenantResolver, true, 600_000L);
+        SecurityWebFilterChain chain = config.filterChain(ServerHttpSecurity.http());
+        return WebTestClient.bindToController(controllers)
+                .webFilter(new WebFilterChainProxy(chain))
+                .configureClient()
+                .responseTimeout(sliceResponseTimeout())
+                .build();
+    }
+
     /** The slice's WebTestClient blocking-read budget. Generous by default (30s) so a
      *  cold first-touch OIDC discovery on a constrained CI runner never trips the 5s
      *  default; overridable via {@code federation.slice.responseTimeoutSeconds}. This

@@ -12,6 +12,8 @@ import org.springframework.security.access.expression.method.MethodSecurityExpre
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver;
+import org.springframework.security.authorization.AuthorityReactiveAuthorizationManager;
+import org.springframework.security.authorization.ReactiveAuthorizationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
@@ -19,11 +21,14 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authorization.AuthorizationContext;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import net.hugmesh.commons.config.TenancyResourceServerConfig;
 import net.hugmesh.commons.security.CasdoorAuthorities;
 import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.commons.security.Roles;
 
 /**
  * Casdoor-aware OAuth2 resource-server security for hugmesh-federation-api
@@ -82,6 +87,15 @@ import net.hugmesh.commons.security.DomainRegistry;
  *       view, while the content-hash byte FETCH stays any-authenticated by design);</li>
  *   <li>springdoc spec/UI = permitAll under dev/test, ROLE_ADMIN/SUPERADMIN in prod.</li>
  * </ul>
+ *
+ * <p><b>D8 MFA step-up (ships dark).</b> Two privileged WRITE surfaces are wrapped in
+ * {@link #stepUp}: the mutating verbs (POST/PUT/PATCH/DELETE) of
+ * {@code /api/federation/admin/modules/**} and {@code POST /api/federation/moderation/{id}/decide}.
+ * While {@code app.mfa.enabled} is {@code false} (the default) the wrapper hands back the
+ * legacy rule untouched; once the platform flips the flag those routes ALSO require the
+ * {@link Roles#MFA_SATISFIED} marker the converter derives from a fresh
+ * {@code mfa_satisfied_at} claim. {@code GET /api/federation/admin/modules} and
+ * {@code POST .../moderation/{id}/refer} are not step-up gated.
  */
 @Configuration
 @EnableWebFluxSecurity
@@ -160,7 +174,7 @@ public class SecurityConfig {
      * how {@link #SPEC_PATHS} is gated, so every other route lives here to keep the
      * two chains in lockstep (mirrors admin-bff).
      */
-    private static void commonRoutes(ServerHttpSecurity.AuthorizeExchangeSpec ex) {
+    private void commonRoutes(ServerHttpSecurity.AuthorizeExchangeSpec ex) {
         // Probes public so k8s/Docker healthchecks need no token.
         ex.pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll();
         // Vanity resolve is a PUBLIC read (the public profile served at
@@ -186,6 +200,15 @@ public class SecurityConfig {
         // per-brand ADMIN is 403 here (this surface writes cross-brand
         // control-plane state; the per-brand registry surface below is theirs).
         // Defence-in-depth with AdminModuleController's class-level @PreAuthorize.
+        // D8 step-up: the MUTATING verbs (module upsert / soft-disable) additionally need
+        // the MFA_SATISFIED marker once app.mfa.enabled is on; stepUp() is the identity
+        // while MFA is dark, so the legacy hasRole("SUPERADMIN") rule is unchanged. Reads
+        // fall through to the plain role rule below. Declared FIRST (verb-specific).
+        for (HttpMethod write : new HttpMethod[] {
+                HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE}) {
+            ex.pathMatchers(write, "/api/federation/admin/modules", "/api/federation/admin/modules/**")
+                    .access(stepUp(AuthorityReactiveAuthorizationManager.hasRole("SUPERADMIN")));
+        }
         ex.pathMatchers("/api/federation/admin/modules", "/api/federation/admin/modules/**")
                 .hasRole("SUPERADMIN");
         // Registry write + kill-switch = admin (defence-in-depth on top of the
@@ -210,6 +233,12 @@ public class SecurityConfig {
         // ADMIN/SUPERADMIN narrowing.
         ex.pathMatchers(HttpMethod.POST, "/api/federation/moderation/recommend-instance-block")
                 .hasAnyRole("MATRIX", "MASTODON");
+        // D8 step-up on the decision itself (the highest-impact moderation write). The
+        // base rule is the SAME MOD/ADMIN/SUPERADMIN gate as the catch-all below, so the
+        // dark behaviour is identical and @PreAuthorize still narrows decide to
+        // ADMIN/SUPERADMIN. Declared BEFORE the catch-all.
+        ex.pathMatchers(HttpMethod.POST, "/api/federation/moderation/*/decide").access(
+                stepUp(AuthorityReactiveAuthorizationManager.hasAnyRole("MOD", "ADMIN", "SUPERADMIN")));
         // Moderation = mod or admin (decide is narrowed to admin by @PreAuthorize).
         // SUPERADMIN added as the cross-domain infra role.
         ex.pathMatchers("/api/federation/moderation/**").hasAnyRole("MOD", "ADMIN", "SUPERADMIN");
@@ -232,6 +261,32 @@ public class SecurityConfig {
         // owner-or-admin-filtered in the service).
         ex.pathMatchers(HttpMethod.GET, "/api/federation/manifest").authenticated();
         ex.pathMatchers("/api/federation/bundles/**").authenticated();
+    }
+
+    /**
+     * D8 STEP-UP composition. While {@code app.mfa.enabled} is off (the dark default)
+     * {@code base} is returned unchanged: the converter never emits the marker then, so an
+     * unconditional check would 403 every admin. When on, {@code base} must grant FIRST
+     * (an anonymous caller is still 401, a wrong-role caller still 403) and the caller must
+     * then also hold {@link Roles#MFA_SATISFIED}, which the converter derives only from a
+     * fresh {@code mfa_satisfied_at} claim (a forged {@code permissions} entry is dropped).
+     * Fail-closed: an absent marker is simply not granted. Copied from the wiki-bff-api /
+     * forum-bff-api precedent so the BFFs enforce the flag identically.
+     *
+     * @param base the rule the route already enforced
+     * @return {@code base} while MFA is dark, otherwise {@code base} AND the marker
+     */
+    private ReactiveAuthorizationManager<AuthorizationContext> stepUp(
+            ReactiveAuthorizationManager<AuthorizationContext> base) {
+        if (!mfaEnabled) {
+            return base;
+        }
+        ReactiveAuthorizationManager<AuthorizationContext> mfaMarker =
+                AuthorityReactiveAuthorizationManager.hasAuthority(Roles.MFA_SATISFIED);
+        return (authentication, context) -> base.authorize(authentication, context)
+                .flatMap(result -> result.isGranted()
+                        ? mfaMarker.authorize(authentication, context)
+                        : Mono.just(result));
     }
 
     /**
