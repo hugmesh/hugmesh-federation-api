@@ -72,9 +72,9 @@ patterns.
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
   from `hugmesh-generator`. **No GitHub Actions anywhere.**
 - 🚧 / 🔭 open items are below in *Deferred / stubbed* and *Roadmap* (the vanity
-  PUBLISH trigger, moderation auto-apply and the gateway `PUBLIC_PATHS` allowlist
-  entry are all shipped now; what remains is the MFA gate and the tailnet module
-  class).
+  PUBLISH trigger, moderation auto-apply and the gateway public-path allowlist
+  entry are all shipped now; the open entries are the MFA gate and the rest of the
+  tailnet module class, whose registration write surface has shipped).
 
 ## Where it sits in the architecture
 
@@ -939,22 +939,23 @@ Intentionally NOT implemented in the scaffold:
   profile fragment is synced/served only once the publish path above creates its
   registry row. The vanity HOST page is a `hugmesh.net` front-end concern,
   out of scope here.
-- ~~**Gateway `PUBLIC_PATHS` allowlist (cross-service).**~~ **✅ Shipped in
+- ~~**Gateway public-path allowlist (cross-service).**~~ **✅ Shipped in
   `hugmesh-gateway`.** The shared gateway image ends every chain with
-  `anyExchange().authenticated()` and opens a hardcoded `PUBLIC_PATHS` allowlist;
-  that list now carries `/api/federation/vanity`, `/api/federation/vanity/**` and
-  `/api/federation/capabilities` (`SecurityConfig.java`), and `CanonicalSeed.java`
-  seeds the same three routes as `PUBLIC`, so the fe-gateway no longer 401s the
-  anonymous public read before it reaches federation. The compose route-access seed
+  `anyExchange().authenticated()`. The three entries `/api/federation/vanity`,
+  `/api/federation/vanity/**` and `/api/federation/capabilities` live in the gateway's
+  `FE_SHELL_PUBLIC_GET_PATHS` constant (`SecurityConfig.java`, not in `PUBLIC_PATHS`),
+  which applies on the fe tier only and to GET only. `CanonicalSeed.java` seeds the
+  same three routes as `PUBLIC`, so the fe-gateway no longer 401s the anonymous public
+  read before it reaches federation. The compose route-access seed
   (`compose/route-access-seed.sql`) carries the same rows since `hugmesh-gateway`
-  PR #34.
+  PR #36 (issue #34).
 
 ## Roadmap
 
 > **State convention:** ✅ shipped (merged to `main`) · 🚧 in-flight (code on an
 > open branch/PR, not yet merged) · 🔭 planned (design only, no code). Entries
-> struck through below are shipped; every other entry is not implemented in this
-> repo — do not treat it as implemented.
+> struck through below are shipped; every other entry is either marked shipped in its own
+> text or not implemented in this repo — do not treat an unmarked entry as implemented.
 
 Within this repo (detail in *Deferred / stubbed*):
 
@@ -974,10 +975,10 @@ Within this repo (detail in *Deferred / stubbed*):
 
 Cross-service / platform roadmap (other repos own the bulk; noted here for shape):
 
-- ~~🔭 **Gateway `PUBLIC_PATHS` allowlist** entry for `/api/federation/vanity/**`
+- ~~🔭 **Gateway public-path allowlist** entry for `/api/federation/vanity/**`
   + `/capabilities`~~ **No longer roadmap — ✅ shipped** in `hugmesh-gateway`
-  (`SecurityConfig.java` `PUBLIC_PATHS`, seeded as `PUBLIC` in `CanonicalSeed.java`;
-  see *Deferred / stubbed* above).
+  (`FE_SHELL_PUBLIC_GET_PATHS` in `SecurityConfig.java`, fe tier and GET only, seeded
+  as `PUBLIC` in `CanonicalSeed.java`; see *Deferred / stubbed* above).
 - 🔭 **Casdoor MFA enforcement** (platform auth roadmap; design-complete, admin-bff
   Liquibase 150-band, `gateway_route_access.mfa_required` fail-closed gating). The
   shared commons converter already emits the `MFA_SATISFIED` authority (parity with
