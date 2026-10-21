@@ -33,9 +33,9 @@ patterns.
 - ✅ **On the unified org baseline.** Migrated to **Spring Boot 4.0.7 / Spring
   Cloud 2025.1.2** (Spring Framework 7 / Spring Security 7 / Jackson 3, Java 25 LTS,
   GraalVM-native-ready). The repo is the org's **first adopter / exemplar** of the
-  shared Maven artifacts: it inherits `net.hugmesh:hugmesh-parent:2.8.0`
+  shared Maven artifacts: it inherits `net.hugmesh:hugmesh-parent:2.9.0-beta.1`
   (a child of `spring-boot-starter-parent:4.0.7`) and consumes
-  `net.hugmesh:hugmesh-commons:2.8.0` for the shared security/tenancy
+  `net.hugmesh:hugmesh-commons:2.2.0-beta.1` for the shared security/tenancy
   primitives (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, `Roles`,
   `TenancyResourceServerConfig`). The local copies were deleted — see *Shared
   commons library*.
@@ -143,7 +143,7 @@ flowchart TB
 This service is the **first adopter** of the org's shared Maven artifacts. Two
 de-duplication moves:
 
-1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0` (itself a child of
+1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.9.0-beta.1` (itself a child of
    `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
@@ -153,7 +153,7 @@ de-duplication moves:
    `commons-text`, `data-cassandra-reactive`, the AWS `s3` client, and the
    (now-version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.8.0`.
+2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.2.0-beta.1`.
    The local copies of `security.{Roles,DomainRegistry,DomainScope}` and
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` were **deleted** and
    replaced by:
@@ -793,7 +793,7 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
                      # REAL Postgres via Testcontainers, so a working Docker daemon
                      # IS required to run `./mvnw test` to completion (CI's `test:mvn`
                      # job attaches a `docker:27-dind` service for exactly this).
-./mvnw package       # builds target/federation-0.2.0.jar
+./mvnw package       # builds target/federation-0.3.0-beta.1.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
 ```
 
@@ -845,6 +845,26 @@ Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
   authority mapping (incl. the authority-injection regressions), the multi-issuer
   fail-closed decoder, and HTTP authz per role.
 - `FederationApplicationContextTest` — full-context boot with degraded defaults.
+
+## Releases (beta)
+
+The version is the project `<version>` in `pom.xml`, currently `0.3.0-beta.1`
+(`MAJOR.MINOR.PATCH-beta.N`, the org beta scheme). `.github/workflows/release.yml`
+publishes `ghcr.io/hugmesh/hugmesh-federation-api`:
+
+- a push to `main` pushes `:main` and `:sha-<12 hex>`;
+- pushing the tag `v<version>` (for example `v0.3.0-beta.1`) pushes `:<version>`,
+  `:beta` and `:sha-<12 hex>`, and creates a GitHub Release marked prerelease and
+  not latest. The tag must equal `v` + the pom version, and an existing `:<version>`
+  is never overwritten: a fix raises N (`-beta.2`);
+- a manual dispatch on a `v*` tag re-runs that release; on `main` it is a main build.
+
+`:latest` is never pushed for a beta. The image build needs the
+`net.hugmesh` libraries (parent `2.9.0-beta.1`, commons `2.2.0-beta.1`) to be
+readable from GitHub Packages first, and the `PACKAGES_READ_TOKEN` secret.
+Jobs run on the runner named by the `RUNS_ON_PUBLISH` variable (a JSON array)
+for `main`, `v*` tags and their dispatches, and on hosted `ubuntu-latest`
+otherwise or when the variable is unset.
 
 ## Configuration (env)
 

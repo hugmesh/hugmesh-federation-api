@@ -43,6 +43,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@code export UPSTREAM_PACKAGES_TOKEN=<value>} into the BuildKit log, and
  *       build-push-action v6 uploads a build-record artifact holding raw BuildKit logs,
  *       which runner-side masking does not cover.</li>
+ *   <li><b>Beta publishing (org beta scheme, 2026-10-21).</b> {@code release.yml} runs on
+ *       push to {@code main}, {@code v*} tags and dispatch only (never a pull request), puts
+ *       the publish runner line on every job, refuses a tag that differs from the pom version
+ *       or an image tag that already exists, never pushes {@code :latest}, and marks the
+ *       GitHub Release prerelease and not latest.</li>
  * </ul>
  *
  * <p>Reads the repository files directly (surefire runs with the project basedir as the
@@ -151,6 +156,75 @@ class ReleaseImageGuardTest {
         assertThat(yaml.indexOf("Preflight, cross-repo package read"))
                 .as("the preflight must precede the image build")
                 .isLessThan(yaml.indexOf("docker/build-push-action"));
+    }
+
+    /** The org-wide publish runner line (beta scheme section 3.1), verbatim. */
+    static final String PUBLISH_RUNS_ON = "runs-on: ${{ fromJSON(github.event_name != 'pull_request'"
+            + " && github.event_name != 'pull_request_target' && (github.ref == 'refs/heads/main'"
+            + " || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v'))"
+            + " && vars.RUNS_ON_PUBLISH || '\"ubuntu-latest\"') }}";
+
+    @Test
+    @DisplayName("release.yml publishes only from main and v* tags, never from a pull request")
+    void releaseWorkflowTriggersAreMainTagsAndDispatchOnly() throws IOException {
+        String yaml = code(read(".github/workflows/release.yml"), "#");
+        String on = topLevelBlock(yaml, "on");
+        assertThat(on).as("the `on:` block").doesNotContain("pull_request");
+        assertThat(on).contains("branches: [main]").contains("tags: ['v*']").contains("workflow_dispatch");
+    }
+
+    @Test
+    @DisplayName("release.yml: every job uses the publish runner line; nothing reads the PR-reachable RUNS_ON")
+    void releaseWorkflowRunnerLine() throws IOException {
+        String yaml = code(read(".github/workflows/release.yml"), "#");
+        List<String> runsOn = yaml.lines().map(String::strip).filter(l -> l.startsWith("runs-on:")).toList();
+        assertThat(runsOn).as("version, image and github-release jobs").hasSize(3);
+        assertThat(runsOn).allSatisfy(l -> assertThat(l).isEqualTo(PUBLISH_RUNS_ON));
+        assertThat(Pattern.compile("vars\\.RUNS_ON(?!_PUBLISH)").matcher(yaml).find())
+                .as("vars.RUNS_ON (without _PUBLISH) is set to self-hosted and is also read by PR jobs")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("release.yml: beta tags only, version guard, no :latest, prerelease never latest")
+    void releaseWorkflowBetaTagging() throws IOException {
+        String yaml = code(read(".github/workflows/release.yml"), "#");
+        assertThat(Pattern.compile(":latest\\b|value=latest|latest=true").matcher(yaml).find())
+                .as("a beta never moves :latest")
+                .isFalse();
+        assertThat(yaml)
+                .as("version guard: tag == v + pom version, SNAPSHOT refused, other refs refused")
+                .contains("\"${GITHUB_REF_NAME#v}\" != \"${version}\"")
+                .contains("*-SNAPSHOT)")
+                .contains("refs/heads/main)")
+                .contains("refs/tags/v*)");
+        assertThat(yaml)
+                .as("a published <version> tag is never overwritten")
+                .contains("docker buildx imagetools inspect \"${image}:${VERSION}\"");
+        assertThat(yaml)
+                .contains("${image}:${VERSION}\"$'\\n'\"${image}:beta\"$'\\n'\"${image}:sha-${SHA12}")
+                .contains("${image}:main\"$'\\n'\"${image}:sha-${SHA12}")
+                .contains("--prerelease --latest=false")
+                .contains("--verify-tag");
+        assertThat(yaml.indexOf("Version guard")).as("the version guard runs before the image build")
+                .isGreaterThanOrEqualTo(0)
+                .isLessThan(yaml.indexOf("docker/build-push-action"));
+    }
+
+    /** The lines of a top-level YAML key's block (`key:` at column 0 up to the next column-0 key). */
+    private static String topLevelBlock(String yaml, String key) {
+        StringBuilder out = new StringBuilder();
+        boolean in = false;
+        for (String line : yaml.split("\n", -1)) {
+            if (!line.isEmpty() && !Character.isWhitespace(line.charAt(0))) {
+                in = line.startsWith(key + ":");
+            }
+            if (in) {
+                out.append(line).append('\n');
+            }
+        }
+        assertThat(out).as("top-level `%s:` block", key).isNotEmpty();
+        return out.toString();
     }
 
     private static String read(String relative) throws IOException {
