@@ -52,6 +52,7 @@
     -->
 
     <changeSet id="028-1-register-wiki-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'wiki'
@@ -61,7 +62,7 @@
             <column name="slug" value="wiki"/>
             <column name="display_name" value="Wiki (Kiwix)"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-wiki-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-wiki-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="internal"/>

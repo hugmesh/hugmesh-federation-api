@@ -42,6 +42,7 @@
     -->
 
     <changeSet id="031-1-register-owncast-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'owncast'
@@ -51,7 +52,7 @@
             <column name="slug" value="owncast"/>
             <column name="display_name" value="Live Stream (Owncast)"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-owncast-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-owncast-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="internal"/>
