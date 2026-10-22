@@ -174,12 +174,16 @@ class ReleaseImageGuardTest {
     }
 
     @Test
-    @DisplayName("release.yml: every job uses the publish runner line; nothing reads the PR-reachable RUNS_ON")
+    @DisplayName("release.yml: version and github-release use the publish runner line, the signed jobs hosted; nothing reads RUNS_ON")
     void releaseWorkflowRunnerLine() throws IOException {
         String yaml = code(read(".github/workflows/release.yml"), "#");
         List<String> runsOn = yaml.lines().map(String::strip).filter(l -> l.startsWith("runs-on:")).toList();
-        assertThat(runsOn).as("version, image and github-release jobs").hasSize(3);
-        assertThat(runsOn).allSatisfy(l -> assertThat(l).isEqualTo(PUBLISH_RUNS_ON));
+        // Job order: version, image, github-release, notify-site. The signed image job and
+        // notify-site never run on the self-hosted runner (ReleaseSignedImageGuardTest).
+        assertThat(yaml.substring(yaml.indexOf("\njobs:\n")).lines().filter(l -> l.matches("^  [A-Za-z0-9_-]+:\\s*$")).map(String::strip).toList())
+                .as("jobs in order").containsExactly("version:", "image:", "github-release:", "notify-site:");
+        assertThat(runsOn).as("runs-on of version, image, github-release, notify-site")
+                .containsExactly(PUBLISH_RUNS_ON, "runs-on: ubuntu-latest", PUBLISH_RUNS_ON, "runs-on: ubuntu-latest");
         assertThat(Pattern.compile("vars\\.RUNS_ON(?!_PUBLISH)").matcher(yaml).find())
                 .as("vars.RUNS_ON (without _PUBLISH) is set to self-hosted and is also read by PR jobs")
                 .isFalse();
