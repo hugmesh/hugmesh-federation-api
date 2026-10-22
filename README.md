@@ -858,6 +858,9 @@ publishes `ghcr.io/hugmesh/hugmesh-federation-api`:
   not latest. The tag must equal `v` + the pom version, and an existing `:<version>`
   is never overwritten: a fix raises N (`-beta.2`);
 - a manual dispatch on a `v*` tag re-runs that release; on `main` it is a main build.
+  A dispatch re-run only helps when the image was never pushed: once
+  `:<version>` exists the run stops at the overwrite check. If only the
+  GitHub Release step failed, use "Re-run failed jobs" on the original run.
 
 `:latest` is never pushed for a beta. The image build needs the
 `net.hugmesh` libraries (parent `2.9.0-beta.1`, commons `2.2.0-beta.1`) to be
