@@ -37,19 +37,17 @@
         platform service-DNS placeholder the deployment's Service wires at runtime
         (identical pattern to 022-025/028/029/031/033).
 
-        SUPERSEDED VALUE — remote_entry_url below is the PRE-REBRAND host
-        (snapdragon-character-forge-ui) and is left as shipped: this changeSet is merged
-        history, and rewriting a value inside it would break the Liquibase checksum on
-        every DB that already ran it (and still would not fix those rows, since a RAN
-        changeSet never re-executes). The current host is set by the additive follow-up
-        039-rebrand-character-forge-remote-entry.xml
-        (-> http://hugmesh-character-forge-ui:8080/remoteEntry.json). Read 038+039
-        together for the effective row. Only this file-level COMMENT is edited here —
-        nothing inside <changeSet> — so the checksum is untouched (same treatment PR #83
-        gave 022/023/024/028's prose).
+        SEED VALUE AND CHECKSUM. This changeSet originally seeded the sibling UI's
+        pre-rebrand Service short-name; 039 then repointed the row at
+        hugmesh-character-forge-ui. The seed below now carries the rebranded host
+        directly, so a fresh database gets the right value without needing 039. The
+        edit changes this changeSet's Liquibase checksum, so it is marked
+        validCheckSum ANY: databases that already ran the original keep starting
+        cleanly, and 039 still repoints a row that carries the old host.
     -->
 
     <changeSet id="038-1-register-character-forge-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'character-forge'
@@ -59,7 +57,7 @@
             <column name="slug" value="character-forge"/>
             <column name="display_name" value="Character Forge (3D)"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-character-forge-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-character-forge-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="internal"/>
