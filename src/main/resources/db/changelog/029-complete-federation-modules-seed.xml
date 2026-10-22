@@ -80,7 +80,7 @@
         (slug -> remoteEntry URL): the static dev/prod files use per-deployment
         URLs (localhost:420x dev / path-based prod), so — exactly like 022-025/028
         — these rows carry the platform service-DNS placeholder
-        http://snapdragon-<slug>-ui:8080/remoteEntry.json that the deployment's
+        http://hugmesh-<slug>-ui:8080/remoteEntry.json that the deployment's
         per-remote Service wires; the dynamic overlay then OVERRIDES the static
         floor's URL for that slug at runtime. exposed_module './routes' matches
         every other remote-shell row (LOGIN/ADMIN/MOD/USER/API_DOCS_ROUTES are all
@@ -93,6 +93,7 @@
     -->
 
     <changeSet id="029-1-register-mod-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'mod'
@@ -102,7 +103,7 @@
             <column name="slug" value="mod"/>
             <column name="display_name" value="Moderator Console"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-mod-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-mod-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="public"/>
@@ -113,6 +114,7 @@
     </changeSet>
 
     <changeSet id="029-2-register-apidocs-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'apidocs'
@@ -122,7 +124,7 @@
             <column name="slug" value="apidocs"/>
             <column name="display_name" value="API Docs Console"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-api-docs:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-api-docs:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="internal"/>
@@ -133,6 +135,7 @@
     </changeSet>
 
     <changeSet id="029-3-register-user-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'user'
@@ -142,7 +145,7 @@
             <column name="slug" value="user"/>
             <column name="display_name" value="User Console"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-user-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-user-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="public"/>

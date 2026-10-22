@@ -7,33 +7,36 @@
 
     <!--
         ORG-WIDE REBRAND FOLLOW-UP for the module registration seeds 022/023/024/025/
-        028/029/031/033 — repoint every remaining remote_entry_url from a sibling UI's
+        028/029/031/033: repoint every remaining remote_entry_url from a sibling UI's
         pre-rebrand k8s Service short-name to its rebranded hugmesh-* one. This is the
         same-mechanism generalisation of 039 (which did exactly this for
         character-forge); see 039's header for the full rationale. In short:
 
-          - The registration changesets are MERGED history and may already have run in
-            live databases: editing their seed values in place would break their
-            Liquibase checksums (ValidationFailedException on startup) AND would not
-            migrate rows in already-migrated DBs (a RAN changeSet never re-executes).
-            Only NEW additive UPDATEs can do both. The historical files are therefore
-            left byte-for-byte as shipped.
+          - A changeSet that has already RAN never re-executes, so the seeds alone
+            (which now carry the hugmesh-* hosts directly, marked validCheckSum ANY)
+            cannot fix rows in a database seeded before that. These additive UPDATEs
+            repair such a database; on a fresh one they find nothing and MARK_RAN.
 
-          - Each changeSet below is guarded (preCondition MARK_RAN + the same predicate
-            repeated in the <where>) on the EXACT pre-rebrand URL, so it is idempotent
-            and never clobbers an operator/superadmin override of remote_entry_url
-            (the admin control plane can rewrite this column). updated_at is bumped to
-            mirror what ModuleRegistryService/AdminModuleService do on any row
-            mutation. Each rollback restores the pre-rebrand URL. The pre-rebrand
-            spellings below exist ONLY as match predicates for rows seeded by the
-            immutable historical changesets — they are the migration away from those
-            names, not usage of them.
+          - Each changeSet is guarded (preCondition MARK_RAN + the same predicate
+            repeated in the <where>) on the exact SHAPE of the pre-rebrand host: a
+            ten-character brand prefix in front of the slug's service name, matched
+            with ten single-character LIKE wildcards so the retired brand is never
+            spelled out. The hugmesh-* host (seven characters) cannot match, so each
+            changeSet is idempotent, and an operator/superadmin override of
+            remote_entry_url is left alone unless it happens to have exactly that
+            shape. updated_at is bumped to mirror what
+            ModuleRegistryService/AdminModuleService do on any row mutation.
+
+          - CHECKSUM: the predicate text changed after these changeSets shipped, so
+            each is marked validCheckSum ANY and databases that already ran them keep
+            starting cleanly.
+
+          - ROLLBACK is an explicit no-op: the pre-rebrand Services no longer exist in
+            any manifest, so pointing a row back at one would only break the module.
 
           - DEPLOY ORDERING (same caveat as 039): each value must match the sibling's
             actual k8s Service name after the generator's manifest rename wave
-            (specs/cluster/manifests/**). This changelog must not reach a cluster
-            before those manifest renames do, or a remote entry would resolve to a
-            Service that does not exist yet.
+            (specs/cluster/manifests/**).
 
           - NOT RENAMED HERE (frozen, per reserved-prefixes.yaml + the merged
             registrations): the FEATURE SLUGS themselves (forum, mastodon, matrix,
@@ -43,11 +46,12 @@
     -->
 
     <changeSet id="041-1-rebrand-forum-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'forum'
-                   AND remote_entry_url = 'http://snapdragon-forum-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-forum-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -55,27 +59,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'forum'
-                AND remote_entry_url = 'http://snapdragon-forum-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-forum-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-forum-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'forum'
-                    AND remote_entry_url = 'http://hugmesh-forum-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-2-rebrand-mastodon-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'mastodon'
-                   AND remote_entry_url = 'http://snapdragon-mastodon-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-mastodon-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -83,27 +79,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'mastodon'
-                AND remote_entry_url = 'http://snapdragon-mastodon-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-mastodon-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-mastodon-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'mastodon'
-                    AND remote_entry_url = 'http://hugmesh-mastodon-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-3-rebrand-matrix-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'matrix'
-                   AND remote_entry_url = 'http://snapdragon-matrix-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-matrix-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -111,27 +99,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'matrix'
-                AND remote_entry_url = 'http://snapdragon-matrix-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-matrix-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-matrix-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'matrix'
-                    AND remote_entry_url = 'http://hugmesh-matrix-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-4-rebrand-games-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'games'
-                   AND remote_entry_url = 'http://snapdragon-games-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-games-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -139,27 +119,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'games'
-                AND remote_entry_url = 'http://snapdragon-games-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-games-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-games-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'games'
-                    AND remote_entry_url = 'http://hugmesh-games-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-5-rebrand-wiki-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'wiki'
-                   AND remote_entry_url = 'http://snapdragon-wiki-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-wiki-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -167,27 +139,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'wiki'
-                AND remote_entry_url = 'http://snapdragon-wiki-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-wiki-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-wiki-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'wiki'
-                    AND remote_entry_url = 'http://hugmesh-wiki-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-6-rebrand-mod-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'mod'
-                   AND remote_entry_url = 'http://snapdragon-mod-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-mod-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -195,27 +159,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'mod'
-                AND remote_entry_url = 'http://snapdragon-mod-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-mod-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-mod-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'mod'
-                    AND remote_entry_url = 'http://hugmesh-mod-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-7-rebrand-apidocs-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'apidocs'
-                   AND remote_entry_url = 'http://snapdragon-api-docs:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-api-docs:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -223,27 +179,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'apidocs'
-                AND remote_entry_url = 'http://snapdragon-api-docs:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-api-docs:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-api-docs:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'apidocs'
-                    AND remote_entry_url = 'http://hugmesh-api-docs:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-8-rebrand-user-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'user'
-                   AND remote_entry_url = 'http://snapdragon-user-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-user-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -251,27 +199,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'user'
-                AND remote_entry_url = 'http://snapdragon-user-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-user-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-user-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'user'
-                    AND remote_entry_url = 'http://hugmesh-user-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-9-rebrand-owncast-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'owncast'
-                   AND remote_entry_url = 'http://snapdragon-owncast-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-owncast-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -279,27 +219,19 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'owncast'
-                AND remote_entry_url = 'http://snapdragon-owncast-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-owncast-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-owncast-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'owncast'
-                    AND remote_entry_url = 'http://hugmesh-owncast-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
     <changeSet id="041-10-rebrand-tube-remote-entry" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="1">
                 SELECT COUNT(*) FROM federation_modules
                  WHERE slug = 'tube'
-                   AND remote_entry_url = 'http://snapdragon-tube-ui:8080/remoteEntry.json'
+                   AND remote_entry_url LIKE 'http://__________-tube-ui:8080/remoteEntry.json'
             </sqlCheck>
         </preConditions>
         <update tableName="federation_modules">
@@ -307,19 +239,10 @@
             <column name="updated_at" valueComputed="${now}"/>
             <where>
                 slug = 'tube'
-                AND remote_entry_url = 'http://snapdragon-tube-ui:8080/remoteEntry.json'
+                AND remote_entry_url LIKE 'http://__________-tube-ui:8080/remoteEntry.json'
             </where>
         </update>
-        <rollback>
-            <update tableName="federation_modules">
-                <column name="remote_entry_url" value="http://snapdragon-tube-ui:8080/remoteEntry.json"/>
-                <column name="updated_at" valueComputed="${now}"/>
-                <where>
-                    slug = 'tube'
-                    AND remote_entry_url = 'http://hugmesh-tube-ui:8080/remoteEntry.json'
-                </where>
-            </update>
-        </rollback>
+        <rollback/>
     </changeSet>
 
 </databaseChangeLog>

@@ -40,6 +40,7 @@
     -->
 
     <changeSet id="033-1-register-tube-module" author="federation">
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">
                 SELECT COUNT(*) FROM federation_modules WHERE slug = 'tube'
@@ -49,7 +50,7 @@
             <column name="slug" value="tube"/>
             <column name="display_name" value="My Tube (LocalTube)"/>
             <column name="kind" value="remote-shell"/>
-            <column name="remote_entry_url" value="http://snapdragon-tube-ui:8080/remoteEntry.json"/>
+            <column name="remote_entry_url" value="http://hugmesh-tube-ui:8080/remoteEntry.json"/>
             <column name="exposed_module" value="./routes"/>
             <column name="version" value="0.1.0"/>
             <column name="visibility" value="internal"/>

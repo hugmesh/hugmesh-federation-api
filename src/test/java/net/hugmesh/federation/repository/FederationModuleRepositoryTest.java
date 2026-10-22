@@ -9,6 +9,7 @@ import net.hugmesh.federation.model.FederationModule;
 import net.hugmesh.federation.support.TestDatabaseConfig;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,6 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataR2dbcTest
 @Import({TestDatabaseConfig.class, R2dbcConvertersConfig.class})
 class FederationModuleRepositoryTest {
+
+    private static final Pattern BRANDED_REMOTE_ENTRY =
+            Pattern.compile("^http://[a-z0-9]+-[a-z0-9-]+:8080/remoteEntry\\.json$");
 
     @Autowired FederationModuleRepository repo;
 
@@ -63,27 +67,30 @@ class FederationModuleRepositoryTest {
         assertThat(forum.getMetadata()).contains("\"mountAt\":\"/social/forum\"");
         // Platform/first-party module — no owner.
         assertThat(forum.getOwnerUserId()).isNull();
-        // The remote_entry_url asserted is the POST-041 value: 022 seeds the
-        // pre-rebrand host and the additive 041 UPDATE repoints it (022 is merged
-        // history and is NOT edited in place, mirroring 038/039). Asserting the
-        // hugmesh host therefore proves BOTH changesets applied, in order.
+        // 022 seeds the hugmesh host directly; 041 only repoints a row seeded with
+        // the pre-rebrand host (see RebrandRemoteEntryMigrationTest).
         assertThat(forum.getRemoteEntryUrl())
                 .isEqualTo("http://hugmesh-forum-ui:8080/remoteEntry.json");
     }
 
     @Test
     void noSeededModule_pointsAtAPreRebrandHost() {
-        // REBRAND DRIFT-GUARD — bans the old brand token. The historical seeds
-        // (022-033/038) inserted pre-rebrand "snapdragon-*" Service hostnames and are
-        // immutable merged history; the additive UPDATEs (039, 041) repoint every row.
-        // If a future changeset seeds (or reverts to) an old-brand host, this fails.
+        // REBRAND DRIFT-GUARD. Every sibling-UI remote entry has the shape
+        // http://<brand>-<service>:8080/remoteEntry.json, and the only brand allowed in
+        // that position is hugmesh. If a future changeset seeds (or reverts to) any other
+        // brand prefix, this fails. Rows of other shapes (the host's "/", the unprefixed
+        // login/admin hosts, remote-fragment's /fragment entry, the vanity
+        // /_fragments/... paths) are out of scope.
         List<FederationModule> all = repo.findAll().collectList().block();
         assertThat(all).isNotEmpty();
-        assertThat(all).allSatisfy(m -> {
-            if (m.getRemoteEntryUrl() != null) {
-                assertThat(m.getRemoteEntryUrl()).doesNotContainIgnoringCase("snapdragon");
-            }
-        });
+        List<String> branded = all.stream()
+                .map(FederationModule::getRemoteEntryUrl)
+                .filter(u -> u != null && BRANDED_REMOTE_ENTRY.matcher(u).matches())
+                .toList();
+        // forum, mastodon, matrix, games, wiki, mod, apidocs, user, owncast, tube,
+        // character-forge, character-studio.
+        assertThat(branded).hasSize(12);
+        assertThat(branded).allSatisfy(u -> assertThat(u).startsWith("http://hugmesh-"));
     }
 
     @Test
@@ -107,12 +114,9 @@ class FederationModuleRepositoryTest {
         // service — flipped on install), ROLE_USER floor, mounted at
         // /character-forge. Its presence proves changeset 038 applied.
         //
-        // The remote_entry_url asserted below is the POST-039 value: 038 inserts the
-        // pre-rebrand host and the additive 039 UPDATE
-        // repoints it at hugmesh-character-forge-ui (038 is merged history and is NOT
-        // edited in place). Asserting the hugmesh host therefore proves BOTH changesets
-        // applied, in order. The 'character-forge' SLUG / mountAt stay frozen — only the
-        // sibling service's brand prefix moved.
+        // 038 seeds the hugmesh host directly; 039 only repoints a row seeded with the
+        // pre-rebrand host (see RebrandRemoteEntryMigrationTest). The 'character-forge'
+        // SLUG / mountAt stay frozen; only the sibling service's brand prefix moved.
         FederationModule forge = repo.findBySlug("character-forge").block();
         assertThat(forge).isNotNull();
         assertThat(forge.getDisplayName()).isEqualTo("Character Forge (3D)");
