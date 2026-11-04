@@ -43,11 +43,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@code export UPSTREAM_PACKAGES_TOKEN=<value>} into the BuildKit log, and
  *       build-push-action v6 uploads a build-record artifact holding raw BuildKit logs,
  *       which runner-side masking does not cover.</li>
- *   <li><b>Beta publishing (org beta scheme, 2026-10-21).</b> {@code release.yml} runs on
- *       push to {@code main}, {@code v*} tags and dispatch only (never a pull request), puts
- *       the publish runner line on every job, refuses a tag that differs from the pom version
- *       or an image tag that already exists, never pushes {@code :latest}, and marks the
- *       GitHub Release prerelease and not latest.</li>
+ *   <li><b>Release channels (org-wide, 2026-11-04).</b> {@code release.yml} runs on push to
+ *       {@code main} and {@code release/**}, {@code v*} tags and dispatch only (never a pull
+ *       request), puts the publish runner line on every job, refuses a tag that differs from
+ *       the pom version or an immutable version tag that already exists, and leaves the
+ *       channel, the floating tags and the GitHub Release flags to
+ *       {@code scripts/release-channel.sh} (tested by {@code scripts/test-release-channel.sh},
+ *       which the version job runs). The workflow itself never names the latest tag and never
+ *       pushes {@code :beta} unconditionally.</li>
  * </ul>
  *
  * <p>Reads the repository files directly (surefire runs with the project basedir as the
@@ -165,12 +168,12 @@ class ReleaseImageGuardTest {
             + " && vars.RUNS_ON_PUBLISH || '\"ubuntu-latest\"') }}";
 
     @Test
-    @DisplayName("release.yml publishes only from main and v* tags, never from a pull request")
+    @DisplayName("release.yml publishes only from main, release/** and v* tags, never from a pull request")
     void releaseWorkflowTriggersAreMainTagsAndDispatchOnly() throws IOException {
         String yaml = code(read(".github/workflows/release.yml"), "#");
         String on = topLevelBlock(yaml, "on");
         assertThat(on).as("the `on:` block").doesNotContain("pull_request");
-        assertThat(on).contains("branches: [main]").contains("tags: ['v*']").contains("workflow_dispatch");
+        assertThat(on).contains("branches: [main, 'release/**']").contains("tags: ['v*']").contains("workflow_dispatch");
     }
 
     @Test
@@ -190,29 +193,41 @@ class ReleaseImageGuardTest {
     }
 
     @Test
-    @DisplayName("release.yml: beta tags only, version guard, no :latest, prerelease never latest")
-    void releaseWorkflowBetaTagging() throws IOException {
+    @DisplayName("release.yml: version guard, channel from scripts/release-channel.sh, immutable :X.Y.Z, release flags")
+    void releaseWorkflowChannelTagging() throws IOException {
         String yaml = code(read(".github/workflows/release.yml"), "#");
         assertThat(Pattern.compile(":latest\\b|value=latest|latest=true").matcher(yaml).find())
-                .as("a beta never moves :latest")
+                .as("the latest tag is decided by scripts/release-channel.sh only, never written in the workflow")
                 .isFalse();
         assertThat(yaml)
                 .as("version guard: tag == v + pom version, SNAPSHOT refused, other refs refused")
                 .contains("\"${GITHUB_REF_NAME#v}\" != \"${version}\"")
                 .contains("*-SNAPSHOT)")
                 .contains("refs/heads/main)")
+                .contains("refs/heads/release/*)")
                 .contains("refs/tags/v*)");
         assertThat(yaml)
-                .as("a published <version> tag is never overwritten")
-                .contains("docker buildx imagetools inspect \"${image}:${VERSION}\"");
+                .as("the version job runs the channel self-test, then the channel script")
+                .contains("run: bash scripts/test-release-channel.sh")
+                .contains("VERSION_FILE=pom.xml bash scripts/release-channel.sh");
         assertThat(yaml)
-                .contains("${image}:${VERSION}\"$'\\n'\"${image}:beta\"$'\\n'\"${image}:sha-${SHA12}")
-                .contains("${image}:main\"$'\\n'\"${image}:sha-${SHA12}")
-                .contains("--prerelease --latest=false")
+                .as("only the immutable <version> tag is checked before a push, and a failed lookup fails closed")
+                .contains("ref=\"${IMAGE_NAME}:${VERSION}\"")
+                .contains("out=$(docker buildx imagetools inspect \"${ref}\" 2>&1) || rc=$?")
+                .contains("could not tell whether ${ref} exists");
+        assertThat(yaml)
+                .as(":beta is never pushed unconditionally (it would mislabel a stable release)")
+                .doesNotContain("\"${image}:beta\"");
+        assertThat(yaml)
+                .contains("*-*) flags+=(--prerelease --latest=false) ;;")
+                .contains("flags+=(--latest)")
+                .contains("flags+=(--latest=false)")
                 .contains("--verify-tag");
         assertThat(yaml.indexOf("Version guard")).as("the version guard runs before the image build")
                 .isGreaterThanOrEqualTo(0)
                 .isLessThan(yaml.indexOf("docker/build-push-action"));
+        assertThat(ROOT.resolve("scripts/release-channel.sh")).as("the channel script").isRegularFile();
+        assertThat(ROOT.resolve("scripts/test-release-channel.sh")).as("its self-test").isRegularFile();
     }
 
     /** The lines of a top-level YAML key's block (`key:` at column 0 up to the next column-0 key). */
