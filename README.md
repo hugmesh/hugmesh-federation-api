@@ -846,28 +846,40 @@ Postgres — see `FederationApplicationContextTest` and `application-test.yml`):
   fail-closed decoder, and HTTP authz per role.
 - `FederationApplicationContextTest` — full-context boot with degraded defaults.
 
-## Releases (beta)
+## Releases (beta and stable channels)
 
-The version is the project `<version>` in `pom.xml`, currently `0.3.0-beta.1`
-(`MAJOR.MINOR.PATCH-beta.N`, the org beta scheme). `.github/workflows/release.yml`
-publishes `ghcr.io/hugmesh/hugmesh-federation-api`:
+The version is the project `<version>` in `pom.xml`, currently `0.3.0-beta.1`.
+`.github/workflows/release.yml` publishes `ghcr.io/hugmesh/hugmesh-federation-api`,
+and the release channel comes from the tag (`scripts/release-channel.sh` decides it;
+`scripts/test-release-channel.sh` tests it and runs first in the version job):
 
 - a push to `main` pushes `:main` and `:sha-<12 hex>`;
-- pushing the tag `v<version>` (for example `v0.3.0-beta.1`) pushes `:<version>`,
-  `:beta` and `:sha-<12 hex>`, and creates a GitHub Release marked prerelease and
-  not latest. The tag must equal `v` + the pom version, and an existing `:<version>`
-  is never overwritten: a fix raises N (`-beta.2`);
-- a manual dispatch on a `v*` tag re-runs that release; on `main` it is a main build.
-  A dispatch re-run only helps when the image was never pushed: once
-  `:<version>` exists the run stops at the overwrite check. If only the
-  GitHub Release step failed, use "Re-run failed jobs" on the original run.
+- a push to `release/X.Y` pushes `:sha-<12 hex>` only (the pom must be on `X.Y.*`;
+  any other `release/*` name is refused);
+- the tag `vX.Y.Z-beta.N` (beta channel, the commit must be on `main`) pushes
+  `:X.Y.Z-beta.N`, `:beta` and `:sha-<12 hex>`, and creates a GitHub Release marked
+  prerelease and not latest;
+- the tag `vX.Y.Z` (stable channel, the commit must be on `release/X.Y`) pushes
+  `:X.Y.Z` and `:sha-<12 hex>`, plus `:X.Y` when no newer `vX.Y.*` is published and
+  `:latest` when no newer stable `vA.B.C` is published. A patch on an older line
+  moves `:X.Y` but not `:latest`, and its GitHub Release is not marked latest;
+- any other tag (for example `-rc.N`) is refused. The tag must equal `v` + the pom
+  version, and an existing `:X.Y.Z` / `:X.Y.Z-beta.N` is never overwritten: a beta
+  fix raises N (`-beta.2`), a stable fix is the next patch on `release/X.Y`;
+- a manual dispatch on a `v*` tag re-runs that release; on `main` or `release/X.Y`
+  it is a branch build. A dispatch re-run only helps when the image was never
+  pushed: once `:<version>` exists the run stops at the overwrite check. If only
+  the GitHub Release step failed, use "Re-run failed jobs" on the original run;
+  whether `:X.Y`, `:latest` and the Latest mark move is decided again right before
+  the push and right before the release is created, so a re-run never moves them
+  back to an older line.
 
-`:latest` is never pushed for a beta. The image build needs the
-`net.hugmesh` libraries (parent `2.9.0-beta.1`, commons `2.2.0-beta.1`) to be
-readable from GitHub Packages first, and the `PACKAGES_READ_TOKEN` secret.
+Every pushed tag is checked to resolve to the one signed digest. The image build
+needs the `net.hugmesh` libraries (parent `2.9.0-beta.1`, commons `2.2.0-beta.1`)
+to be readable from GitHub Packages first, and the `PACKAGES_READ_TOKEN` secret.
 Jobs run on the runner named by the `RUNS_ON_PUBLISH` variable (a JSON array)
 for `main`, `v*` tags and their dispatches, and on hosted `ubuntu-latest`
-otherwise or when the variable is unset.
+otherwise (`release/X.Y` included) or when the variable is unset.
 
 ## Configuration (env)
 

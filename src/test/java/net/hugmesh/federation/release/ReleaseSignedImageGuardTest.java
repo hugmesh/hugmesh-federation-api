@@ -25,8 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       and {@code attestations: write}; no other job, and not the workflow, holds
  *       {@code id-token} or {@code attestations}.</li>
  *   <li>After the build it resolves the pushed repository and DIGEST (refusing a non-sha256
- *       digest and a pushed {@code latest} tag), signs that digest with cosign keyless, and pushes
- *       a build-provenance and an SBOM attestation for it to the registry.</li>
+ *       digest, and a pushed {@code latest} tag on a beta or on a stable that does not own it),
+ *       signs that digest with cosign keyless, and pushes a build-provenance and an SBOM
+ *       attestation for it to the registry.</li>
  *   <li>{@code notify-site} runs hosted, with no permissions, only for {@code v*} tags, after the
  *       GitHub Release.</li>
  * </ul>
