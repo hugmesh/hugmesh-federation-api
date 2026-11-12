@@ -65,10 +65,12 @@ It reuses two proven references: a DB-backed federation engine and the
   step-up that is inert while the flag is off (see *Security*).
 - ✅ **GitLab CI for tests and pen-tests** (`.gitlab-ci.yml`). The continuous-OWASP pen-test stages
   (Dependency-Check SCA + ZAP DAST + nuclei, advisory) extend the org-wide template
-  from `hugmesh-generator`. **GitHub Actions has one workflow**, `.github/workflows/release.yml`:
-  it builds, signs and pushes the image to `ghcr.io/hugmesh/hugmesh-federation-api`
-  on a push to `main` or `release/X.Y`, on a `v*` tag, or on manual dispatch, and
-  never on a pull request (see *Releases*).
+  from `hugmesh-generator`. **GitHub Actions has two workflows.**
+  `.github/workflows/ci.yml` runs the suite (`./mvnw -B verify -DskipITs`) on every
+  pull request and on a push to `main` or `release/X.Y` (see *GitHub CI*).
+  `.github/workflows/release.yml` builds, signs and pushes the image to
+  `ghcr.io/hugmesh/hugmesh-federation-api` on a push to `main` or `release/X.Y`, on a
+  `v*` tag, or on manual dispatch, and never on a pull request (see *Releases*).
 - Open items are in *Deferred / stubbed* and *Roadmap*. The vanity
   publish trigger, moderation auto-apply and the gateway allowlist entry for the
   public vanity and capabilities reads are shipped; the open entries are the
@@ -134,8 +136,9 @@ flowchart TB
 - **Cassandra-reactive** driver for a best-effort manifest write-through cache
   (disabled by default; degrades gracefully when absent).
 - Optional **server-side mTLS** (TLSv1.3, client-cert-required) for API↔API calls.
-- GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`) plus
-  one GitHub Actions release workflow (`.github/workflows/release.yml`, see *Releases*).
+- GraalVM **native** profile + AOT hints. **GitLab CI** (`.gitlab-ci.yml`) plus two
+  GitHub Actions workflows: the test suite on pull requests (`.github/workflows/ci.yml`,
+  see *GitHub CI*) and the release (`.github/workflows/release.yml`, see *Releases*).
 
 ## Shared commons library (`hugmesh-parent` + `hugmesh-commons`)
 
@@ -227,6 +230,24 @@ test-gated build (`stages: [security, dast, pentest, test, build]`):
 - The pen-test stage is **advisory** (`allow_failure: true`). It reports, never
   gates `build:image`, and runs on the default branch and merge requests.
 - It is a dev/CI-pipeline control, not a deployed CronJob or a runtime/UI trigger.
+
+### GitHub CI
+
+`.github/workflows/ci.yml` runs `./mvnw -B -s .github/maven-ci-settings.xml verify -DskipITs`
+on every pull request and on a push to `main` or `release/X.Y`, on a GitHub-hosted
+runner with Temurin 25 and Docker for the Testcontainers suites. It exists because
+`release.yml` builds the image with `-DskipTests`: before it, nothing on GitHub ran
+the suite, and the 0.4.0-beta.2 release went green on a commit whose
+`ReadmeFactsGuardTest` was red. It reads the `net.hugmesh` libraries from GitHub
+Packages with the `PACKAGES_READ_TOKEN` secret, so a pull request from a fork (which
+gets no secrets) stops at the secret check and says why.
+
+`CiSuiteWorkflowGuardTest` parses the workflow as YAML and pins it: the two triggers
+with no filter, the one job on a hosted runner, every step up to and including the
+suite command, and the absence of anything that can skip or soften the suite (an `if`,
+`continue-on-error`, a matrix, `env`, `defaults`, `shell`). Change `ci.yml` and that
+test together. The test runs only where the suite runs: a pull request that switches
+the suite off in `ci.yml` is not red on GitHub, so run `./mvnw test` on such a change.
 
 ## Endpoints (the public surface)
 
@@ -861,7 +882,7 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
                      # REAL Postgres via Testcontainers, so a working Docker daemon
                      # IS required to run `./mvnw test` to completion (CI's `test:mvn`
                      # job attaches a `docker:27-dind` service for exactly this).
-./mvnw package       # builds target/federation-0.3.0-beta.1.jar
+./mvnw package       # builds target/federation-0.4.0-beta.2.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
 make pentest         # local pen-test self-scan: pentest-sca + pentest-dast
 make pentest-sca     # OWASP Dependency-Check (CVSS >= 9 fails)
@@ -919,7 +940,7 @@ Postgres; see `FederationApplicationContextTest` and `application-test.yml`):
 
 ## Releases (beta and stable channels)
 
-The version is the project `<version>` in `pom.xml`, currently `0.3.0-beta.1`.
+The version is the project `<version>` in `pom.xml`, currently `0.4.0-beta.2`.
 `.github/workflows/release.yml` publishes `ghcr.io/hugmesh/hugmesh-federation-api`,
 and the release channel comes from the tag (`scripts/release-channel.sh` decides it;
 `scripts/test-release-channel.sh` tests it and runs first in the version job):

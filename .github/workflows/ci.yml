@@ -1,0 +1,91 @@
+# CI: the unit suite on every pull request, and on pushes to main and release/X.Y.
+#
+# WHY. Until this file, release.yml was the only workflow here, and it builds the image with
+# `package -DskipTests`. Nothing on GitHub ran the suite. Release PR #20 bumped pom.xml to
+# 0.4.0-beta.2 without README.md, ReadmeFactsGuardTest went red on main, and the release
+# went green on that commit anyway. This job makes a red suite visible on the pull request,
+# before the merge.
+#
+# GUARD. src/test/.../release/CiSuiteWorkflowGuardTest parses this file and pins it: the
+# triggers, the keys of the job, and every step up to and including the suite, whole. A new
+# key or step there fails that test until the test names it, so change the two together.
+# That test runs only where the suite runs: after an edit here, run ./mvnw test locally.
+#
+# RUNNER. A literal `ubuntu-latest`. The repository is public and this job runs on
+# pull_request, so a fork's pull request runs here: it must never reach a self-hosted runner,
+# so it never names one and never reads vars.RUNS_ON / vars.RUNS_ON_PUBLISH. Hosted runners
+# have Docker, which the Testcontainers @SpringBootTest suites need (a real Postgres). The JDK
+# is the Temurin 25 of the GitLab test:mvn image (maven:3.9-eclipse-temurin-25) and of the
+# Dockerfile; Maven comes from ./mvnw either way. The job runs on the runner host rather than
+# inside that image because Testcontainers from inside a job container has to reach the host
+# daemon through the mounted socket and the bridge gateway, which no workflow in this org has
+# shown working; the host shape is the one hugmesh-forum-bff-api's ci.yml runs green.
+#
+# DEPENDENCIES. hugmesh-parent, -commons, -build-config and -auth-core come from GitHub
+# Packages through .github/maven-ci-settings.xml (the file release.yml and the Dockerfile
+# use). maven.pkg.github.com wants a token even to read a public package, and the automatic
+# GITHUB_TOKEN cannot read another repository's packages, so this needs the repository secret
+# PACKAGES_READ_TOKEN. A fork's pull request gets no secrets: it stops at the first step that
+# needs one and says so, rather than failing deep inside dependency resolution.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/**']
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces that pull request's run in flight. A push to main
+# or release/X.Y is keyed by its commit, so nothing cancels it: two quick merges each end
+# with a result of their own.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (./mvnw verify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25 (Temurin, as the GitLab test:mvn image and the Dockerfile)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Require the package-read secret (say why, never fail deep in Maven)
+        env:
+          UPSTREAM_PACKAGES_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+        run: |
+          if [ -z "${UPSTREAM_PACKAGES_TOKEN}" ]; then
+            echo "::error::secret PACKAGES_READ_TOKEN is not available to this run. A pull request from a fork gets no secrets, and maven.pkg.github.com needs a token even to read the public net.hugmesh packages, so the suite cannot resolve hugmesh-parent here. A maintainer can run it from a branch in this repository."
+            exit 1
+          fi
+
+      # verify = compile, the whole surefire suite (ReadmeFactsGuardTest included) and the
+      # analysers hugmesh-parent binds to verify. -DskipITs skips failsafe integration tests
+      # only; it never skips the unit suite. Ryuk is off and the docker-java API is pinned to
+      # 1.43, as in .gitlab-ci.yml's test:mvn: the runner reaps its own containers, and
+      # docker-java's default API 1.32 is below what a current daemon accepts.
+      - name: Test suite (./mvnw -B verify -DskipITs)
+        env:
+          UPSTREAM_PACKAGES_ACTOR: ${{ secrets.PACKAGES_READ_ACTOR || github.actor }}
+          UPSTREAM_PACKAGES_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+          MAVEN_OPTS: "-Dapi.version=1.43"
+        run: ./mvnw -B -s .github/maven-ci-settings.xml verify -DskipITs
+
+      - name: Keep the surefire reports of a red run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
