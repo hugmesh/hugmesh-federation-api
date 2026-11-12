@@ -26,10 +26,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <ul>
  *   <li>it runs on {@code pull_request} (never {@code pull_request_target}, which would hand
- *       a fork's code the repository's secrets) and on a push to {@code main};</li>
- *   <li>a step runs {@code ./mvnw ... verify} (the surefire suite) and nothing in the file
- *       skips tests ({@code -DskipTests}, {@code -Dmaven.test.skip}, {@code -Dtest=} narrowing,
- *       {@code continue-on-error});</li>
+ *       a fork's code the repository's secrets) with no {@code branches}, {@code paths} or
+ *       {@code types} filter, so every pull request runs it, and on a push to {@code main};</li>
+ *   <li>the one Maven step is exactly {@code ./mvnw -B -s .github/maven-ci-settings.xml verify
+ *       -DskipITs} (the whole surefire suite; no {@code || true}, no {@code -Dgroups}), and
+ *       nothing in the file skips or narrows tests ({@code -DskipTests},
+ *       {@code -Dmaven.test.skip}, {@code -Dtest=}, {@code continue-on-error}, extra
+ *       {@code MAVEN_OPTS}, {@code MAVEN_ARGS}, {@code JAVA_TOOL_OPTIONS});</li>
+ *   <li>the only {@code if:} is the report upload's {@code if: failure()}: an {@code if:} on
+ *       the job or on the suite step can switch the suite off and still show green;</li>
  *   <li>every job is on a literal {@code ubuntu-latest}: the repository is public and a fork's
  *       pull request runs this file, so it never names a self-hosted runner or reads
  *       {@code vars.RUNS_ON*};</li>
@@ -57,25 +62,53 @@ class CiSuiteWorkflowGuardTest {
                 .as("the `on:` block must name pull_request").isTrue();
         assertThat(on).as("pull_request_target hands a fork's code the secrets")
                 .doesNotContain("pull_request_target");
-        assertThat(Pattern.compile("(?m)^\\s+push:\\s*\\n\\s+branches:\\s*\\[main\\b").matcher(on).find())
+        assertThat(Pattern.compile("(?m)^\\s+push:\\s*\\n\\s+branches:\\s*\\[main\\s*[,\\]]").matcher(on).find())
                 .as("the `on:` block must push-trigger main").isTrue();
+
+        // `pull_request:` with nothing under it: a branches/paths/types filter lets a pull
+        // request merge without this suite ever running on it
+        List<String> lines = on.lines().toList();
+        int at = -1;
+        for (int i = 0; i < lines.size() && at < 0; i++) {
+            if (lines.get(i).strip().equals("pull_request:")) {
+                at = i;
+            }
+        }
+        assertThat(at).as("`pull_request:` alone on its line in the `on:` block").isNotNegative();
+        int depth = indent(lines.get(at));
+        List<String> filters = lines.subList(at + 1, lines.size()).stream()
+                .takeWhile(l -> l.isBlank() || indent(l) > depth)
+                .filter(l -> !l.isBlank())
+                .toList();
+        assertThat(filters).as("pull_request takes no branches/paths/types filter: every pull request runs the suite")
+                .isEmpty();
     }
 
     @Test
-    @DisplayName("ci.yml runs ./mvnw verify and nothing skips or narrows the suite")
+    @DisplayName("ci.yml runs exactly ./mvnw -B -s ... verify -DskipITs and nothing skips, narrows or switches off the suite")
     void ciRunsTheWholeSuite() throws IOException {
         String yaml = ci();
-        assertThat(Pattern.compile("(?m)^\\s+run:\\s*\\./mvnw\\s+-B\\s+-s\\s+\\.github/maven-ci-settings\\.xml\\s+verify\\b")
-                .matcher(yaml).find())
-                .as("a step must run `./mvnw -B -s .github/maven-ci-settings.xml verify`")
-                .isTrue();
+        List<String> code = yaml.lines().map(String::strip).toList();
+        assertThat(code.stream().filter(l -> l.startsWith("run:") && l.contains("mvnw")).toList())
+                .as("one step, and exactly this command: no `|| true`, no -Dgroups, no extra goal or flag")
+                .containsExactly("run: ./mvnw -B -s .github/maven-ci-settings.xml verify -DskipITs");
         assertThat(yaml)
                 .as("nothing may skip, narrow or soften the suite")
                 .doesNotContain("skipTests")
                 .doesNotContain("maven.test.skip")
                 .doesNotContain("maven.test.failure.ignore")
                 .doesNotContain("-Dtest=")
-                .doesNotContain("continue-on-error");
+                .doesNotContain("-Dgroups")
+                .doesNotContain("-DexcludedGroups")
+                .doesNotContain("continue-on-error")
+                .doesNotContain("MAVEN_ARGS")
+                .doesNotContain("JAVA_TOOL_OPTIONS");
+        assertThat(code.stream().filter(l -> l.startsWith("MAVEN_OPTS:")).toList())
+                .as("MAVEN_OPTS only pins docker-java's API; a -D there reaches surefire like a flag would")
+                .containsExactly("MAVEN_OPTS: \"-Dapi.version=1.43\"");
+        assertThat(code.stream().filter(l -> l.startsWith("if:")).toList())
+                .as("the only condition is the report upload's: an `if:` on the job or the suite step switches the suite off")
+                .containsExactly("if: failure()");
     }
 
     @Test
@@ -134,6 +167,10 @@ class CiSuiteWorkflowGuardTest {
         }
         assertThat(out).as("top-level `%s:` block", key).isNotEmpty();
         return out.toString();
+    }
+
+    private static int indent(String line) {
+        return line.length() - line.stripLeading().length();
     }
 
     /** Drops whole-line comments so prose cannot satisfy or defeat a check. */
