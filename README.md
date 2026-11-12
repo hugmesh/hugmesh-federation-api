@@ -240,8 +240,14 @@ runner with Temurin 25 and Docker for the Testcontainers suites. It exists becau
 the suite, and the 0.4.0-beta.2 release went green on a commit whose
 `ReadmeFactsGuardTest` was red. It reads the `net.hugmesh` libraries from GitHub
 Packages with the `PACKAGES_READ_TOKEN` secret, so a pull request from a fork (which
-gets no secrets) stops at its first step and says why.
-`CiSuiteWorkflowGuardTest` pins the triggers, the hosted runner and the command.
+gets no secrets) stops at the secret check and says why.
+
+`CiSuiteWorkflowGuardTest` parses the workflow as YAML and pins it: the two triggers
+with no filter, the one job on a hosted runner, every step up to and including the
+suite command, and the absence of anything that can skip or soften the suite (an `if`,
+`continue-on-error`, a matrix, `env`, `defaults`, `shell`). Change `ci.yml` and that
+test together. The test runs only where the suite runs: a pull request that switches
+the suite off in `ci.yml` is not red on GitHub, so run `./mvnw test` on such a change.
 
 ## Endpoints (the public surface)
 

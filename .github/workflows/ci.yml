@@ -4,7 +4,12 @@
 # `package -DskipTests`. Nothing on GitHub ran the suite. Release PR #20 bumped pom.xml to
 # 0.4.0-beta.2 without README.md, ReadmeFactsGuardTest went red on main, and the release
 # went green on that commit anyway. This job makes a red suite visible on the pull request,
-# before the merge. src/test/.../release/CiSuiteWorkflowGuardTest pins the shape below.
+# before the merge.
+#
+# GUARD. src/test/.../release/CiSuiteWorkflowGuardTest parses this file and pins it: the
+# triggers, the keys of the job, and every step up to and including the suite, whole. A new
+# key or step there fails that test until the test names it, so change the two together.
+# That test runs only where the suite runs: after an edit here, run ./mvnw test locally.
 #
 # RUNNER. A literal `ubuntu-latest`. The repository is public and this job runs on
 # pull_request, so a fork's pull request runs here: it must never reach a self-hosted runner,
@@ -32,8 +37,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces that pull request's run in flight. A push to main
+# or release/X.Y is keyed by its commit, so nothing cancels it: two quick merges each end
+# with a result of their own.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: true
 
 jobs:
