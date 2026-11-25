@@ -882,7 +882,7 @@ cached body, and a brand-B mutation (`OverrideService.applyUserScope` /
                      # REAL Postgres via Testcontainers, so a working Docker daemon
                      # IS required to run `./mvnw test` to completion (CI's `test:mvn`
                      # job attaches a `docker:27-dind` service for exactly this).
-./mvnw package       # builds target/federation-0.5.0-beta.1.jar
+./mvnw package       # builds target/federation-0.5.1-beta.1.jar
 ./mvnw -Pnative native:compile   # GraalVM binary (needs a GraalVM host)
 make pentest         # local pen-test self-scan: pentest-sca + pentest-dast
 make pentest-sca     # OWASP Dependency-Check (CVSS >= 9 fails)
@@ -940,7 +940,7 @@ Postgres; see `FederationApplicationContextTest` and `application-test.yml`):
 
 ## Releases (beta and stable channels)
 
-The version is the project `<version>` in `pom.xml`, currently `0.5.0-beta.1`.
+The version is the project `<version>` in `pom.xml`, currently `0.5.1-beta.1`.
 `.github/workflows/release.yml` publishes `ghcr.io/hugmesh/hugmesh-federation-api`,
 and the release channel comes from the tag (`scripts/release-channel.sh` decides it;
 `scripts/test-release-channel.sh` tests it and runs first in the version job):
